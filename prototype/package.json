@@ -1,0 +1,8 @@
+{
+  "name": "splat3-widget-style-prototype",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs"
+  }
+}
