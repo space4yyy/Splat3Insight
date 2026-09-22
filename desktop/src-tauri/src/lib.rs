@@ -9,10 +9,13 @@ use serde::Serialize;
 use splat3_widget_core::{
     history::{HistoryCache, HistorySyncSummary, SplatNetDataClient, SplatNetDataConfig},
     nintendo_auth::{begin_login, exchange_session_token, refresh_identity, LoginAttempt},
+    overlay::OverlayState,
     splatnet_auth::{exchange_splatnet_tokens, SplatNetAuthConfig, NXAPI_F_GENERATION_URL},
     AccountMetadata, AccountRegistry, AccountSecret, KeyringSecretStore,
 };
 use tauri::{Manager, State};
+
+mod overlay_server;
 
 type Registry = AccountRegistry<KeyringSecretStore>;
 
@@ -127,6 +130,38 @@ fn list_accounts(state: State<'_, AppState>) -> Result<Vec<AccountView>, String>
             })
         })
         .collect::<Result<Vec<_>, String>>()?)
+}
+
+#[tauri::command]
+fn get_overlay_state(
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<OverlayState, String> {
+    let account_id = {
+        let registry = state
+            .registry
+            .lock()
+            .map_err(|_| "account registry is locked")?;
+        let account_id = account_id
+            .or_else(|| registry.active_account_id().map(ToOwned::to_owned))
+            .ok_or_else(|| "还没有选择活动账号".to_owned())?;
+        if !registry
+            .accounts()
+            .iter()
+            .any(|account| account.account_id == account_id)
+        {
+            return Err(format!("unknown account: {account_id}"));
+        }
+        account_id
+    };
+
+    let cache = load_history_cache(&state.history_dir, &account_id)?.unwrap_or(HistoryCache {
+        schema_version: 1,
+        fetched_at_ms: 0,
+        battles: Vec::new(),
+        coop: Vec::new(),
+    });
+    Ok(OverlayState::from_history(&cache))
 }
 
 #[tauri::command]
@@ -366,7 +401,7 @@ pub fn run() {
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let metadata_path = config_dir.join("accounts.json");
-            let registry = AccountRegistry::load(metadata_path, KeyringSecretStore::default())
+            let registry = AccountRegistry::load(&metadata_path, KeyringSecretStore::default())
                 .map_err(std::io::Error::other)?;
             app.manage(AppState {
                 registry: Mutex::new(registry),
@@ -375,10 +410,16 @@ pub fn run() {
                 history_dir: config_dir.join("history"),
             });
 
+            overlay_server::spawn(overlay_server::OverlayServerConfig {
+                accounts_path: metadata_path,
+                history_dir: config_dir.join("history"),
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             list_accounts,
+            get_overlay_state,
             begin_nintendo_login,
             complete_nintendo_login,
             refresh_splatnet_tokens,

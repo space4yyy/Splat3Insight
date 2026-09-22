@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Splat 3 Overlay</title>
+    <style>
+      @font-face {
+        font-family: "DFP GBZY7";
+        src: url("/fonts/DFP_GBZY7.ttf") format("truetype");
+        font-weight: 400;
+        font-style: normal;
+        font-display: block;
+      }
+      :root { font-family: "DFP GBZY7", Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; background: transparent; overflow: hidden; }
+      #root { width: max-content; min-width: min(420px, 100vw); max-width: 100vw; min-height: 96px; }
+      .overlay-card { width: max-content; min-width: min(420px, 100vw); max-width: 100vw; min-height: 96px; overflow: hidden; padding: 8px 16px 10px; border-radius: 6px; color: #f5f5f2; background: #383838; font-family: inherit; }
+      .overlay-card__top, .overlay-card__bottom { display: flex; align-items: baseline; gap: 18px; }
+      .overlay-card__mode { display: flex; align-items: flex-end; gap: 6px; color: #f5f5f2; font-size: 21px; line-height: .9; letter-spacing: .04em; }
+      .overlay-card__mode.mode-x-match { color: #0fdb9b; }
+      .overlay-card__mode.mode-bankara { color: #f54910; }
+      .overlay-card__bankara-mode { color: #f54910; font-family: inherit; font-size: 12px; line-height: 1; margin-bottom: 1px; white-space: nowrap; }
+      .overlay-card__summary { display: flex; align-items: baseline; gap: 14px; margin-left: auto; color: #f5f5f2; font-size: 20px; letter-spacing: .02em; white-space: nowrap; }
+      .overlay-card__summary-win { color: #eaff3d; }
+      .overlay-card__summary-lose { color: #4d7cff; }
+      .overlay-card__bottom { align-items: flex-end; justify-content: flex-start; margin-top: 10px; padding-top: 0; }
+      .overlay-card__power { display: flex; align-items: flex-end; gap: 8px; min-height: 44px; font-size: 72px; line-height: .82; letter-spacing: -.08em; }
+      .overlay-card__power-value { color: #fff; }
+      .overlay-card__power-delta { margin-bottom: 0; font-size: 26px; line-height: .82; letter-spacing: -.04em; }
+      .overlay-card__power-delta.positive { color: #eaff3d; }
+      .overlay-card__power-delta.negative { color: #4d7cff; }
+      .overlay-card__stats { display: flex; align-items: flex-end; margin-left: auto; }
+      .overlay-card__kad { display: flex; gap: 18px; color: #f5f5f2; font-family: inherit; font-size: 28px; font-weight: 800; }
+      .overlay-card__kad span { display: flex; align-items: baseline; gap: 0; }
+      .overlay-card__kad span:first-child { color: #eaff3d; }
+      .overlay-card__kad small { color: #bdbdbd; font-size: 16px; letter-spacing: .08em; }
+      .is-placeholder { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-weight: 600; letter-spacing: 0; }
+      .overlay-card__power-value.is-placeholder { font-size: 37px; margin-bottom: 8px; }
+      .overlay-card__power-delta.is-placeholder { font-size: 18px; margin-bottom: 2px; }
+      .empty { display: none; }
+    </style>
+  </head>
+  <body>
+    <main id="root"></main>
+    <script>
+      const root = document.querySelector('#root');
+      const ruleLabels = Object.freeze({
+        '真格魚虎對戰': '真格鱼虎',
+        '真格區域對戰': '真格区域',
+        '真格塔樓對戰': '真格塔楼',
+        '真格蛤蜊對戰': '真格蛤蜊',
+        '真格魚虎': '真格鱼虎',
+        '真格區域': '真格区域',
+        '真格塔樓': '真格塔楼',
+        Rainmaker: '真格鱼虎',
+        'Splat Zones': '真格区域',
+        'Tower Control': '真格塔楼',
+        'Clam Blitz': '真格蛤蜊',
+        'Turf War': '占地对战'
+      });
+
+      const escapeHtml = (value) => String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+      const isNumber = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
+      const displayNumber = (value, digits = 0) => isNumber(value) ? Number(value).toFixed(digits) : '—';
+      const placeholder = (value) => isNumber(value) ? '' : 'is-placeholder';
+      const localizeRule = (value) => ruleLabels[String(value ?? '').trim()] || String(value ?? '').trim() || '—';
+
+      function render(state) {
+        const battle = state?.selected;
+        if (!battle) {
+          root.innerHTML = '';
+          return;
+        }
+        const kills = battle.kills;
+        const deaths = battle.deaths;
+        const hasKills = isNumber(kills);
+        const hasDeaths = isNumber(deaths);
+        const kd = hasKills && hasDeaths
+          ? Number(deaths) === 0 ? '∞' : displayNumber(Number(kills) / Number(deaths), 1)
+          : '—';
+        const delta = isNumber(battle.power_delta)
+          ? `${battle.power_delta > 0 ? '+' : ''}${displayNumber(battle.power_delta, 1)}`
+          : '—';
+        const deltaClass = battle.power_delta > 0 ? 'positive' : battle.power_delta < 0 ? 'negative' : '';
+        const mode = battle.mode === 'X_MATCH' ? 'mode-x-match' : 'mode-bankara';
+        const bankaraMode = battle.bankara_mode === 'CHALLENGE' ? '挑战'
+          : battle.bankara_mode === 'OPEN' ? '开放' : '';
+        const summary = state.recent_summary || { win: 0, lose: 0, win_rate: 0 };
+
+        root.innerHTML = `
+          <section class="overlay-card">
+            <div class="overlay-card__top">
+              <div class="overlay-card__mode ${mode}">
+                <span>${escapeHtml(localizeRule(battle.rule))}</span>
+                ${bankaraMode ? `<small class="overlay-card__bankara-mode">${bankaraMode}</small>` : ''}
+              </div>
+              <div class="overlay-card__summary">
+                <span class="overlay-card__summary-win">Win ${summary.win}</span>
+                <span class="overlay-card__summary-lose">Lose ${summary.lose}</span>
+                <span>${displayNumber(summary.win_rate, 0)}%</span>
+              </div>
+            </div>
+            <div class="overlay-card__bottom">
+              <div class="overlay-card__power">
+                <span class="overlay-card__power-value ${placeholder(battle.power)}">${displayNumber(battle.power, 1)}</span>
+                <span class="overlay-card__power-delta ${deltaClass} ${placeholder(battle.power_delta)}">${delta}</span>
+              </div>
+              <div class="overlay-card__stats">
+                <div class="overlay-card__kad">
+                  <span class="${placeholder(kills)}">${displayNumber(kills)}<small>(${displayNumber(battle.assists)})k</small></span>
+                  <span class="${placeholder(deaths)}">${displayNumber(deaths)}<small>d</small></span>
+                  <span class="${!hasKills || !hasDeaths ? 'is-placeholder' : ''}">${kd}<small>k/d</small></span>
+                </div>
+              </div>
+            </div>
+          </section>`;
+      }
+
+      async function update() {
+        try {
+          await document.fonts.load('16px "DFP GBZY7"');
+          const response = await fetch('/api/overlay', { cache: 'no-store' });
+          const state = await response.json();
+          render(state);
+        } catch (_) {
+          root.innerHTML = '';
+        }
+      }
+
+      update();
+      window.setInterval(update, 5000);
+    </script>
+  </body>
+</html>
