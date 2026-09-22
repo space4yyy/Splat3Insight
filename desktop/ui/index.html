@@ -23,6 +23,8 @@
       button.secondary { color: #f5f5f2; background: #34333d; }
       button:disabled { opacity: .55; cursor: wait; }
       .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .overlay-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+      .overlay-actions button { padding: 8px 12px; font-size: 12px; }
       .account { padding: 14px 0; border-bottom: 1px solid #35343e; }
       .account:last-child { border-bottom: 0; }
       .account-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
@@ -32,6 +34,12 @@
       #message { min-height: 24px; margin: 14px 0 0; color: #bdbbc7; white-space: pre-line; }
       #sync-status { min-height: 20px; margin: 4px 0 0; color: #9d9aa8; white-space: pre-line; }
       #sync-status.syncing { color: #ecff20; }
+      .history-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+      .history-actions button { padding: 8px 12px; font-size: 12px; }
+      .service-status { min-height: 20px; margin: 8px 0 0; color: #9d9aa8; font-size: 13px; white-space: pre-line; overflow-wrap: anywhere; }
+      .service-status.running { color: #62e6ad; }
+      .service-status.starting { color: #ecff20; }
+      .service-status.stopped { color: #aaa8b5; }
       .error { color: #ff668a !important; }
       .auth-note { margin: 8px 0 0; font-size: 12px; color: #8e8b9a; }
       #paste-panel { display: none; margin-top: 18px; }
@@ -49,9 +57,9 @@
       .overlay-card__summary-win { color: #eaff3d; }
       .overlay-card__summary-lose { color: #4d7cff; }
       .overlay-card__bottom { align-items: flex-end; justify-content: flex-start; margin-top: 10px; padding-top: 0; }
-      .overlay-card__power { display: flex; align-items: flex-end; gap: 8px; min-height: 44px; font-size: 72px; line-height: .82; letter-spacing: -.08em; }
+      .overlay-card__power { display: flex; align-items: flex-end; gap: 8px; min-height: 44px; font-size: 60px; line-height: .82; letter-spacing: -.08em; }
       .overlay-card__power-value { color: #fff; }
-      .overlay-card__power-delta { margin-bottom: 0; font-size: 26px; line-height: .82; letter-spacing: -.04em; }
+      .overlay-card__power-delta { margin-bottom: 0; font-size: 22px; line-height: .82; letter-spacing: -.04em; }
       .overlay-card__power-value.is-placeholder,
       .overlay-card__power-delta.is-placeholder,
       .overlay-card__kad .is-placeholder {
@@ -89,14 +97,23 @@
         </div>
         <div id="message" class="status">正在读取账号列表…</div>
         <div id="sync-status" class="status">正在检查同步状态…</div>
+        <div class="history-actions">
+          <button id="export-history" class="secondary">导出历史数据</button>
+        </div>
         <div id="accounts"></div>
       </section>
       <section class="panel">
         <div class="row">
           <strong>卡片预览</strong>
-          <button id="refresh-overlay" class="secondary">刷新</button>
+          <div class="overlay-actions">
+            <button id="copy-overlay-url" class="secondary">复制 OBS 地址</button>
+            <button id="start-overlay-service" class="secondary" hidden>启动服务</button>
+            <button id="stop-overlay-service" class="secondary" hidden>停止服务</button>
+            <button id="refresh-overlay" class="secondary">刷新</button>
+          </div>
         </div>
         <p class="auth-note">OBS 浏览器源地址：<code>http://127.0.0.1:17353/overlay</code></p>
+        <div id="overlay-service-status" class="service-status">正在检查 OBS 服务状态…</div>
         <div id="overlay-preview" class="overlay-preview">
           <div class="overlay-empty">登录并同步历史后显示真实对战数据。</div>
         </div>

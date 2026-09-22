@@ -211,4 +211,28 @@ mod tests {
         assert!(state.selected.is_none());
         assert_eq!(state.recent_summary.sample_size, 0);
     }
+
+    #[test]
+    fn keeps_missing_personal_result_as_missing_kad() {
+        let mut record = battle(
+            "no-result",
+            "2026-09-22T04:00:00Z",
+            "X_MATCH",
+            Some(2019.8),
+            "DEEMED_LOSE",
+        );
+        record.record.kills = None;
+        record.record.assists = None;
+        record.record.deaths = None;
+        let state = OverlayState::from_history(&HistoryCache {
+            schema_version: 1,
+            fetched_at_ms: 1,
+            battles: vec![record],
+            coop: Vec::new(),
+        });
+        let selected = state.selected.unwrap();
+        assert_eq!(selected.kills, None);
+        assert_eq!(selected.assists, None);
+        assert_eq!(selected.deaths, None);
+    }
 }

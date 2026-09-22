@@ -1,14 +1,17 @@
-use std::collections::HashSet;
-use std::fs::OpenOptions;
+use std::collections::{HashMap, HashSet};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::Local;
 use serde::Serialize;
 use splat3_widget_core::{
-    history::{HistoryCache, HistorySyncSummary, SplatNetDataClient, SplatNetDataConfig},
+    history::{
+        HistoryCache, HistoryFetchProgress, HistoryFetchedRecord, HistoryProgressCallback,
+        HistoryRecordCallback, HistorySyncSummary, SplatNetDataClient, SplatNetDataConfig,
+    },
     nintendo_auth::{begin_login, exchange_session_token, refresh_identity, LoginAttempt},
     overlay::OverlayState,
     splatnet_auth::{exchange_splatnet_tokens, SplatNetAuthConfig, NXAPI_F_GENERATION_URL},
@@ -16,6 +19,7 @@ use splat3_widget_core::{
 };
 use tauri::{Manager, State};
 
+pub(crate) mod history_store;
 mod overlay_server;
 
 type Registry = AccountRegistry<KeyringSecretStore>;
@@ -25,8 +29,9 @@ struct AppState {
     login_attempt: Mutex<Option<LoginAttempt>>,
     auth_log_path: PathBuf,
     history_dir: PathBuf,
-    sync_status: Arc<Mutex<SyncStatus>>,
-    sync_in_progress: Arc<AtomicBool>,
+    sync_runtime: Arc<SyncRuntime>,
+    sync_trigger: Arc<tokio::sync::Notify>,
+    overlay_service: overlay_server::OverlayServiceController,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -34,6 +39,10 @@ struct SyncStatus {
     state: String,
     account_id: Option<String>,
     message: String,
+    phase: String,
+    progress_completed: usize,
+    progress_total: usize,
+    retry_attempt: usize,
     initial: bool,
     added_battle_count: usize,
     added_coop_count: usize,
@@ -44,12 +53,75 @@ struct SyncStatus {
     error: Option<String>,
 }
 
+struct SyncRuntime {
+    statuses: Mutex<HashMap<String, SyncStatus>>,
+    in_progress: Mutex<HashSet<String>>,
+}
+
+impl SyncRuntime {
+    fn new() -> Self {
+        Self {
+            statuses: Mutex::new(HashMap::new()),
+            in_progress: Mutex::new(HashSet::new()),
+        }
+    }
+
+    fn try_start(&self, account_id: &str) -> Result<(), String> {
+        let mut in_progress = self
+            .in_progress
+            .lock()
+            .map_err(|_| "sync state is locked")?;
+        if !in_progress.insert(account_id.to_owned()) {
+            return Err("该账号已有同步任务正在进行".to_owned());
+        }
+        Ok(())
+    }
+
+    fn finish(&self, account_id: &str) {
+        if let Ok(mut in_progress) = self.in_progress.lock() {
+            in_progress.remove(account_id);
+        }
+    }
+
+    fn update(&self, account_id: &str, update: impl FnOnce(&mut SyncStatus)) {
+        if let Ok(mut statuses) = self.statuses.lock() {
+            let status = statuses
+                .entry(account_id.to_owned())
+                .or_insert_with(SyncStatus::default);
+            status.account_id = Some(account_id.to_owned());
+            update(status);
+        }
+    }
+
+    fn get(&self, account_id: Option<&str>) -> SyncStatus {
+        let Some(account_id) = account_id else {
+            let mut status = SyncStatus::default();
+            status.message = "等待登录账号".to_owned();
+            return status;
+        };
+        self.statuses
+            .lock()
+            .ok()
+            .and_then(|statuses| statuses.get(account_id).cloned())
+            .unwrap_or_else(|| {
+                let mut status = SyncStatus::default();
+                status.account_id = Some(account_id.to_owned());
+                status.message = "等待同步".to_owned();
+                status
+            })
+    }
+}
+
 impl Default for SyncStatus {
     fn default() -> Self {
         Self {
             state: "idle".to_owned(),
             account_id: None,
             message: "等待同步".to_owned(),
+            phase: "idle".to_owned(),
+            progress_completed: 0,
+            progress_total: 0,
+            retry_attempt: 0,
             initial: false,
             added_battle_count: 0,
             added_coop_count: 0,
@@ -63,7 +135,9 @@ impl Default for SyncStatus {
 }
 
 const HISTORY_WINDOW_SIZE: usize = 50;
-const BACKGROUND_SYNC_INTERVAL_SECS: u64 = 60;
+const BACKGROUND_SYNC_INTERVAL_SECS: u64 = 30;
+const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
+const LOG_BACKUP_COUNT: usize = 3;
 
 #[derive(Serialize)]
 struct AccountView {
@@ -85,15 +159,59 @@ fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
+pub(crate) fn local_log_timestamp() -> String {
+    Local::now().format("%Y-%m-%d %H:%M:%S%.3f %:z").to_string()
+}
+
 fn write_auth_log(path: &Path, stage: &str, message: &str) {
     let safe_message = message.replace(['\n', '\r'], " ");
+    append_timestamped_log(path, stage, &safe_message);
+    log_console(&format!("splat3-auth:{stage}"), &safe_message);
+}
+
+pub(crate) fn append_timestamped_log(path: &Path, scope: &str, message: &str) {
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = fs::create_dir_all(parent);
     }
+    rotate_log_if_needed(path);
+    let safe_message = message.replace(['\n', '\r'], " ");
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(file, "{} [{}] {}", now_ms(), stage, safe_message);
+        let _ = writeln!(
+            file,
+            "{} [{}] {}",
+            local_log_timestamp(),
+            scope,
+            safe_message
+        );
     }
-    eprintln!("[splat3-auth:{stage}] {safe_message}");
+}
+
+fn rotate_log_if_needed(path: &Path) {
+    let Ok(metadata) = fs::metadata(path) else {
+        return;
+    };
+    if metadata.len() < MAX_LOG_BYTES {
+        return;
+    }
+    let oldest = PathBuf::from(format!("{}.{}", path.display(), LOG_BACKUP_COUNT));
+    let _ = fs::remove_file(oldest);
+    for index in (1..LOG_BACKUP_COUNT).rev() {
+        let source = PathBuf::from(format!("{}.{}", path.display(), index));
+        let target = PathBuf::from(format!("{}.{}", path.display(), index + 1));
+        let _ = fs::rename(source, target);
+    }
+    let first_backup = PathBuf::from(format!("{}.1", path.display()));
+    let _ = fs::rename(path, first_backup);
+}
+
+pub(crate) fn log_console(scope: &str, message: &str) {
+    let safe_message = message.replace(['\n', '\r'], " ");
+    println!("{} [{}] {}", local_log_timestamp(), scope, safe_message);
+}
+
+pub(crate) fn log_console_error(scope: &str, message: &str) {
+    let safe_message = message.replace(['\n', '\r'], " ");
+    eprintln!("{} [{}] {}", local_log_timestamp(), scope, safe_message);
 }
 
 fn auth_error(path: &Path, stage: &str, error: String) -> String {
@@ -101,50 +219,26 @@ fn auth_error(path: &Path, stage: &str, error: String) -> String {
     format!("{error}\n认证日志：{}", path.display())
 }
 
-fn history_path(history_dir: &Path, account_id: &str) -> PathBuf {
-    history_dir.join(format!("{account_id}.json"))
-}
-
 fn load_history_cache(
     history_dir: &Path,
     account_id: &str,
 ) -> Result<Option<HistoryCache>, String> {
-    let path = history_path(history_dir, account_id);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let contents =
-        std::fs::read_to_string(&path).map_err(|error| format!("读取历史缓存失败：{error}"))?;
-    let cache =
-        serde_json::from_str(&contents).map_err(|error| format!("历史缓存格式无效：{error}"))?;
-    Ok(Some(cache))
+    history_store::load_cache(history_dir, account_id)
 }
 
 fn load_history_summary(
     history_dir: &Path,
     account_id: &str,
 ) -> Result<Option<HistorySyncSummary>, String> {
-    Ok(load_history_cache(history_dir, account_id)?.map(|cache| cache.summary()))
+    history_store::load_summary(history_dir, account_id)
 }
 
-fn save_history(history_dir: &Path, account_id: &str, cache: &HistoryCache) -> Result<(), String> {
-    std::fs::create_dir_all(history_dir)
-        .map_err(|error| format!("创建历史缓存目录失败：{error}"))?;
-    // Compact JSON avoids storing formatting whitespace. The raw detail is
-    // kept once per stable id and is merged on every overlapping sync.
-    let contents =
-        serde_json::to_string(cache).map_err(|error| format!("序列化历史缓存失败：{error}"))?;
-    std::fs::write(
-        history_path(history_dir, account_id),
-        format!("{contents}\n"),
-    )
-    .map_err(|error| format!("保存历史缓存失败：{error}"))
-}
-
-fn update_sync_status(status: &Arc<Mutex<SyncStatus>>, update: impl FnOnce(&mut SyncStatus)) {
-    if let Ok(mut value) = status.lock() {
-        update(&mut value);
-    }
+fn update_sync_status(
+    runtime: &SyncRuntime,
+    account_id: &str,
+    update: impl FnOnce(&mut SyncStatus),
+) {
+    runtime.update(account_id, update);
 }
 
 fn active_account_sync_state(
@@ -161,9 +255,14 @@ fn active_account_sync_state(
 }
 
 fn is_splatnet_token_expired(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
     error.contains("SplatNet bullet token 已失效")
         || error.contains("SplatNet game web token 无效或已过期")
-        || (error.contains("SplatNet") && error.contains("HTTP 401"))
+        || (lower.contains("splatnet")
+            && (lower.contains("http 401")
+                || lower.contains("unauthorized")
+                || lower.contains("unauthenticated")
+                || error.contains("未授权")))
 }
 
 async fn sync_account(
@@ -171,31 +270,29 @@ async fn sync_account(
     registry: Arc<Mutex<Registry>>,
     history_dir: PathBuf,
     auth_log_path: PathBuf,
-    sync_status: Arc<Mutex<SyncStatus>>,
-    sync_in_progress: Arc<AtomicBool>,
+    sync_runtime: Arc<SyncRuntime>,
 ) -> Result<HistorySyncSummary, String> {
-    if sync_in_progress
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return Err("已有同步任务正在进行".to_owned());
-    }
+    sync_runtime.try_start(&account_id)?;
 
     let mut result = sync_account_inner(
         &account_id,
         &registry,
         &history_dir,
         &auth_log_path,
-        &sync_status,
+        &sync_runtime,
     )
     .await;
 
     if let Err(error) = &result {
         if is_splatnet_token_expired(error) {
-            update_sync_status(&sync_status, |status| {
+            update_sync_status(&sync_runtime, &account_id, |status| {
                 status.state = "refreshing".to_owned();
                 status.account_id = Some(account_id.clone());
                 status.message = "SplatNet token 已失效，正在自动刷新…".to_owned();
+                status.phase = "refreshing".to_owned();
+                status.progress_completed = 0;
+                status.progress_total = 0;
+                status.retry_attempt = 0;
                 status.error = None;
             });
             write_auth_log(
@@ -203,7 +300,8 @@ async fn sync_account(
                 "token-refresh",
                 "检测到 SplatNet token 失效，尝试使用已保存的 Nintendo session token 自动刷新",
             );
-            match refresh_splatnet_tokens_for_account(&account_id, &registry, &auth_log_path).await {
+            match refresh_splatnet_tokens_for_account(&account_id, &registry, &auth_log_path).await
+            {
                 Ok(()) => {
                     write_auth_log(
                         &auth_log_path,
@@ -215,23 +313,25 @@ async fn sync_account(
                         &registry,
                         &history_dir,
                         &auth_log_path,
-                        &sync_status,
+                        &sync_runtime,
                     )
                     .await;
                 }
                 Err(refresh_error) => {
-                    result = Err(format!(
-                        "SplatNet token 已失效，自动刷新失败：{refresh_error}"
-                    ));
+                    result = Err(format_token_refresh_error(&refresh_error));
                 }
             }
         }
     }
 
-    sync_in_progress.store(false, Ordering::SeqCst);
+    sync_runtime.finish(&account_id);
     match &result {
-        Ok(summary) => update_sync_status(&sync_status, |status| {
+        Ok(summary) => update_sync_status(&sync_runtime, &account_id, |status| {
             status.state = "completed".to_owned();
+            status.phase = "completed".to_owned();
+            status.progress_completed = 0;
+            status.progress_total = 0;
+            status.retry_attempt = 0;
             status.message = format!(
                 "同步完成：新增 {} 条对战、{} 条打工",
                 summary.added_battle_count, summary.added_coop_count
@@ -243,8 +343,10 @@ async fn sync_account(
             status.completed_at_ms = Some(now_ms());
             status.error = None;
         }),
-        Err(error) => update_sync_status(&sync_status, |status| {
+        Err(error) => update_sync_status(&sync_runtime, &account_id, |status| {
             status.state = "error".to_owned();
+            status.phase = "error".to_owned();
+            status.retry_attempt = 0;
             status.message = "同步失败".to_owned();
             status.error = Some(error.clone());
             status.completed_at_ms = Some(now_ms());
@@ -253,12 +355,23 @@ async fn sync_account(
     result
 }
 
+fn format_token_refresh_error(error: &str) -> String {
+    if error.contains("session token")
+        || error.contains("Nintendo")
+        || error.contains("Nintendo Account")
+        || error.contains("重新登录")
+    {
+        return format!("SplatNet token 已失效，Nintendo 登录凭据也已失效，请重新登录：{error}");
+    }
+    format!("SplatNet token 已失效，自动刷新失败，请稍后重试：{error}")
+}
+
 async fn sync_account_inner(
     account_id: &str,
     registry: &Arc<Mutex<Registry>>,
     history_dir: &Path,
     auth_log_path: &Path,
-    sync_status: &Arc<Mutex<SyncStatus>>,
+    sync_runtime: &Arc<SyncRuntime>,
 ) -> Result<HistorySyncSummary, String> {
     let (metadata, secret) = {
         let registry = registry.lock().map_err(|_| "account registry is locked")?;
@@ -286,10 +399,14 @@ async fn sync_account_inner(
         metadata.country.as_deref().unwrap_or("US"),
     );
 
-    update_sync_status(sync_status, |status| {
+    update_sync_status(sync_runtime, account_id, |status| {
         status.state = "preparing".to_owned();
         status.account_id = Some(account_id.to_owned());
         status.message = "正在准备 SplatNet 数据客户端…".to_owned();
+        status.phase = "preparing".to_owned();
+        status.progress_completed = 0;
+        status.progress_total = 0;
+        status.retry_attempt = 0;
         status.started_at_ms = Some(now_ms());
         status.completed_at_ms = None;
         status.error = None;
@@ -297,7 +414,9 @@ async fn sync_account_inner(
 
     let existing_archive = load_history_cache(history_dir, account_id)
         .map_err(|error| auth_error(auth_log_path, "history-load", error))?;
-    let initial_sync = existing_archive.is_none();
+    let initial_sync = existing_archive.is_none()
+        || history_store::needs_full_sync(history_dir, account_id)
+            .map_err(|error| auth_error(auth_log_path, "history-state", error))?;
     let mut archive = existing_archive.unwrap_or(HistoryCache {
         schema_version: 1,
         fetched_at_ms: 0,
@@ -320,10 +439,14 @@ async fn sync_account_inner(
     } else {
         "增量同步：正在检查最近记录中的新数据…"
     };
-    update_sync_status(sync_status, |status| {
+    update_sync_status(sync_runtime, account_id, |status| {
         status.state = "syncing".to_owned();
         status.account_id = Some(account_id.to_owned());
         status.message = sync_description.to_owned();
+        status.phase = "syncing".to_owned();
+        status.progress_completed = 0;
+        status.progress_total = 0;
+        status.retry_attempt = 0;
         status.initial = initial_sync;
         status.battle_count = archive.battles.len();
         status.coop_count = archive.coop.len();
@@ -338,32 +461,72 @@ async fn sync_account_inner(
         },
     );
 
+    let fetched_at_ms = now_ms();
+    history_store::mark_sync_started(history_dir, account_id, fetched_at_ms)
+        .map_err(|error| auth_error(auth_log_path, "history-state", error))?;
+
     let client = SplatNetDataClient::connect(config)
         .await
         .map_err(|error| auth_error(auth_log_path, "history-client", error))?;
+    let progress_status = Arc::clone(sync_runtime);
+    let progress_account_id = account_id.to_owned();
+    let progress: HistoryProgressCallback = Arc::new(move |progress: HistoryFetchProgress| {
+        update_sync_status(&progress_status, &progress_account_id, |status| {
+            status.phase = progress.phase.clone();
+            status.progress_completed = progress.completed;
+            status.progress_total = progress.total;
+            status.retry_attempt = progress.retry_attempt;
+            status.message = match progress.phase.as_str() {
+                "battle-list" => "正在获取最近对战列表…".to_owned(),
+                "coop-list" => "正在获取最近打工列表…".to_owned(),
+                "battle-details" => "正在获取对战详情…".to_owned(),
+                "coop-details" => "正在获取打工详情…".to_owned(),
+                phase if phase.starts_with("retrying:") => "网络波动，正在重试…".to_owned(),
+                _ => "正在同步数据…".to_owned(),
+            };
+        });
+    });
+    let record_history_dir = history_dir.to_path_buf();
+    let record_account_id = account_id.to_owned();
+    let on_record: HistoryRecordCallback = Arc::new(move |record: HistoryFetchedRecord| {
+        history_store::save_record(
+            &record_history_dir,
+            &record_account_id,
+            fetched_at_ms,
+            record,
+        )
+    });
     let cache = if initial_sync {
         client
-            .fetch_history_full(now_ms())
+            .fetch_history_full_with_progress_and_records_from(
+                &known_battle_ids,
+                &known_coop_ids,
+                fetched_at_ms,
+                Arc::clone(&progress),
+                Some(Arc::clone(&on_record)),
+            )
             .await
             .map_err(|error| auth_error(auth_log_path, "history-fetch", error))?
     } else {
         client
-            .fetch_history_incremental(
+            .fetch_history_incremental_with_progress_and_records(
                 HISTORY_WINDOW_SIZE,
                 HISTORY_WINDOW_SIZE,
                 &known_battle_ids,
                 &known_coop_ids,
-                now_ms(),
+                fetched_at_ms,
+                Arc::clone(&progress),
+                Some(Arc::clone(&on_record)),
             )
             .await
             .map_err(|error| auth_error(auth_log_path, "history-fetch", error))?
     };
+    history_store::mark_sync_complete(history_dir, account_id, fetched_at_ms)
+        .map_err(|error| auth_error(auth_log_path, "history-state", error))?;
     let (added_battle_count, added_coop_count) = archive.merge(cache);
     let mut summary = archive.summary();
     summary.added_battle_count = added_battle_count;
     summary.added_coop_count = added_coop_count;
-    save_history(history_dir, account_id, &archive)
-        .map_err(|error| auth_error(auth_log_path, "history-save", error))?;
     write_auth_log(
         auth_log_path,
         "history-sync",
@@ -382,8 +545,8 @@ fn start_background_sync(
     registry: Arc<Mutex<Registry>>,
     history_dir: PathBuf,
     auth_log_path: PathBuf,
-    sync_status: Arc<Mutex<SyncStatus>>,
-    sync_in_progress: Arc<AtomicBool>,
+    sync_runtime: Arc<SyncRuntime>,
+    sync_trigger: Arc<tokio::sync::Notify>,
 ) {
     tauri::async_runtime::spawn(async move {
         loop {
@@ -394,32 +557,44 @@ fn start_background_sync(
                         Arc::clone(&registry),
                         history_dir.clone(),
                         auth_log_path.clone(),
-                        Arc::clone(&sync_status),
-                        Arc::clone(&sync_in_progress),
+                        Arc::clone(&sync_runtime),
                     )
                     .await;
                 }
-                Ok(Some((account_id, false))) => update_sync_status(&sync_status, |status| {
-                    status.state = "idle".to_owned();
-                    status.account_id = Some(account_id);
-                    status.message = "等待获取 SplatNet 权限".to_owned();
-                    status.error = None;
-                }),
-                Ok(None) => update_sync_status(&sync_status, |status| {
-                    status.state = "idle".to_owned();
-                    status.account_id = None;
-                    status.message = "等待登录账号".to_owned();
-                    status.error = None;
-                }),
-                Err(error) => update_sync_status(&sync_status, |status| {
-                    status.state = "error".to_owned();
-                    status.message = "读取活动账号失败".to_owned();
-                    status.error = Some(error);
-                }),
+                Ok(Some((account_id, false))) => {
+                    let status_account_id = account_id.clone();
+                    update_sync_status(&sync_runtime, &account_id, |status| {
+                        status.state = "idle".to_owned();
+                        status.account_id = Some(status_account_id);
+                        status.message = "等待获取 SplatNet 权限".to_owned();
+                        status.phase = "idle".to_owned();
+                        status.progress_completed = 0;
+                        status.progress_total = 0;
+                        status.retry_attempt = 0;
+                        status.error = None;
+                    });
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    if let Ok(registry) = registry.lock() {
+                        if let Some(account_id) = registry.active_account_id() {
+                            update_sync_status(&sync_runtime, account_id, |status| {
+                                status.state = "error".to_owned();
+                                status.message = "读取活动账号失败".to_owned();
+                                status.phase = "error".to_owned();
+                                status.progress_completed = 0;
+                                status.progress_total = 0;
+                                status.retry_attempt = 0;
+                                status.error = Some(error);
+                            });
+                        }
+                    }
+                }
             }
-            tokio::time::sleep(std::time::Duration::from_secs(
-                BACKGROUND_SYNC_INTERVAL_SECS,
-            ))
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(BACKGROUND_SYNC_INTERVAL_SECS),
+                sync_trigger.notified(),
+            )
             .await;
         }
     });
@@ -457,11 +632,74 @@ fn list_accounts(state: State<'_, AppState>) -> Result<Vec<AccountView>, String>
 
 #[tauri::command]
 fn get_sync_status(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+    let account_id = state
+        .registry
+        .lock()
+        .map_err(|_| "account registry is locked")?
+        .active_account_id()
+        .map(ToOwned::to_owned);
+    Ok(state.sync_runtime.get(account_id.as_deref()))
+}
+
+fn resolve_account_id(
+    registry: &Arc<Mutex<Registry>>,
+    requested_account_id: Option<String>,
+) -> Result<String, String> {
+    let registry = registry.lock().map_err(|_| "account registry is locked")?;
+    let account_id = requested_account_id
+        .or_else(|| registry.active_account_id().map(ToOwned::to_owned))
+        .ok_or_else(|| "还没有选择活动账号".to_owned())?;
+    if !registry
+        .accounts()
+        .iter()
+        .any(|account| account.account_id == account_id)
+    {
+        return Err(format!("unknown account: {account_id}"));
+    }
+    Ok(account_id)
+}
+
+#[tauri::command]
+fn export_history(
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let account_id = resolve_account_id(&state.registry, account_id)?;
+    let path = history_store::export(&state.history_dir, &account_id)?;
+    write_auth_log(
+        &state.auth_log_path,
+        "history-export",
+        &format!("历史数据已导出：{}", path.display()),
+    );
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+fn get_overlay_service_status(
+    state: State<'_, AppState>,
+) -> Result<overlay_server::OverlayServiceStatus, String> {
     state
-        .sync_status
+        .overlay_service
+        .status()
         .lock()
         .map(|status| status.clone())
-        .map_err(|_| "sync status is locked".to_owned())
+        .map_err(|_| "OBS service status is locked".to_owned())
+}
+
+#[tauri::command]
+fn start_overlay_service(
+    state: State<'_, AppState>,
+) -> Result<overlay_server::OverlayServiceStatus, String> {
+    state.overlay_service.start()?;
+    get_overlay_service_status(state)
+}
+
+#[tauri::command]
+fn stop_overlay_service(
+    state: State<'_, AppState>,
+) -> Result<overlay_server::OverlayServiceStatus, String> {
+    state.overlay_service.stop()?;
+    get_overlay_service_status(state)
 }
 
 #[tauri::command]
@@ -567,6 +805,7 @@ async fn complete_nintendo_login(
         "Nintendo Account 已保存，应用将继续获取 SplatNet token",
     );
     registry.set_active(&identity.account_id, timestamp)?;
+    state.sync_trigger.notify_one();
     Ok(identity.account_id)
 }
 
@@ -631,12 +870,9 @@ async fn refresh_splatnet_tokens(
     account_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    refresh_splatnet_tokens_for_account(
-        &account_id,
-        &state.registry,
-        &state.auth_log_path,
-    )
-    .await
+    refresh_splatnet_tokens_for_account(&account_id, &state.registry, &state.auth_log_path).await?;
+    state.sync_trigger.notify_one();
+    Ok(())
 }
 
 #[tauri::command]
@@ -649,8 +885,7 @@ async fn sync_history(
         Arc::clone(&state.registry),
         state.history_dir.clone(),
         state.auth_log_path.clone(),
-        Arc::clone(&state.sync_status),
-        Arc::clone(&state.sync_in_progress),
+        Arc::clone(&state.sync_runtime),
     )
     .await
 }
@@ -661,7 +896,9 @@ fn set_active_account(account_id: String, state: State<'_, AppState>) -> Result<
         .registry
         .lock()
         .map_err(|_| "account registry is locked")?;
-    registry.set_active(&account_id, now_ms())
+    registry.set_active(&account_id, now_ms())?;
+    state.sync_trigger.notify_one();
+    Ok(())
 }
 
 pub fn run() {
@@ -673,35 +910,47 @@ pub fn run() {
             let registry = AccountRegistry::load(&metadata_path, KeyringSecretStore::default())
                 .map_err(std::io::Error::other)?;
             let registry = Arc::new(Mutex::new(registry));
-            let sync_status = Arc::new(Mutex::new(SyncStatus::default()));
-            let sync_in_progress = Arc::new(AtomicBool::new(false));
+            let sync_runtime = Arc::new(SyncRuntime::new());
+            let sync_trigger = Arc::new(tokio::sync::Notify::new());
+            let history_dir = config_dir.join("history");
+            if let Err(error) = history_store::check_integrity(&history_dir) {
+                log_console_error("history", &error);
+            }
+            let overlay_service = overlay_server::OverlayServiceController::new(
+                overlay_server::OverlayServerConfig {
+                    accounts_path: metadata_path,
+                    history_dir: history_dir.clone(),
+                },
+            );
             app.manage(AppState {
                 registry: Arc::clone(&registry),
                 login_attempt: Mutex::new(None),
                 auth_log_path: config_dir.join("auth.log"),
-                history_dir: config_dir.join("history"),
-                sync_status: Arc::clone(&sync_status),
-                sync_in_progress: Arc::clone(&sync_in_progress),
+                history_dir: history_dir.clone(),
+                sync_runtime: Arc::clone(&sync_runtime),
+                sync_trigger: Arc::clone(&sync_trigger),
+                overlay_service: overlay_service.clone(),
             });
 
             start_background_sync(
                 registry,
-                config_dir.join("history"),
+                history_dir,
                 config_dir.join("auth.log"),
-                sync_status,
-                sync_in_progress,
+                sync_runtime,
+                sync_trigger,
             );
 
-            overlay_server::spawn(overlay_server::OverlayServerConfig {
-                accounts_path: metadata_path,
-                history_dir: config_dir.join("history"),
-            });
+            overlay_service.start().map_err(std::io::Error::other)?;
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             list_accounts,
             get_sync_status,
+            export_history,
+            get_overlay_service_status,
+            start_overlay_service,
+            stop_overlay_service,
             get_overlay_state,
             begin_nintendo_login,
             complete_nintendo_login,
@@ -715,7 +964,12 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::is_splatnet_token_expired;
+    use super::{
+        append_timestamped_log, is_splatnet_token_expired, local_log_timestamp, SyncRuntime,
+        LOG_BACKUP_COUNT, MAX_LOG_BYTES,
+    };
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn refreshes_only_for_splatnet_token_expiration_errors() {
@@ -731,5 +985,56 @@ mod tests {
         assert!(!is_splatnet_token_expired(
             "SplatNet 数据请求失败（HTTP 400 Bad Request）"
         ));
+    }
+
+    #[test]
+    fn local_log_timestamp_contains_timezone_offset() {
+        let timestamp = local_log_timestamp();
+        assert_eq!(timestamp.len(), 30);
+        assert!(matches!(timestamp.as_bytes()[24], b'+' | b'-'));
+        assert_eq!(timestamp.as_bytes()[27], b':');
+    }
+
+    #[test]
+    fn sync_runtime_locks_accounts_independently() {
+        let runtime = SyncRuntime::new();
+        assert!(runtime.try_start("account-a").is_ok());
+        assert!(runtime.try_start("account-b").is_ok());
+        assert!(runtime.try_start("account-a").is_err());
+        runtime.finish("account-a");
+        assert!(runtime.try_start("account-a").is_ok());
+    }
+
+    #[test]
+    fn rotates_logs_into_bounded_backups() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("app.log");
+        fs::write(&path, vec![b'x'; MAX_LOG_BYTES as usize]).unwrap();
+        for index in 1..=LOG_BACKUP_COUNT {
+            fs::write(
+                format!("{}.{}", path.display(), index),
+                format!("backup-{index}"),
+            )
+            .unwrap();
+        }
+
+        append_timestamped_log(&path, "test", "rotated");
+
+        assert!(path.exists());
+        assert_eq!(
+            fs::read_to_string(format!("{}.1", path.display()))
+                .unwrap()
+                .len(),
+            MAX_LOG_BYTES as usize
+        );
+        assert_eq!(
+            fs::read_to_string(format!("{}.2", path.display())).unwrap(),
+            "backup-1"
+        );
+        assert_eq!(
+            fs::read_to_string(format!("{}.3", path.display())).unwrap(),
+            "backup-2"
+        );
+        assert!(!path.with_extension("log.4").exists());
     }
 }

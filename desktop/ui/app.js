@@ -10,6 +10,13 @@ const authenticateButton = document.querySelector('#authenticate');
 const overlayPreview = document.querySelector('#overlay-preview');
 const refreshOverlayButton = document.querySelector('#refresh-overlay');
 const syncStatusElement = document.querySelector('#sync-status');
+const overlayServiceStatusElement = document.querySelector('#overlay-service-status');
+const startOverlayServiceButton = document.querySelector('#start-overlay-service');
+const stopOverlayServiceButton = document.querySelector('#stop-overlay-service');
+const copyOverlayUrlButton = document.querySelector('#copy-overlay-url');
+const exportHistoryButton = document.querySelector('#export-history');
+
+const OBS_OVERLAY_URL = 'http://127.0.0.1:17353/overlay';
 
 let currentSyncStatus = null;
 let lastCompletedSyncAt = null;
@@ -30,7 +37,13 @@ function renderSyncStatus(status) {
   const busy = ['preparing', 'syncing', 'refreshing'].includes(status.state);
   const prefix = status.initial ? '首次同步' : '后台同步';
   if (busy) {
-    syncStatusElement.textContent = `${prefix}：${status.message}`;
+    const progress = status.progress_total > 0
+      ? ` (${status.progress_completed}/${status.progress_total})`
+      : '';
+    const retry = status.retry_attempt > 0
+      ? ` · 重试 ${status.retry_attempt}`
+      : '';
+    syncStatusElement.textContent = `${prefix}：${status.message}${progress}${retry}`;
   } else if (status.state === 'completed') {
     syncStatusElement.textContent = `最近同步完成：新增 ${status.added_battle_count} 条对战、${status.added_coop_count} 条打工；共 ${status.battle_count} 条对战、${status.coop_count} 条打工。`;
   } else if (status.state === 'error') {
@@ -40,6 +53,26 @@ function renderSyncStatus(status) {
   }
   syncStatusElement.classList.toggle('syncing', busy);
   syncStatusElement.classList.toggle('error', status.state === 'error');
+}
+
+function renderOverlayServiceStatus(status) {
+  if (!status) {
+    overlayServiceStatusElement.textContent = 'OBS 服务状态不可用。';
+    overlayServiceStatusElement.className = 'service-status error';
+    return;
+  }
+
+  const running = status.state === 'running';
+  const starting = status.state === 'starting';
+  const stopped = status.state === 'stopped';
+  overlayServiceStatusElement.textContent = running
+    ? `● ${status.message} · ${status.url}`
+    : `${status.message}${status.error ? `：${status.error}` : ''}`;
+  overlayServiceStatusElement.className = `service-status ${running ? 'running' : starting ? 'starting' : stopped ? 'stopped' : 'error'}`;
+  startOverlayServiceButton.hidden = running || starting;
+  stopOverlayServiceButton.hidden = !running && !starting;
+  startOverlayServiceButton.disabled = starting;
+  stopOverlayServiceButton.disabled = starting;
 }
 
 function displayNumber(value, digits = 0) {
@@ -217,7 +250,73 @@ async function refreshSyncStatus() {
   }
 }
 
+async function refreshOverlayServiceStatus() {
+  try {
+    const status = await invoke('get_overlay_service_status');
+    renderOverlayServiceStatus(status);
+  } catch (error) {
+    renderOverlayServiceStatus({ error: String(error) });
+  }
+}
+
 refreshOverlayButton.addEventListener('click', () => refreshOverlay());
+
+startOverlayServiceButton.addEventListener('click', async () => {
+  startOverlayServiceButton.disabled = true;
+  try {
+    const status = await invoke('start_overlay_service');
+    renderOverlayServiceStatus(status);
+    setMessage('正在启动 OBS 服务…');
+  } catch (error) {
+    setMessage(String(error), true);
+    await refreshOverlayServiceStatus();
+  }
+});
+
+stopOverlayServiceButton.addEventListener('click', async () => {
+  stopOverlayServiceButton.disabled = true;
+  try {
+    const status = await invoke('stop_overlay_service');
+    renderOverlayServiceStatus(status);
+    setMessage('OBS 服务已停止。');
+  } catch (error) {
+    setMessage(String(error), true);
+    await refreshOverlayServiceStatus();
+  }
+});
+
+copyOverlayUrlButton.addEventListener('click', async () => {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(OBS_OVERLAY_URL);
+    } else {
+      const input = document.createElement('textarea');
+      input.value = OBS_OVERLAY_URL;
+      input.style.position = 'fixed';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+      input.focus();
+      input.select();
+      document.execCommand('copy');
+      input.remove();
+    }
+    setMessage('OBS 地址已复制。');
+  } catch (error) {
+    setMessage(`复制 OBS 地址失败：${String(error)}`, true);
+  }
+});
+
+exportHistoryButton.addEventListener('click', async () => {
+  exportHistoryButton.disabled = true;
+  try {
+    const path = await invoke('export_history', { accountId: null });
+    setMessage(`历史数据已导出：${path}`);
+  } catch (error) {
+    setMessage(`导出历史数据失败：${String(error)}`, true);
+  } finally {
+    exportHistoryButton.disabled = false;
+  }
+});
 
 window.setInterval(() => {
   refreshSyncStatus();
@@ -226,6 +325,10 @@ window.setInterval(() => {
 window.setInterval(() => {
   refreshOverlay();
 }, 5000);
+
+window.setInterval(() => {
+  refreshOverlayServiceStatus();
+}, 2000);
 
 loginButton.addEventListener('click', async () => {
   loginButton.disabled = true;
@@ -284,3 +387,4 @@ function escapeHtml(value) {
 
 refreshAccounts().catch((error) => setMessage(String(error), true));
 refreshSyncStatus();
+refreshOverlayServiceStatus();
