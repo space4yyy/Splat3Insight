@@ -35,6 +35,12 @@ pub struct OverlayServiceStatus {
     pub error: Option<String>,
 }
 
+struct HttpResponse {
+    status: &'static str,
+    content_type: &'static str,
+    body: Vec<u8>,
+}
+
 pub type OverlayServiceStatusHandle = Arc<Mutex<OverlayServiceStatus>>;
 
 #[derive(Clone)]
@@ -212,10 +218,19 @@ fn run_server(
     while !stop_signal.load(Ordering::SeqCst) {
         match listener.accept() {
             Ok((stream, _)) => {
+                if let Err(error) = stream.set_nonblocking(false) {
+                    write_log(&config, &format!("设置客户端连接为阻塞模式失败: {error}"));
+                    crate::log_console_error(
+                        "overlay",
+                        &format!("设置客户端连接为阻塞模式失败: {error}"),
+                    );
+                    continue;
+                }
                 set_status(&status, "running", "OBS 服务运行中", None);
                 let config = config.clone();
                 thread::spawn(move || {
                     if let Err(error) = handle_connection(stream, &config) {
+                        write_log(&config, &format!("请求失败: {error}"));
                         crate::log_console_error("overlay", &format!("请求失败: {error}"));
                     }
                 });
@@ -279,56 +294,67 @@ fn handle_connection(mut stream: TcpStream, config: &OverlayServerConfig) -> Res
     let raw_path = parts.next().unwrap_or_default();
     let path = raw_path.split('?').next().unwrap_or(raw_path);
 
+    let response = route_request(method, path, config)?;
+    write_response(
+        &mut stream,
+        response.status,
+        response.content_type,
+        &response.body,
+    )
+}
+
+fn route_request(
+    method: &str,
+    path: &str,
+    config: &OverlayServerConfig,
+) -> Result<HttpResponse, String> {
     if method != "GET" {
-        return write_response(
-            &mut stream,
-            "405 Method Not Allowed",
-            "text/plain; charset=utf-8",
-            b"method not allowed",
-        );
+        return Ok(HttpResponse {
+            status: "405 Method Not Allowed",
+            content_type: "text/plain; charset=utf-8",
+            body: b"method not allowed".to_vec(),
+        });
     }
 
     match path {
-        "/" | "/overlay" => write_response(
-            &mut stream,
-            "200 OK",
-            "text/html; charset=utf-8",
-            OVERLAY_HTML.as_bytes(),
-        ),
-        "/fonts/DFP_GBZY7.ttf" => write_response(&mut stream, "200 OK", "font/ttf", DISPLAY_FONT),
+        "/" | "/overlay" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "text/html; charset=utf-8",
+            body: OVERLAY_HTML.as_bytes().to_vec(),
+        }),
+        "/fonts/DFP_GBZY7.ttf" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "font/ttf",
+            body: DISPLAY_FONT.to_vec(),
+        }),
         "/api/overlay" => match load_overlay_state(config) {
-            Ok(state) => {
-                let body = serde_json::to_vec(&state).map_err(|error| error.to_string())?;
-                write_response(
-                    &mut stream,
-                    "200 OK",
-                    "application/json; charset=utf-8",
-                    &body,
-                )
-            }
+            Ok(state) => Ok(HttpResponse {
+                status: "200 OK",
+                content_type: "application/json; charset=utf-8",
+                body: serde_json::to_vec(&state).map_err(|error| error.to_string())?,
+            }),
             Err(error) => {
-                let body = serde_json::to_vec(&json!({ "error": error }))
-                    .map_err(|error| error.to_string())?;
-                write_response(
-                    &mut stream,
-                    "200 OK",
-                    "application/json; charset=utf-8",
-                    &body,
-                )
+                let message = format!("Overlay 数据请求失败: {error}");
+                write_log(config, &message);
+                crate::log_console_error("overlay", &message);
+                Ok(HttpResponse {
+                    status: "500 Internal Server Error",
+                    content_type: "application/json; charset=utf-8",
+                    body: serde_json::to_vec(&json!({ "error": error }))
+                        .map_err(|error| error.to_string())?,
+                })
             }
         },
-        "/healthz" => write_response(
-            &mut stream,
-            "200 OK",
-            "application/json; charset=utf-8",
-            br#"{"ok":true}"#,
-        ),
-        _ => write_response(
-            &mut stream,
-            "404 Not Found",
-            "text/plain; charset=utf-8",
-            b"not found",
-        ),
+        "/healthz" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "application/json; charset=utf-8",
+            body: br#"{"ok":true}"#.to_vec(),
+        }),
+        _ => Ok(HttpResponse {
+            status: "404 Not Found",
+            content_type: "text/plain; charset=utf-8",
+            body: b"not found".to_vec(),
+        }),
     }
 }
 
@@ -384,4 +410,98 @@ fn is_safe_account_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use splat3_widget_core::history::{ArchivedBattle, BattleRecord, HistoryCache};
+    use tempfile::tempdir;
+
+    fn sample_cache() -> HistoryCache {
+        HistoryCache {
+            schema_version: 1,
+            fetched_at_ms: 1,
+            battles: vec![ArchivedBattle {
+                record: BattleRecord {
+                    id: "battle-1".to_owned(),
+                    played_time: Some("2026-09-22T00:00:00Z".to_owned()),
+                    mode: "X_MATCH".to_owned(),
+                    bankara_mode: None,
+                    rule: Some("Clam Blitz".to_owned()),
+                    stage: None,
+                    judgement: Some("WIN".to_owned()),
+                    player_name: None,
+                    weapon: None,
+                    paint: None,
+                    power: Some(2000.0),
+                    power_kind: Some("x".to_owned()),
+                    kills: Some(8),
+                    assists: Some(2),
+                    deaths: Some(3),
+                    specials: None,
+                },
+                raw: serde_json::json!({"id":"battle-1"}),
+            }],
+            coop: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn overlay_api_returns_state_from_sqlite() {
+        let directory = tempdir().unwrap();
+        let accounts_path = directory.path().join("accounts.json");
+        let history_dir = directory.path().join("history");
+        std::fs::write(&accounts_path, r#"{"active_account_id":"account"}"#).unwrap();
+        crate::history_store::save_cache(&history_dir, "account", &sample_cache()).unwrap();
+
+        let response = route_request(
+            "GET",
+            "/api/overlay",
+            &OverlayServerConfig {
+                accounts_path,
+                history_dir,
+            },
+        )
+        .unwrap();
+        assert_eq!(response.status, "200 OK");
+        assert!(String::from_utf8(response.body)
+            .unwrap()
+            .contains("\"selected\""));
+    }
+
+    #[test]
+    fn overlay_api_returns_server_error_for_data_failures() {
+        let directory = tempdir().unwrap();
+        let response = route_request(
+            "GET",
+            "/api/overlay",
+            &OverlayServerConfig {
+                accounts_path: directory.path().join("missing-accounts.json"),
+                history_dir: directory.path().join("history"),
+            },
+        )
+        .unwrap();
+        assert_eq!(response.status, "500 Internal Server Error");
+        assert!(String::from_utf8(response.body)
+            .unwrap()
+            .contains("读取账号配置失败"));
+    }
+
+    #[test]
+    fn serves_the_embedded_display_font() {
+        let directory = tempdir().unwrap();
+        let response = route_request(
+            "GET",
+            "/fonts/DFP_GBZY7.ttf",
+            &OverlayServerConfig {
+                accounts_path: directory.path().join("accounts.json"),
+                history_dir: directory.path().join("history"),
+            },
+        )
+        .unwrap();
+        assert_eq!(response.status, "200 OK");
+        assert_eq!(response.content_type, "font/ttf");
+        assert_eq!(response.body.len(), DISPLAY_FONT.len());
+    }
 }

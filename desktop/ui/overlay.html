@@ -46,6 +46,7 @@
     <main id="root"></main>
     <script>
       const root = document.querySelector('#root');
+      let lastState = null;
       const ruleLabels = Object.freeze({
         '真格魚虎對戰': '真格鱼虎',
         '真格區域對戰': '真格区域',
@@ -125,12 +126,22 @@
 
       async function update() {
         try {
-          await document.fonts.load('16px "DFP GBZY7"');
           const response = await fetch('/api/overlay', { cache: 'no-store' });
+          if (!response.ok) {
+            throw new Error(`Overlay 数据请求失败（HTTP ${response.status}）`);
+          }
           const state = await response.json();
+          if (state?.error) {
+            throw new Error(state.error);
+          }
+          lastState = state;
           render(state);
+          // 字体加载失败不应阻止卡片显示；先用 fallback 渲染，字体可用后再刷新一次。
+          document.fonts.load('16px "DFP GBZY7"')
+            .then(() => render(lastState))
+            .catch(() => {});
         } catch (_) {
-          root.innerHTML = '';
+          // 保留上一次有效卡片，等待下一轮轮询恢复，避免短暂请求失败导致 OBS 闪烁。
         }
       }
 
