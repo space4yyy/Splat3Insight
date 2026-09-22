@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use splat3_widget_core::{
+    history::{HistoryCache, HistorySyncSummary, SplatNetDataClient, SplatNetDataConfig},
     nintendo_auth::{begin_login, exchange_session_token, refresh_identity, LoginAttempt},
     splatnet_auth::{
         exchange_splatnet_tokens, SplatNetAuthConfig, DEFAULT_F_GENERATION_URL,
@@ -22,6 +23,7 @@ struct AppState {
     login_attempt: Mutex<Option<LoginAttempt>>,
     auth_log_path: PathBuf,
     auth_settings_path: PathBuf,
+    history_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -61,6 +63,9 @@ struct AccountView {
     country: Option<String>,
     active: bool,
     splatnet_ready: bool,
+    history_battle_count: usize,
+    history_coop_count: usize,
+    history_fetched_at_ms: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -92,6 +97,36 @@ fn write_auth_log(path: &Path, stage: &str, message: &str) {
 fn auth_error(path: &Path, stage: &str, error: String) -> String {
     write_auth_log(path, stage, &error);
     format!("{error}\n认证日志：{}", path.display())
+}
+
+fn history_path(history_dir: &Path, account_id: &str) -> PathBuf {
+    history_dir.join(format!("{account_id}.json"))
+}
+
+fn load_history_cache(history_dir: &Path, account_id: &str) -> Result<Option<HistoryCache>, String> {
+    let path = history_path(history_dir, account_id);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|error| format!("读取历史缓存失败：{error}"))?;
+    let cache = serde_json::from_str(&contents)
+        .map_err(|error| format!("历史缓存格式无效：{error}"))?;
+    Ok(Some(cache))
+}
+
+fn load_history_summary(history_dir: &Path, account_id: &str) -> Result<Option<HistorySyncSummary>, String> {
+    Ok(load_history_cache(history_dir, account_id)?.map(|cache| cache.summary()))
+}
+
+fn save_history(history_dir: &Path, account_id: &str, cache: &HistoryCache) -> Result<(), String> {
+    std::fs::create_dir_all(history_dir).map_err(|error| format!("创建历史缓存目录失败：{error}"))?;
+    // Compact JSON avoids storing formatting whitespace. The raw detail is
+    // kept once per stable id and is merged on every overlapping sync.
+    let contents = serde_json::to_string(cache)
+        .map_err(|error| format!("序列化历史缓存失败：{error}"))?;
+    std::fs::write(history_path(history_dir, account_id), format!("{contents}\n"))
+        .map_err(|error| format!("保存历史缓存失败：{error}"))
 }
 
 fn load_auth_settings(path: &Path) -> Result<AuthProviderSettings, String> {
@@ -178,6 +213,7 @@ fn list_accounts(state: State<'_, AppState>) -> Result<Vec<AccountView>, String>
         .iter()
         .map(|account| {
             let secret = registry.get_secret(&account.account_id)?;
+            let history = load_history_summary(&state.history_dir, &account.account_id)?;
             Ok(AccountView {
                 account_id: account.account_id.clone(),
                 display_name: account.display_name.clone(),
@@ -187,6 +223,9 @@ fn list_accounts(state: State<'_, AppState>) -> Result<Vec<AccountView>, String>
                 splatnet_ready: secret.as_ref().is_some_and(|value| {
                     value.game_web_token.is_some() && value.bullet_token.is_some()
                 }),
+                history_battle_count: history.as_ref().map_or(0, |value| value.battle_count),
+                history_coop_count: history.as_ref().map_or(0, |value| value.coop_count),
+                history_fetched_at_ms: history.map(|value| value.fetched_at_ms),
             })
         })
         .collect::<Result<Vec<_>, String>>()?)
@@ -330,6 +369,82 @@ async fn refresh_splatnet_tokens(
 }
 
 #[tauri::command]
+async fn sync_history(
+    account_id: String,
+    state: State<'_, AppState>,
+) -> Result<HistorySyncSummary, String> {
+    let auth_log_path = state.auth_log_path.clone();
+    let history_dir = state.history_dir.clone();
+    let (metadata, secret) = {
+        let registry = state
+            .registry
+            .lock()
+            .map_err(|_| "account registry is locked")?;
+        let metadata = registry
+            .accounts()
+            .iter()
+            .find(|account| account.account_id == account_id)
+            .cloned()
+            .ok_or_else(|| format!("unknown account: {account_id}"))?;
+        let secret = registry
+            .get_secret(&account_id)?
+            .ok_or_else(|| "该账号没有保存登录信息".to_owned())?;
+        (metadata, secret)
+    };
+    let game_web_token = secret
+        .game_web_token
+        .ok_or_else(|| "请先获取 SplatNet 权限，再同步历史记录".to_owned())?;
+    let bullet_token = secret
+        .bullet_token
+        .ok_or_else(|| "请先获取 SplatNet 权限，再同步历史记录".to_owned())?;
+    let config = SplatNetDataConfig::new(
+        game_web_token,
+        bullet_token,
+        metadata.language.as_deref().unwrap_or("en-US"),
+        metadata.country.as_deref().unwrap_or("US"),
+    );
+
+    write_auth_log(
+        &auth_log_path,
+        "history-sync",
+        "开始获取最近 50 条对战和 50 条打工记录",
+    );
+    let client = SplatNetDataClient::connect(config)
+        .await
+        .map_err(|error| auth_error(&auth_log_path, "history-client", error))?;
+    let cache = client
+        .fetch_history(50, 50, now_ms())
+        .await
+        .map_err(|error| auth_error(&auth_log_path, "history-fetch", error))?;
+    let mut archive = load_history_cache(&history_dir, &account_id)
+        .map_err(|error| auth_error(&auth_log_path, "history-load", error))?
+        .unwrap_or(HistoryCache {
+            schema_version: 1,
+            fetched_at_ms: 0,
+            battles: Vec::new(),
+            coop: Vec::new(),
+        });
+    let (added_battle_count, added_coop_count) = archive.merge(cache);
+    let mut summary = archive.summary();
+    summary.added_battle_count = added_battle_count;
+    summary.added_coop_count = added_coop_count;
+    save_history(&history_dir, &account_id, &archive)
+        .map_err(|error| auth_error(&auth_log_path, "history-save", error))?;
+    write_auth_log(
+        &auth_log_path,
+        "history-sync",
+        &format!(
+            "历史记录同步成功：新增 {} 条对战、{} 条打工；归档共 {} 条对战、{} 条打工",
+            summary.added_battle_count,
+            summary.added_coop_count,
+            summary.battle_count,
+            summary.coop_count
+        ),
+    );
+    Ok(summary)
+}
+
+#[tauri::command]
 fn set_active_account(account_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut registry = state
         .registry
@@ -351,6 +466,7 @@ pub fn run() {
                 login_attempt: Mutex::new(None),
                 auth_log_path: config_dir.join("auth.log"),
                 auth_settings_path: config_dir.join("auth-settings.json"),
+                history_dir: config_dir.join("history"),
             });
 
             Ok(())
@@ -360,6 +476,7 @@ pub fn run() {
             begin_nintendo_login,
             complete_nintendo_login,
             refresh_splatnet_tokens,
+            sync_history,
             get_auth_provider_settings,
             save_auth_provider_settings,
             set_active_account,

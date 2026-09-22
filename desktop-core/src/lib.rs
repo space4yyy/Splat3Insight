@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 pub mod monitor;
 pub mod nintendo_auth;
+pub mod history;
 pub mod splatnet_auth;
 
 pub const KEYRING_SERVICE: &str = "com.splat3.streaming-widget";

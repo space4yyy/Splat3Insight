@@ -57,11 +57,12 @@ function renderAccountList(items) {
         <div>
           <strong>${escapeHtml(account.display_name)}</strong>
           <br /><small>${escapeHtml(account.language || '—')} · ${escapeHtml(account.account_id)}</small>
+          <br /><small>历史：${account.history_battle_count} 对战 · ${account.history_coop_count} 打工</small>
         </div>
         <div class="account-actions">
           ${account.active ? '<span class="badge">当前</span>' : `<button class="secondary" data-account="${escapeHtml(account.account_id)}">使用</button>`}
           ${account.splatnet_ready
-            ? '<span class="badge badge-secondary">SplatNet</span>'
+            ? `<span class="badge badge-secondary">SplatNet</span><button class="secondary" data-sync-account="${escapeHtml(account.account_id)}">同步历史</button>`
             : `<button class="secondary" data-refresh-account="${escapeHtml(account.account_id)}">获取 SplatNet 权限</button>`}
         </div>
       </div>`).join('')
@@ -82,6 +83,21 @@ function renderAccountList(items) {
         await invoke('refresh_splatnet_tokens', { accountId: button.dataset.refreshAccount });
         await refreshAccounts();
         setMessage('SplatNet 权限获取成功。');
+      } catch (error) {
+        setMessage(String(error), true);
+        button.disabled = false;
+      }
+    });
+  });
+
+  accounts.querySelectorAll('[data-sync-account]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      setMessage('正在从 SplatNet 获取最近 50 条对战和 50 条打工记录…');
+      try {
+        const summary = await invoke('sync_history', { accountId: button.dataset.syncAccount });
+        await refreshAccounts();
+        setMessage(`历史同步成功：新增 ${summary.added_battle_count} 条对战、${summary.added_coop_count} 条打工；归档共 ${summary.battle_count} 条对战、${summary.coop_count} 条打工。`);
       } catch (error) {
         setMessage(String(error), true);
         button.disabled = false;

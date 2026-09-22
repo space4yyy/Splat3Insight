@@ -1,8 +1,8 @@
 # Splat 3 widget desktop core
 
-This crate is the first desktop-app slice. It owns account metadata, native
-credential storage, and the current-only battle cursor that the future Tauri
-commands will use.
+This crate owns account metadata, native credential storage, Nintendo/SplatNet
+authentication, the history data client, and the current-battle cursor used by
+the Tauri app.
 
 ## Storage boundary
 
@@ -12,12 +12,26 @@ commands will use.
 - macOS uses Keychain Services; Windows uses Windows Credential Manager.
 - The `MemorySecretStore` is only for tests and development.
 
+## History archive
+
+`SplatNetDataClient` requests the latest 50 battle ids and latest 50 Salmon Run
+ids from SplatNet, then fetches their detail records. The Tauri command merges
+the result into one per-account archive under the platform application-data
+directory.
+
+Records are keyed by their stable SplatNet detail id. Each unique record keeps
+both a compact parsed form and the raw detail JSON, so later parser changes can
+recover fields without requesting old records again. Repeating a sync only
+updates overlapping records; it does not append duplicates. The on-disk JSON is
+compact to avoid formatting overhead. A future SQLite/blob-compression
+migration can reduce storage further without changing the client contract.
+
 ## Current-only monitoring
 
 `CurrentBattleMonitor::establish_baseline` records the newest visible battle
 without emitting it. Later calls to `observe` return only battles newer than
-the persisted cursor. The data client will fetch details only for those new
-IDs, so adding an account never replays its old history.
+the persisted cursor. This monitor is separate from the historical archive and
+is reserved for the later live-overlay path.
 
 The crate does not read or depend on the `s3s` export directory.
 

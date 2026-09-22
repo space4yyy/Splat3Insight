@@ -23,7 +23,7 @@ pub const NXAPI_CLIENT_VERSION: &str = "d8fAZDPzwimzQ7c6";
 const ZNC_URL: &str = "https://api-lp1.znc.srv.nintendo.net";
 const NXAPI_AUTH_URL: &str = "https://nxapi-auth.fancy.org.uk/api/oauth/token";
 const NXAPI_AUTH_SCOPE: &str = "ca:gf ca:er ca:dr";
-const WEB_VIEW_VERSION_FALLBACK: &str = "10.0.0-88706e32";
+pub const WEB_VIEW_VERSION_FALLBACK: &str = "10.0.0-88706e32";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SplatNetAuthConfig {
@@ -541,7 +541,7 @@ async fn decrypt_coral_response(
     Ok(value)
 }
 
-async fn fetch_web_view_version(
+pub(crate) async fn fetch_web_view_version(
     http: &reqwest::Client,
     game_web_token: &str,
     language: &str,
