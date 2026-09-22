@@ -220,9 +220,26 @@ impl SplatNetDataClient {
         coop_limit: usize,
         fetched_at_ms: i64,
     ) -> Result<HistoryCache, String> {
-        self.fetch_history_incremental(
+        self.fetch_history_with_limits(
             battle_limit,
             coop_limit,
+            &HashSet::new(),
+            &HashSet::new(),
+            fetched_at_ms,
+        )
+        .await
+    }
+
+    /// Fetch every record exposed by the current SplatNet history response.
+    ///
+    /// The endpoint itself decides how much history is available to the
+    /// client. We request the complete response on the first sync and keep
+    /// the records locally, so later syncs only need to inspect the newest
+    /// window.
+    pub async fn fetch_history_full(&self, fetched_at_ms: i64) -> Result<HistoryCache, String> {
+        self.fetch_history_with_limits(
+            usize::MAX,
+            usize::MAX,
             &HashSet::new(),
             &HashSet::new(),
             fetched_at_ms,
@@ -233,6 +250,24 @@ impl SplatNetDataClient {
     /// Fetch the latest server windows but request detail records only for IDs
     /// that are not already present in the local archive.
     pub async fn fetch_history_incremental(
+        &self,
+        battle_limit: usize,
+        coop_limit: usize,
+        known_battle_ids: &HashSet<String>,
+        known_coop_ids: &HashSet<String>,
+        fetched_at_ms: i64,
+    ) -> Result<HistoryCache, String> {
+        self.fetch_history_with_limits(
+            battle_limit,
+            coop_limit,
+            known_battle_ids,
+            known_coop_ids,
+            fetched_at_ms,
+        )
+        .await
+    }
+
+    async fn fetch_history_with_limits(
         &self,
         battle_limit: usize,
         coop_limit: usize,

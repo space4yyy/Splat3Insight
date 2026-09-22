@@ -30,6 +30,8 @@
       .badge { color: #111; background: #ecff20; border-radius: 999px; padding: 3px 8px; font-size: 12px; font-weight: 700; }
       .badge-secondary { color: #f5f5f2; background: #4b4857; }
       #message { min-height: 24px; margin: 14px 0 0; color: #bdbbc7; white-space: pre-line; }
+      #sync-status { min-height: 20px; margin: 4px 0 0; color: #9d9aa8; white-space: pre-line; }
+      #sync-status.syncing { color: #ecff20; }
       .error { color: #ff668a !important; }
       .auth-note { margin: 8px 0 0; font-size: 12px; color: #8e8b9a; }
       #paste-panel { display: none; margin-top: 18px; }
@@ -72,7 +74,7 @@
   <body>
     <main>
       <h1>Splat 3 Streaming Widget</h1>
-      <p>先完成 Nintendo Account 登录，再获取 SplatNet 权限。随后可以同步最近 50 条对战和 50 条打工记录。</p>
+      <p>首次获取 SplatNet 权限时拉取当前账号可用的历史记录，之后在后台定时检查新数据并自动更新 OBS 卡片。</p>
       <p class="auth-note">登录信息保存在系统凭据库，历史记录保存在本机应用数据目录；密码不会进入本应用。</p>
       <p class="auth-note">SplatNet 权限通过 nxapi 自动获取，应用已内置 client id，无需额外配置。</p>
       <section class="panel">
@@ -86,6 +88,7 @@
           <div style="margin-top:10px; text-align:right"><button id="authenticate">开始认证</button></div>
         </div>
         <div id="message" class="status">正在读取账号列表…</div>
+        <div id="sync-status" class="status">正在检查同步状态…</div>
         <div id="accounts"></div>
       </section>
       <section class="panel">

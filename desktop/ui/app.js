@@ -9,10 +9,37 @@ const loginLink = document.querySelector('#login-link');
 const authenticateButton = document.querySelector('#authenticate');
 const overlayPreview = document.querySelector('#overlay-preview');
 const refreshOverlayButton = document.querySelector('#refresh-overlay');
+const syncStatusElement = document.querySelector('#sync-status');
+
+let currentSyncStatus = null;
+let lastCompletedSyncAt = null;
 
 function setMessage(value, error = false) {
   message.textContent = value;
   message.classList.toggle('error', error);
+}
+
+function renderSyncStatus(status) {
+  currentSyncStatus = status;
+  if (!status) {
+    syncStatusElement.textContent = '同步状态不可用。';
+    syncStatusElement.classList.add('error');
+    return;
+  }
+
+  const busy = ['preparing', 'syncing', 'refreshing'].includes(status.state);
+  const prefix = status.initial ? '首次同步' : '后台同步';
+  if (busy) {
+    syncStatusElement.textContent = `${prefix}：${status.message}`;
+  } else if (status.state === 'completed') {
+    syncStatusElement.textContent = `最近同步完成：新增 ${status.added_battle_count} 条对战、${status.added_coop_count} 条打工；共 ${status.battle_count} 条对战、${status.coop_count} 条打工。`;
+  } else if (status.state === 'error') {
+    syncStatusElement.textContent = `同步失败：${status.error || status.message}`;
+  } else {
+    syncStatusElement.textContent = status.message;
+  }
+  syncStatusElement.classList.toggle('syncing', busy);
+  syncStatusElement.classList.toggle('error', status.state === 'error');
 }
 
 function displayNumber(value, digits = 0) {
@@ -122,7 +149,7 @@ function renderAccountList(items) {
         <div class="account-actions">
           ${account.active ? '<span class="badge">当前</span>' : `<button class="secondary" data-account="${escapeHtml(account.account_id)}">使用</button>`}
           ${account.splatnet_ready
-            ? `<span class="badge badge-secondary">SplatNet</span><button class="secondary" data-sync-account="${escapeHtml(account.account_id)}">同步历史</button>`
+            ? `<span class="badge badge-secondary">SplatNet</span><button class="secondary" data-sync-account="${escapeHtml(account.account_id)}" ${currentSyncStatus?.account_id === account.account_id && ['preparing', 'syncing', 'refreshing'].includes(currentSyncStatus.state) ? 'disabled' : ''}>${currentSyncStatus?.account_id === account.account_id && ['preparing', 'syncing', 'refreshing'].includes(currentSyncStatus.state) ? '同步中…' : '同步历史'}</button>`
             : `<button class="secondary" data-refresh-account="${escapeHtml(account.account_id)}">获取 SplatNet 权限</button>`}
         </div>
       </div>`).join('')
@@ -142,7 +169,10 @@ function renderAccountList(items) {
       try {
         await invoke('refresh_splatnet_tokens', { accountId: button.dataset.refreshAccount });
         await refreshAccounts();
-        setMessage('SplatNet 权限获取成功。');
+        setMessage('SplatNet 权限获取成功，正在开始首次历史同步…');
+        const summary = await invoke('sync_history', { accountId: button.dataset.refreshAccount });
+        await refreshAccounts();
+        setMessage(`首次历史同步完成：新增 ${summary.added_battle_count} 条对战、${summary.added_coop_count} 条打工。`);
       } catch (error) {
         setMessage(String(error), true);
         button.disabled = false;
@@ -153,7 +183,7 @@ function renderAccountList(items) {
   accounts.querySelectorAll('[data-sync-account]').forEach((button) => {
     button.addEventListener('click', async () => {
       button.disabled = true;
-      setMessage('正在从 SplatNet 获取最近 50 条对战和 50 条打工记录…');
+      setMessage('正在从 SplatNet 检查新数据…');
       try {
         const summary = await invoke('sync_history', { accountId: button.dataset.syncAccount });
         await refreshAccounts();
@@ -173,7 +203,29 @@ async function refreshAccounts() {
   setMessage(result.length ? '账号信息已保存到系统凭据库。' : '请先登录一个 Nintendo Account。');
 }
 
+async function refreshSyncStatus() {
+  try {
+    const status = await invoke('get_sync_status');
+    const completedAt = status?.completed_at_ms || null;
+    renderSyncStatus(status);
+    if (status?.state === 'completed' && completedAt && completedAt !== lastCompletedSyncAt) {
+      lastCompletedSyncAt = completedAt;
+      await refreshAccounts();
+    }
+  } catch (error) {
+    renderSyncStatus({ state: 'error', message: String(error), error: String(error) });
+  }
+}
+
 refreshOverlayButton.addEventListener('click', () => refreshOverlay());
+
+window.setInterval(() => {
+  refreshSyncStatus();
+}, 1000);
+
+window.setInterval(() => {
+  refreshOverlay();
+}, 5000);
 
 loginButton.addEventListener('click', async () => {
   loginButton.disabled = true;
@@ -200,11 +252,20 @@ authenticateButton.addEventListener('click', async () => {
   authenticateButton.disabled = true;
   setMessage('正在认证 Nintendo Account 并生成 SplatNet 凭据…');
   try {
-    await invoke('complete_nintendo_login', { callbackUrl });
+    const accountId = await invoke('complete_nintendo_login', { callbackUrl });
     pastePanel.classList.remove('visible');
     loginLink.value = '';
     await refreshAccounts();
-    setMessage('Nintendo Account 登录成功。SplatNet 权限可单独获取。');
+    setMessage('Nintendo Account 登录成功，正在获取 SplatNet 权限并开始首次历史同步…');
+    try {
+      await invoke('refresh_splatnet_tokens', { accountId });
+      const summary = await invoke('sync_history', { accountId });
+      await refreshAccounts();
+      setMessage(`首次历史同步完成：新增 ${summary.added_battle_count} 条对战、${summary.added_coop_count} 条打工。`);
+    } catch (error) {
+      await refreshAccounts();
+      setMessage(`Nintendo Account 已登录，但 SplatNet 首次同步失败：${String(error)}。可在账号列表中重试。`, true);
+    }
   } catch (error) {
     setMessage(String(error), true);
   } finally {
@@ -222,3 +283,4 @@ function escapeHtml(value) {
 }
 
 refreshAccounts().catch((error) => setMessage(String(error), true));
+refreshSyncStatus();
