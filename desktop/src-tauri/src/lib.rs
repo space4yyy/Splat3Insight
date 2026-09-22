@@ -83,6 +83,14 @@ impl SyncRuntime {
         }
     }
 
+    fn is_in_progress(&self, account_id: &str) -> Result<bool, String> {
+        Ok(self
+            .in_progress
+            .lock()
+            .map_err(|_| "sync state is locked")?
+            .contains(account_id))
+    }
+
     fn update(&self, account_id: &str, update: impl FnOnce(&mut SyncStatus)) {
         if let Ok(mut statuses) = self.statuses.lock() {
             let status = statuses
@@ -167,6 +175,45 @@ fn write_auth_log(path: &Path, stage: &str, message: &str) {
     let safe_message = message.replace(['\n', '\r'], " ");
     append_timestamped_log(path, stage, &safe_message);
     log_console(&format!("splat3-auth:{stage}"), &safe_message);
+}
+
+fn write_account_log(
+    path: &Path,
+    stage: &str,
+    display_name: &str,
+    account_id: &str,
+    message: &str,
+) {
+    write_auth_log(
+        path,
+        stage,
+        &format!("账号“{display_name}”（ID: {account_id}）：{message}"),
+    );
+}
+
+fn account_display_name(registry: &Arc<Mutex<Registry>>, account_id: &str) -> String {
+    registry
+        .lock()
+        .ok()
+        .and_then(|registry| {
+            registry
+                .accounts()
+                .iter()
+                .find(|account| account.account_id == account_id)
+                .map(|account| account.display_name.clone())
+        })
+        .unwrap_or_else(|| "未知账号".to_owned())
+}
+
+fn account_auth_error(
+    path: &Path,
+    stage: &str,
+    display_name: &str,
+    account_id: &str,
+    error: String,
+) -> String {
+    write_account_log(path, stage, display_name, account_id, &error);
+    format!("{error}\n认证日志：{}", path.display())
 }
 
 pub(crate) fn append_timestamped_log(path: &Path, scope: &str, message: &str) {
@@ -273,6 +320,7 @@ async fn sync_account(
     sync_runtime: Arc<SyncRuntime>,
 ) -> Result<HistorySyncSummary, String> {
     sync_runtime.try_start(&account_id)?;
+    let display_name = account_display_name(&registry, &account_id);
 
     let mut result = sync_account_inner(
         &account_id,
@@ -295,17 +343,21 @@ async fn sync_account(
                 status.retry_attempt = 0;
                 status.error = None;
             });
-            write_auth_log(
+            write_account_log(
                 &auth_log_path,
                 "token-refresh",
+                &display_name,
+                &account_id,
                 "检测到 SplatNet token 失效，尝试使用已保存的 Nintendo session token 自动刷新",
             );
             match refresh_splatnet_tokens_for_account(&account_id, &registry, &auth_log_path).await
             {
                 Ok(()) => {
-                    write_auth_log(
+                    write_account_log(
                         &auth_log_path,
                         "token-refresh",
+                        &display_name,
+                        &account_id,
                         "SplatNet token 自动刷新成功，重试历史同步",
                     );
                     result = sync_account_inner(
@@ -412,11 +464,25 @@ async fn sync_account_inner(
         status.error = None;
     });
 
-    let existing_archive = load_history_cache(history_dir, account_id)
-        .map_err(|error| auth_error(auth_log_path, "history-load", error))?;
+    let existing_archive = load_history_cache(history_dir, account_id).map_err(|error| {
+        account_auth_error(
+            auth_log_path,
+            "history-load",
+            &metadata.display_name,
+            account_id,
+            error,
+        )
+    })?;
     let initial_sync = existing_archive.is_none()
-        || history_store::needs_full_sync(history_dir, account_id)
-            .map_err(|error| auth_error(auth_log_path, "history-state", error))?;
+        || history_store::needs_full_sync(history_dir, account_id).map_err(|error| {
+            account_auth_error(
+                auth_log_path,
+                "history-state",
+                &metadata.display_name,
+                account_id,
+                error,
+            )
+        })?;
     let mut archive = existing_archive.unwrap_or(HistoryCache {
         schema_version: 1,
         fetched_at_ms: 0,
@@ -451,9 +517,11 @@ async fn sync_account_inner(
         status.battle_count = archive.battles.len();
         status.coop_count = archive.coop.len();
     });
-    write_auth_log(
+    write_account_log(
         auth_log_path,
         "history-sync",
+        &metadata.display_name,
+        account_id,
         if initial_sync {
             "开始首次完整同步：拉取当前账号可用的全部对战和打工记录"
         } else {
@@ -462,12 +530,25 @@ async fn sync_account_inner(
     );
 
     let fetched_at_ms = now_ms();
-    history_store::mark_sync_started(history_dir, account_id, fetched_at_ms)
-        .map_err(|error| auth_error(auth_log_path, "history-state", error))?;
+    history_store::mark_sync_started(history_dir, account_id, fetched_at_ms).map_err(|error| {
+        account_auth_error(
+            auth_log_path,
+            "history-state",
+            &metadata.display_name,
+            account_id,
+            error,
+        )
+    })?;
 
-    let client = SplatNetDataClient::connect(config)
-        .await
-        .map_err(|error| auth_error(auth_log_path, "history-client", error))?;
+    let client = SplatNetDataClient::connect(config).await.map_err(|error| {
+        account_auth_error(
+            auth_log_path,
+            "history-client",
+            &metadata.display_name,
+            account_id,
+            error,
+        )
+    })?;
     let progress_status = Arc::clone(sync_runtime);
     let progress_account_id = account_id.to_owned();
     let progress: HistoryProgressCallback = Arc::new(move |progress: HistoryFetchProgress| {
@@ -506,7 +587,15 @@ async fn sync_account_inner(
                 Some(Arc::clone(&on_record)),
             )
             .await
-            .map_err(|error| auth_error(auth_log_path, "history-fetch", error))?
+            .map_err(|error| {
+                account_auth_error(
+                    auth_log_path,
+                    "history-fetch",
+                    &metadata.display_name,
+                    account_id,
+                    error,
+                )
+            })?
     } else {
         client
             .fetch_history_incremental_with_progress_and_records(
@@ -519,17 +608,34 @@ async fn sync_account_inner(
                 Some(Arc::clone(&on_record)),
             )
             .await
-            .map_err(|error| auth_error(auth_log_path, "history-fetch", error))?
+            .map_err(|error| {
+                account_auth_error(
+                    auth_log_path,
+                    "history-fetch",
+                    &metadata.display_name,
+                    account_id,
+                    error,
+                )
+            })?
     };
-    history_store::mark_sync_complete(history_dir, account_id, fetched_at_ms)
-        .map_err(|error| auth_error(auth_log_path, "history-state", error))?;
+    history_store::mark_sync_complete(history_dir, account_id, fetched_at_ms).map_err(|error| {
+        account_auth_error(
+            auth_log_path,
+            "history-state",
+            &metadata.display_name,
+            account_id,
+            error,
+        )
+    })?;
     let (added_battle_count, added_coop_count) = archive.merge(cache);
     let mut summary = archive.summary();
     summary.added_battle_count = added_battle_count;
     summary.added_coop_count = added_coop_count;
-    write_auth_log(
+    write_account_log(
         auth_log_path,
         "history-sync",
+        &metadata.display_name,
+        account_id,
         &format!(
             "历史记录同步成功：新增 {} 条对战、{} 条打工；归档共 {} 条对战、{} 条打工",
             summary.added_battle_count,
@@ -666,12 +772,56 @@ fn export_history(
 ) -> Result<String, String> {
     let account_id = resolve_account_id(&state.registry, account_id)?;
     let path = history_store::export(&state.history_dir, &account_id)?;
-    write_auth_log(
+    let display_name = account_display_name(&state.registry, &account_id);
+    write_account_log(
         &state.auth_log_path,
         "history-export",
+        &display_name,
+        &account_id,
         &format!("历史数据已导出：{}", path.display()),
     );
     Ok(path.display().to_string())
+}
+
+#[tauri::command]
+fn remove_account(account_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let account_id = account_id.trim().to_owned();
+    if account_id.is_empty() {
+        return Err("账号 ID 不能为空".to_owned());
+    }
+
+    let mut registry = state
+        .registry
+        .lock()
+        .map_err(|_| "account registry is locked")?;
+    if !registry
+        .accounts()
+        .iter()
+        .any(|account| account.account_id == account_id)
+    {
+        return Err(format!("unknown account: {account_id}"));
+    }
+    if state.sync_runtime.is_in_progress(&account_id)? {
+        return Err("该账号正在同步，请等待同步完成后再删除".to_owned());
+    }
+
+    let display_name = registry
+        .accounts()
+        .iter()
+        .find(|account| account.account_id == account_id)
+        .map(|account| account.display_name.clone())
+        .unwrap_or_else(|| "未知账号".to_owned());
+    history_store::delete_account(&state.history_dir, &account_id)?;
+    registry.remove(&account_id)?;
+    write_account_log(
+        &state.auth_log_path,
+        "account-delete",
+        &display_name,
+        &account_id,
+        "账号及本地历史数据已删除",
+    );
+    state.sync_trigger.notify_one();
+    Ok(())
 }
 
 #[tauri::command]
@@ -742,7 +892,26 @@ fn begin_nintendo_login(state: State<'_, AppState>) -> Result<String, String> {
         .login_attempt
         .lock()
         .map_err(|_| "login state is locked")? = Some(attempt);
+    write_auth_log(
+        &state.auth_log_path,
+        "nintendo-login",
+        "开始添加 Nintendo Account，已生成授权链接",
+    );
     Ok(authorize_url)
+}
+
+#[tauri::command]
+fn cancel_nintendo_login(state: State<'_, AppState>) -> Result<(), String> {
+    *state
+        .login_attempt
+        .lock()
+        .map_err(|_| "login state is locked")? = None;
+    write_auth_log(
+        &state.auth_log_path,
+        "nintendo-login",
+        "已取消 Nintendo Account 添加流程",
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -771,16 +940,20 @@ async fn complete_nintendo_login(
     let identity = exchange_session_token(callback)
         .await
         .map_err(|error| auth_error(&auth_log_path, "nintendo-session", error))?;
-    write_auth_log(
+    let account_id = identity.account_id.clone();
+    let display_name = identity.display_name.clone();
+    write_account_log(
         &auth_log_path,
         "nintendo-session",
+        &display_name,
+        &account_id,
         "Nintendo session token 交换成功",
     );
     let timestamp = now_ms();
 
     let metadata = AccountMetadata {
-        account_id: identity.account_id.clone(),
-        display_name: identity.display_name,
+        account_id: account_id.clone(),
+        display_name: display_name.clone(),
         language: identity.language,
         country: identity.country,
         created_at_ms: timestamp,
@@ -799,14 +972,24 @@ async fn complete_nintendo_login(
         .lock()
         .map_err(|_| "account registry is locked")?;
     registry.upsert(metadata, secret)?;
-    write_auth_log(
+    write_account_log(
         &auth_log_path,
         "nintendo-session",
+        &display_name,
+        &account_id,
         "Nintendo Account 已保存，应用将继续获取 SplatNet token",
     );
-    registry.set_active(&identity.account_id, timestamp)?;
+    registry.set_active(&account_id, timestamp)?;
+    drop(registry);
+    write_account_log(
+        &auth_log_path,
+        "account-switch",
+        &display_name,
+        &account_id,
+        "新账号已设为当前账号",
+    );
     state.sync_trigger.notify_one();
-    Ok(identity.account_id)
+    Ok(account_id)
 }
 
 async fn refresh_splatnet_tokens_for_account(
@@ -828,23 +1011,41 @@ async fn refresh_splatnet_tokens_for_account(
         (metadata, secret.session_token)
     };
 
-    write_auth_log(
+    write_account_log(
         auth_log_path,
         "splatnet-refresh",
+        &metadata.display_name,
+        account_id,
         "使用已保存的 Nintendo session token 刷新 SplatNet token",
     );
-    let identity = refresh_identity(&session_token)
-        .await
-        .map_err(|error| auth_error(auth_log_path, "nintendo-session-refresh", error))?;
+    let identity = refresh_identity(&session_token).await.map_err(|error| {
+        account_auth_error(
+            auth_log_path,
+            "nintendo-session-refresh",
+            &metadata.display_name,
+            account_id,
+            error,
+        )
+    })?;
     let auth_config = SplatNetAuthConfig::default();
-    write_auth_log(
+    write_account_log(
         &auth_log_path,
         "f-config",
+        &metadata.display_name,
+        account_id,
         &format!("使用 nxapi f 参数服务：{NXAPI_F_GENERATION_URL}"),
     );
     let splatnet_tokens = exchange_splatnet_tokens(&identity, &auth_config)
         .await
-        .map_err(|error| auth_error(auth_log_path, "splatnet-tokens", error))?;
+        .map_err(|error| {
+            account_auth_error(
+                auth_log_path,
+                "splatnet-tokens",
+                &metadata.display_name,
+                account_id,
+                error,
+            )
+        })?;
     let secret = AccountSecret {
         session_token,
         game_web_token: Some(splatnet_tokens.game_web_token),
@@ -854,12 +1055,15 @@ async fn refresh_splatnet_tokens_for_account(
     metadata.display_name = identity.display_name;
     metadata.language = identity.language;
     metadata.country = identity.country;
+    let display_name = metadata.display_name.clone();
 
     let mut registry = registry.lock().map_err(|_| "account registry is locked")?;
     registry.upsert(metadata, secret)?;
-    write_auth_log(
+    write_account_log(
         auth_log_path,
         "splatnet-tokens",
+        &display_name,
+        account_id,
         "game web token 和 bullet token 获取成功",
     );
     Ok(())
@@ -896,7 +1100,32 @@ fn set_active_account(account_id: String, state: State<'_, AppState>) -> Result<
         .registry
         .lock()
         .map_err(|_| "account registry is locked")?;
+    let target = registry
+        .accounts()
+        .iter()
+        .find(|account| account.account_id == account_id)
+        .cloned()
+        .ok_or_else(|| format!("unknown account: {account_id}"))?;
+    let previous = registry.active_account().cloned();
     registry.set_active(&account_id, now_ms())?;
+    drop(registry);
+    let previous_label = previous
+        .as_ref()
+        .map(|account| {
+            format!(
+                "账号“{}”（ID: {}）",
+                account.display_name, account.account_id
+            )
+        })
+        .unwrap_or_else(|| "无".to_owned());
+    write_auth_log(
+        &state.auth_log_path,
+        "account-switch",
+        &format!(
+            "切换当前账号：{previous_label} -> 账号“{}”（ID: {}）",
+            target.display_name, target.account_id
+        ),
+    );
     state.sync_trigger.notify_one();
     Ok(())
 }
@@ -948,11 +1177,13 @@ pub fn run() {
             list_accounts,
             get_sync_status,
             export_history,
+            remove_account,
             get_overlay_service_status,
             start_overlay_service,
             stop_overlay_service,
             get_overlay_state,
             begin_nintendo_login,
+            cancel_nintendo_login,
             complete_nintendo_login,
             refresh_splatnet_tokens,
             sync_history,

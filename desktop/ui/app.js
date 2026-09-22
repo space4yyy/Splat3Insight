@@ -6,15 +6,14 @@ const accounts = document.querySelector('#accounts');
 const loginButton = document.querySelector('#login');
 const pastePanel = document.querySelector('#paste-panel');
 const loginLink = document.querySelector('#login-link');
+const cancelLoginButton = document.querySelector('#cancel-login');
 const authenticateButton = document.querySelector('#authenticate');
 const overlayPreview = document.querySelector('#overlay-preview');
-const refreshOverlayButton = document.querySelector('#refresh-overlay');
 const syncStatusElement = document.querySelector('#sync-status');
 const overlayServiceStatusElement = document.querySelector('#overlay-service-status');
 const startOverlayServiceButton = document.querySelector('#start-overlay-service');
 const stopOverlayServiceButton = document.querySelector('#stop-overlay-service');
 const copyOverlayUrlButton = document.querySelector('#copy-overlay-url');
-const exportHistoryButton = document.querySelector('#export-history');
 
 const OBS_OVERLAY_URL = 'http://127.0.0.1:17353/overlay';
 
@@ -45,7 +44,7 @@ function renderSyncStatus(status) {
       : '';
     syncStatusElement.textContent = `${prefix}：${status.message}${progress}${retry}`;
   } else if (status.state === 'completed') {
-    syncStatusElement.textContent = `最近同步完成：新增 ${status.added_battle_count} 条对战、${status.added_coop_count} 条打工；共 ${status.battle_count} 条对战、${status.coop_count} 条打工。`;
+    syncStatusElement.textContent = `最近同步完成：新增 ${status.added_battle_count} 条对战、${status.added_coop_count} 条打工。`;
   } else if (status.state === 'error') {
     syncStatusElement.textContent = `同步失败：${status.error || status.message}`;
   } else {
@@ -66,7 +65,7 @@ function renderOverlayServiceStatus(status) {
   const starting = status.state === 'starting';
   const stopped = status.state === 'stopped';
   overlayServiceStatusElement.textContent = running
-    ? `● ${status.message} · ${status.url}`
+    ? `● ${status.message}`
     : `${status.message}${status.error ? `：${status.error}` : ''}`;
   overlayServiceStatusElement.className = `service-status ${running ? 'running' : starting ? 'starting' : stopped ? 'stopped' : 'error'}`;
   startOverlayServiceButton.hidden = running || starting;
@@ -107,6 +106,25 @@ function localizeRule(value) {
   return simplifiedRuleLabels[label] || label || '—';
 }
 
+function fitOverlayPreview() {
+  const viewport = overlayPreview.querySelector('.overlay-preview__viewport');
+  const scaleElement = overlayPreview.querySelector('.overlay-preview__scale');
+  const card = overlayPreview.querySelector('.overlay-card');
+  if (!viewport || !scaleElement || !card) {
+    return;
+  }
+
+  const naturalWidth = card.offsetWidth;
+  const naturalHeight = card.offsetHeight;
+  const availableWidth = overlayPreview.clientWidth;
+  const scale = naturalWidth > 0 && availableWidth > 0
+    ? Math.min(1, availableWidth / naturalWidth)
+    : 1;
+
+  scaleElement.style.transform = `scale(${scale})`;
+  viewport.style.height = `${Math.ceil(naturalHeight * scale)}px`;
+}
+
 function renderOverlay(state) {
   const battle = state?.selected;
   if (!battle) {
@@ -132,33 +150,40 @@ function renderOverlay(state) {
   const deltaClass = battle.power_delta > 0 ? 'positive' : battle.power_delta < 0 ? 'negative' : '';
 
   overlayPreview.innerHTML = `
-    <section class="overlay-card">
-      <div class="overlay-card__top">
-        <div class="overlay-card__mode ${modeClass}">
-          <span>${escapeHtml(localizeRule(battle.rule))}</span>
-          ${bankaraMode ? `<small class="overlay-card__bankara-mode">${bankaraMode}</small>` : ''}
-        </div>
-        <div class="overlay-card__summary">
-          <span class="overlay-card__summary-win">Win ${summary.win}</span>
-          <span class="overlay-card__summary-lose">Lose ${summary.lose}</span>
-          <span>${displayNumber(summary.win_rate, 0)}%</span>
-        </div>
-      </div>
-      <div class="overlay-card__bottom">
-        <div class="overlay-card__power">
-          <span class="overlay-card__power-value ${placeholderClass(battle.power)}">${displayNumber(battle.power, 1)}</span>
-          <span class="overlay-card__power-delta ${deltaClass} ${placeholderClass(battle.power_delta)}">${delta}</span>
-        </div>
-        <div class="overlay-card__stats">
-          <div class="overlay-card__kad">
-            <span class="${placeholderClass(kills)}">${displayNumber(kills)}<small>(${displayNumber(battle.assists)})k</small></span>
-            <span class="${placeholderClass(deaths)}">${displayNumber(deaths)}<small>d</small></span>
-            <span class="${kdMissing ? 'is-placeholder' : ''}">${kd}<small>k/d</small></span>
+    <div class="overlay-preview__viewport">
+      <div class="overlay-preview__scale">
+        <section class="overlay-card">
+          <div class="overlay-card__top">
+            <div class="overlay-card__mode ${modeClass}">
+              <span>${escapeHtml(localizeRule(battle.rule))}</span>
+              ${bankaraMode ? `<small class="overlay-card__bankara-mode">${bankaraMode}</small>` : ''}
+            </div>
+            <div class="overlay-card__summary">
+              <span class="overlay-card__summary-win">Win ${summary.win}</span>
+              <span class="overlay-card__summary-lose">Lose ${summary.lose}</span>
+              <span>${displayNumber(summary.win_rate, 0)}%</span>
+            </div>
           </div>
-        </div>
+          <div class="overlay-card__bottom">
+            <div class="overlay-card__power">
+              <span class="overlay-card__power-value ${placeholderClass(battle.power)}">${displayNumber(battle.power, 1)}</span>
+              <span class="overlay-card__power-delta ${deltaClass} ${placeholderClass(battle.power_delta)}">${delta}</span>
+            </div>
+            <div class="overlay-card__stats">
+              <div class="overlay-card__kad">
+                <span class="${placeholderClass(kills)}">${displayNumber(kills)}<small>(${displayNumber(battle.assists)})k</small></span>
+                <span class="${placeholderClass(deaths)}">${displayNumber(deaths)}<small>d</small></span>
+                <span class="${kdMissing ? 'is-placeholder' : ''}">${kd}<small>k/d</small></span>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
-    </section>`;
+    </div>`;
+  fitOverlayPreview();
 }
+
+window.addEventListener('resize', fitOverlayPreview);
 
 async function refreshOverlay(accountId = null) {
   try {
@@ -173,17 +198,16 @@ async function refreshOverlay(accountId = null) {
 function renderAccountList(items) {
   accounts.innerHTML = items.length
     ? items.map((account) => `
-      <div class="account row">
-        <div>
-          <strong>${escapeHtml(account.display_name)}</strong>
-          <br /><small>${escapeHtml(account.language || '—')} · ${escapeHtml(account.account_id)}</small>
-          <br /><small>历史：${account.history_battle_count} 对战 · ${account.history_coop_count} 打工</small>
+      <div class="account">
+        <div class="account-main">
+          <strong class="account-name">${escapeHtml(account.display_name)}</strong>
+          <small class="account-history">历史：${account.history_battle_count} 对战 · ${account.history_coop_count} 打工</small>
         </div>
         <div class="account-actions">
           ${account.active ? '<span class="badge">当前</span>' : `<button class="secondary" data-account="${escapeHtml(account.account_id)}">使用</button>`}
-          ${account.splatnet_ready
-            ? `<span class="badge badge-secondary">SplatNet</span><button class="secondary" data-sync-account="${escapeHtml(account.account_id)}" ${currentSyncStatus?.account_id === account.account_id && ['preparing', 'syncing', 'refreshing'].includes(currentSyncStatus.state) ? 'disabled' : ''}>${currentSyncStatus?.account_id === account.account_id && ['preparing', 'syncing', 'refreshing'].includes(currentSyncStatus.state) ? '同步中…' : '同步历史'}</button>`
-            : `<button class="secondary" data-refresh-account="${escapeHtml(account.account_id)}">获取 SplatNet 权限</button>`}
+          <button class="secondary" data-export-account="${escapeHtml(account.account_id)}">导出</button>
+          <button class="danger" data-delete-account="${escapeHtml(account.account_id)}" data-account-name="${escapeHtml(account.display_name)}">删除</button>
+          ${account.splatnet_ready ? '' : `<button class="secondary" data-refresh-account="${escapeHtml(account.account_id)}">获取权限</button>`}
         </div>
       </div>`).join('')
     : '<p class="status">还没有登录账号。</p>';
@@ -213,20 +237,51 @@ function renderAccountList(items) {
     });
   });
 
-  accounts.querySelectorAll('[data-sync-account]').forEach((button) => {
+  accounts.querySelectorAll('[data-export-account]').forEach((button) => {
     button.addEventListener('click', async () => {
       button.disabled = true;
-      setMessage('正在从 SplatNet 检查新数据…');
       try {
-        const summary = await invoke('sync_history', { accountId: button.dataset.syncAccount });
-        await refreshAccounts();
-        setMessage(`历史同步成功：新增 ${summary.added_battle_count} 条对战、${summary.added_coop_count} 条打工；归档共 ${summary.battle_count} 条对战、${summary.coop_count} 条打工。`);
+        const path = await invoke('export_history', { accountId: button.dataset.exportAccount });
+        setMessage(`历史数据已导出：${path}`);
       } catch (error) {
-        setMessage(String(error), true);
+        setMessage(`导出历史数据失败：${String(error)}`, true);
+      } finally {
         button.disabled = false;
       }
     });
   });
+
+  accounts.querySelectorAll('[data-delete-account]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const accountName = button.dataset.accountName || '此账号';
+      if (button.dataset.deleteConfirmed !== 'true') {
+        button.dataset.deleteConfirmed = 'true';
+        button.textContent = '确认删除';
+        setMessage(`请再次点击“确认删除”以删除${accountName}及其本地历史数据。`);
+        window.setTimeout(() => {
+          if (button.isConnected && button.dataset.deleteConfirmed === 'true') {
+            button.dataset.deleteConfirmed = 'false';
+            button.textContent = '删除';
+          }
+        }, 5000);
+        return;
+      }
+
+      button.dataset.deleteConfirmed = 'false';
+      button.disabled = true;
+      setMessage(`正在删除${accountName}及其本地历史数据…`);
+      try {
+        await invoke('remove_account', { accountId: button.dataset.deleteAccount });
+        await refreshAccounts();
+        setMessage(`已删除${accountName}及其本地历史数据。`);
+      } catch (error) {
+        setMessage(`删除${accountName}失败：${String(error)}`, true);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+
 }
 
 async function refreshAccounts() {
@@ -258,8 +313,6 @@ async function refreshOverlayServiceStatus() {
     renderOverlayServiceStatus({ error: String(error) });
   }
 }
-
-refreshOverlayButton.addEventListener('click', () => refreshOverlay());
 
 startOverlayServiceButton.addEventListener('click', async () => {
   startOverlayServiceButton.disabled = true;
@@ -306,18 +359,6 @@ copyOverlayUrlButton.addEventListener('click', async () => {
   }
 });
 
-exportHistoryButton.addEventListener('click', async () => {
-  exportHistoryButton.disabled = true;
-  try {
-    const path = await invoke('export_history', { accountId: null });
-    setMessage(`历史数据已导出：${path}`);
-  } catch (error) {
-    setMessage(`导出历史数据失败：${String(error)}`, true);
-  } finally {
-    exportHistoryButton.disabled = false;
-  }
-});
-
 window.setInterval(() => {
   refreshSyncStatus();
 }, 1000);
@@ -346,7 +387,21 @@ loginButton.addEventListener('click', async () => {
   }
 });
 
-authenticateButton.addEventListener('click', async () => {
+cancelLoginButton.addEventListener('click', async () => {
+  pastePanel.classList.remove('visible');
+  loginLink.value = '';
+  try {
+    await invoke('cancel_nintendo_login');
+    setMessage('已取消添加 Nintendo Account。');
+  } catch (error) {
+    setMessage(`取消添加账号失败：${String(error)}`, true);
+  }
+});
+
+async function authenticateNintendoAccount() {
+  if (authenticateButton.disabled) {
+    return;
+  }
   const callbackUrl = loginLink.value.trim();
   if (!callbackUrl) {
     setMessage('请先粘贴 Nintendo“选择此人”按钮的链接。', true);
@@ -358,7 +413,6 @@ authenticateButton.addEventListener('click', async () => {
     const accountId = await invoke('complete_nintendo_login', { callbackUrl });
     pastePanel.classList.remove('visible');
     loginLink.value = '';
-    await refreshAccounts();
     setMessage('Nintendo Account 登录成功，正在获取 SplatNet 权限并开始首次历史同步…');
     try {
       await invoke('refresh_splatnet_tokens', { accountId });
@@ -374,6 +428,16 @@ authenticateButton.addEventListener('click', async () => {
   } finally {
     authenticateButton.disabled = false;
   }
+}
+
+authenticateButton.addEventListener('pointerdown', (event) => {
+  if (event.button === 0) {
+    event.preventDefault();
+    void authenticateNintendoAccount();
+  }
+});
+authenticateButton.addEventListener('click', () => {
+  void authenticateNintendoAccount();
 });
 
 function escapeHtml(value) {

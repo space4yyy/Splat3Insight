@@ -463,6 +463,69 @@ pub(crate) fn export(history_dir: &Path, account_id: &str) -> Result<PathBuf, St
     Ok(path)
 }
 
+pub(crate) fn delete_account(history_dir: &Path, account_id: &str) -> Result<(), String> {
+    let mut connection = open_database(history_dir)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("开启账号历史删除事务失败：{error}"))?;
+    transaction
+        .execute(
+            "DELETE FROM history_records WHERE account_id = ?1",
+            [account_id],
+        )
+        .map_err(|error| format!("删除账号历史记录失败：{error}"))?;
+    transaction
+        .execute(
+            "DELETE FROM history_meta WHERE account_id = ?1",
+            [account_id],
+        )
+        .map_err(|error| format!("删除账号历史状态失败：{error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("提交账号历史删除事务失败：{error}"))?;
+
+    remove_file_if_present(&legacy_path(history_dir, account_id), "旧历史文件")?;
+    remove_matching_files(
+        &history_dir.join(LEGACY_DIRECTORY),
+        &format!("{account_id}-"),
+        "旧历史归档",
+    )?;
+    remove_matching_files(
+        &history_dir.join(EXPORT_DIRECTORY),
+        &format!("{account_id}-"),
+        "历史导出文件",
+    )
+}
+
+fn remove_file_if_present(path: &Path, description: &str) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("删除{description}失败：{error}")),
+    }
+}
+
+fn remove_matching_files(directory: &Path, prefix: &str, description: &str) -> Result<(), String> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("读取{description}目录失败：{error}")),
+    };
+
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("读取{description}失败：{error}"))?;
+        let file_name = entry.file_name();
+        let is_file = entry
+            .file_type()
+            .map_err(|error| format!("读取{description}类型失败：{error}"))?
+            .is_file();
+        if file_name.to_string_lossy().starts_with(prefix) && is_file {
+            remove_file_if_present(&entry.path(), description)?;
+        }
+    }
+    Ok(())
+}
+
 fn encode_raw_json(raw: &Value) -> Result<Vec<u8>, String> {
     let bytes = serde_json::to_vec(raw).map_err(|error| format!("序列化原始记录失败：{error}"))?;
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -566,6 +629,31 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn deletes_account_records_and_export_files() {
+        let directory = tempdir().unwrap();
+        save_cache(directory.path(), "account", &sample_cache()).unwrap();
+        let export_path = export(directory.path(), "account").unwrap();
+        fs::write(
+            legacy_path(directory.path(), "account"),
+            serde_json::to_vec(&sample_cache()).unwrap(),
+        )
+        .unwrap();
+        let legacy_archive = directory
+            .path()
+            .join(LEGACY_DIRECTORY)
+            .join("account-old.json");
+        fs::create_dir_all(legacy_archive.parent().unwrap()).unwrap();
+        fs::write(&legacy_archive, b"legacy").unwrap();
+
+        delete_account(directory.path(), "account").unwrap();
+
+        assert!(load_cache(directory.path(), "account").unwrap().is_none());
+        assert!(!export_path.exists());
+        assert!(!legacy_path(directory.path(), "account").exists());
+        assert!(!legacy_archive.exists());
     }
 
     #[test]

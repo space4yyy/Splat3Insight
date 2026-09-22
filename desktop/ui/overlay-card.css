@@ -1,0 +1,190 @@
+@font-face {
+  font-family: "DFP GBZY7";
+  src: url("./fonts/DFP_GBZY7.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+:root {
+  font-family: "DFP GBZY7", Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
+  --overlay-base-width: 460px;
+  --overlay-base-height: 100px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.overlay-card {
+  width: var(--overlay-base-width);
+  height: var(--overlay-base-height);
+  min-width: 0;
+  max-width: none;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+  padding: 8px 10px 10px;
+  border-radius: 6px;
+  color: #f5f5f2;
+  background: #383838;
+  font-family: "DFP GBZY7", Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
+}
+
+.overlay-card__top,
+.overlay-card__bottom {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.overlay-card__mode {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  color: #f5f5f2;
+  font-size: 21px;
+  line-height: .9;
+  letter-spacing: .04em;
+}
+
+.overlay-card__mode.mode-x-match {
+  color: #0fdb9b;
+}
+
+.overlay-card__mode.mode-bankara {
+  color: #f54910;
+}
+
+.overlay-card__bankara-mode {
+  color: #f54910;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  margin-bottom: 1px;
+  white-space: nowrap;
+}
+
+.overlay-card__summary {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-left: auto;
+  color: #f5f5f2;
+  font-size: 20px;
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
+
+.overlay-card__summary-win {
+  color: #eaff3d;
+}
+
+.overlay-card__summary-lose {
+  color: #4d7cff;
+}
+
+.overlay-card__bottom {
+  align-items: flex-end;
+  justify-content: flex-start;
+  margin-top: 10px;
+  padding-top: 0;
+}
+
+.overlay-card__power {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  min-height: 44px;
+  font-size: 60px;
+  line-height: .82;
+  letter-spacing: -.08em;
+}
+
+.overlay-card__power-value {
+  color: #fff;
+}
+
+.overlay-card__power-delta {
+  margin-bottom: 0;
+  font-size: 22px;
+  line-height: .82;
+  letter-spacing: -.04em;
+}
+
+.overlay-card__power-value.is-placeholder,
+.overlay-card__power-delta.is-placeholder,
+.overlay-card__kad .is-placeholder {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.overlay-card__power-value.is-placeholder {
+  font-size: 37px;
+  margin-bottom: 8px;
+}
+
+.overlay-card__power-delta.is-placeholder {
+  font-size: 18px;
+  margin-bottom: 2px;
+}
+
+.overlay-card__power-delta.positive {
+  color: #eaff3d;
+}
+
+.overlay-card__power-delta.negative {
+  color: #4d7cff;
+}
+
+.overlay-card__stats {
+  display: flex;
+  align-items: flex-end;
+  margin-left: auto;
+}
+
+.overlay-card__kad {
+  display: flex;
+  gap: 10px;
+  color: #f5f5f2;
+  font-family: inherit;
+  font-size: 28px;
+  font-weight: 800;
+}
+
+.overlay-card__kad span {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+}
+
+.overlay-card__kad span:first-child {
+  color: #eaff3d;
+}
+
+.overlay-card__kad small {
+  color: #bdbdbd;
+  font-size: 15px;
+  letter-spacing: .04em;
+}
+
+.is-placeholder {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.overlay-card__power-value.is-placeholder {
+  font-size: 37px;
+  margin-bottom: 8px;
+}
+
+.overlay-card__power-delta.is-placeholder {
+  font-size: 18px;
+  margin-bottom: 2px;
+}
+
+.empty {
+  display: none;
+}

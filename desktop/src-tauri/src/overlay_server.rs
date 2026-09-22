@@ -16,6 +16,10 @@ pub const OVERLAY_PORT: u16 = 17_353;
 pub const OVERLAY_URL: &str = "http://127.0.0.1:17353/overlay";
 
 const OVERLAY_HTML: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/overlay.html"));
+const OVERLAY_CARD_CSS: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/overlay-card.css"
+));
 const DISPLAY_FONT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/fonts/DFP_GBZY7.ttf"
@@ -327,6 +331,11 @@ fn route_request(
             content_type: "font/ttf",
             body: DISPLAY_FONT.to_vec(),
         }),
+        "/overlay-card.css" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "text/css; charset=utf-8",
+            body: OVERLAY_CARD_CSS.as_bytes().to_vec(),
+        }),
         "/api/overlay" => match load_overlay_state(config) {
             Ok(state) => Ok(HttpResponse {
                 status: "200 OK",
@@ -503,5 +512,24 @@ mod tests {
         assert_eq!(response.status, "200 OK");
         assert_eq!(response.content_type, "font/ttf");
         assert_eq!(response.body.len(), DISPLAY_FONT.len());
+    }
+
+    #[test]
+    fn serves_the_shared_overlay_stylesheet() {
+        let directory = tempdir().unwrap();
+        let response = route_request(
+            "GET",
+            "/overlay-card.css",
+            &OverlayServerConfig {
+                accounts_path: directory.path().join("accounts.json"),
+                history_dir: directory.path().join("history"),
+            },
+        )
+        .unwrap();
+        assert_eq!(response.status, "200 OK");
+        assert_eq!(response.content_type, "text/css; charset=utf-8");
+        assert!(String::from_utf8(response.body)
+            .unwrap()
+            .contains(".overlay-card__kad"));
     }
 }
