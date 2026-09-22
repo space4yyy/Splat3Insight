@@ -178,7 +178,7 @@ button { font: inherit; }
   overflow: hidden;
   color: var(--paper);
   background: var(--panel);
-  box-shadow: 0 22px 45px rgba(0, 0, 0, 0.45);
+  box-shadow: none;
 }
 
 .comparison-grid {
@@ -247,7 +247,7 @@ button { font: inherit; }
 .compact-b__power-value { color: #fff; }
 .compact-b__power-delta { margin-bottom: 0; font-size: calc(26px * var(--compact-b-scale)); line-height: .82; letter-spacing: -.04em; }
 .compact-b__stats { display: flex; align-items: flex-end; margin-left: auto; }
-.compact-b__kad { display: flex; gap: calc(18px * var(--compact-b-scale)); font-family: "DFP GBZY7", system-ui, sans-serif; font-size: calc(28px * var(--compact-b-scale)); font-weight: 800; }
+.compact-b__kad { display: flex; gap: calc(18px * var(--compact-b-scale)); color: #f5f5f2; font-family: "DFP GBZY7", system-ui, sans-serif; font-size: calc(28px * var(--compact-b-scale)); font-weight: 800; }
 .compact-b__kad span { display: flex; align-items: baseline; gap: 0; }
 .compact-b__kad span:first-child { color: var(--acid); }
 .compact-b__kad small { color: #bdbdbd; font-size: calc(16px * var(--compact-b-scale)); letter-spacing: .08em; }
