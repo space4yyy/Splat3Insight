@@ -1,0 +1,21 @@
+[package]
+name = "splat3-streaming-widget"
+version = "0.1.0"
+description = "Splatoon 3 streaming overlay desktop app"
+authors = ["Splat3 Streaming Widget"]
+edition = "2021"
+
+[lib]
+name = "splat3_streaming_widget_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+png = "0.18"
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+splat3-widget-core = { path = "../../desktop-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"

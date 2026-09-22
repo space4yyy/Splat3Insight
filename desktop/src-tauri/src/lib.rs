@@ -1,0 +1,369 @@
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
+use splat3_widget_core::{
+    nintendo_auth::{begin_login, exchange_session_token, refresh_identity, LoginAttempt},
+    splatnet_auth::{
+        exchange_splatnet_tokens, SplatNetAuthConfig, DEFAULT_F_GENERATION_URL,
+        DEFAULT_NXAPI_F_GENERATION_URL,
+    },
+    AccountMetadata, AccountRegistry, AccountSecret, KeyringSecretStore,
+};
+use tauri::{Manager, State};
+
+type Registry = AccountRegistry<KeyringSecretStore>;
+
+struct AppState {
+    registry: Mutex<Registry>,
+    login_attempt: Mutex<Option<LoginAttempt>>,
+    auth_log_path: PathBuf,
+    auth_settings_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum FGenerationProvider {
+    Nxapi,
+    Imink,
+}
+
+impl Default for FGenerationProvider {
+    fn default() -> Self {
+        Self::Nxapi
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthProviderSettings {
+    f_generation_provider: FGenerationProvider,
+    nxapi_client_id: String,
+}
+
+impl Default for AuthProviderSettings {
+    fn default() -> Self {
+        Self {
+            f_generation_provider: FGenerationProvider::default(),
+            nxapi_client_id: String::new(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct AccountView {
+    account_id: String,
+    display_name: String,
+    language: Option<String>,
+    country: Option<String>,
+    active: bool,
+    splatnet_ready: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthProviderSettingsView {
+    f_generation_provider: FGenerationProvider,
+    nxapi_client_id: String,
+    active_f_generation_url: &'static str,
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is before Unix epoch")
+        .as_millis() as i64
+}
+
+fn write_auth_log(path: &Path, stage: &str, message: &str) {
+    let safe_message = message.replace(['\n', '\r'], " ");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{} [{}] {}", now_ms(), stage, safe_message);
+    }
+    eprintln!("[splat3-auth:{stage}] {safe_message}");
+}
+
+fn auth_error(path: &Path, stage: &str, error: String) -> String {
+    write_auth_log(path, stage, &error);
+    format!("{error}\n认证日志：{}", path.display())
+}
+
+fn load_auth_settings(path: &Path) -> Result<AuthProviderSettings, String> {
+    if !path.exists() {
+        return Ok(AuthProviderSettings::default());
+    }
+    let contents = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    serde_json::from_str(&contents).map_err(|error| format!("读取 f 参数服务配置失败：{error}"))
+}
+
+fn auth_config(path: &Path) -> Result<(SplatNetAuthConfig, &'static str), String> {
+    let settings = load_auth_settings(path)?;
+    match settings.f_generation_provider {
+        FGenerationProvider::Nxapi => {
+            let client_id = settings.nxapi_client_id.trim();
+            if client_id.is_empty() {
+                return Err(
+                    "SplatNet token 获取需要 nxapi client id。请先在“f 参数服务”中配置。"
+                        .to_owned(),
+                );
+            }
+            let mut config = SplatNetAuthConfig::default();
+            config.f_generation_url = DEFAULT_NXAPI_F_GENERATION_URL.to_owned();
+            config.nxapi_client_id = Some(client_id.to_owned());
+            Ok((config, DEFAULT_NXAPI_F_GENERATION_URL))
+        }
+        FGenerationProvider::Imink => {
+            let mut config = SplatNetAuthConfig::default();
+            config.f_generation_url = DEFAULT_F_GENERATION_URL.to_owned();
+            Ok((config, DEFAULT_F_GENERATION_URL))
+        }
+    }
+}
+
+#[tauri::command]
+fn get_auth_provider_settings(
+    state: State<'_, AppState>,
+) -> Result<AuthProviderSettingsView, String> {
+    let settings = load_auth_settings(&state.auth_settings_path)?;
+    let active_f_generation_url = match settings.f_generation_provider {
+        FGenerationProvider::Nxapi => DEFAULT_NXAPI_F_GENERATION_URL,
+        FGenerationProvider::Imink => DEFAULT_F_GENERATION_URL,
+    };
+    Ok(AuthProviderSettingsView {
+        f_generation_provider: settings.f_generation_provider,
+        nxapi_client_id: settings.nxapi_client_id,
+        active_f_generation_url,
+    })
+}
+
+#[tauri::command]
+fn save_auth_provider_settings(
+    f_generation_provider: FGenerationProvider,
+    nxapi_client_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let settings = AuthProviderSettings {
+        f_generation_provider,
+        nxapi_client_id: nxapi_client_id.trim().to_owned(),
+    };
+    if matches!(settings.f_generation_provider, FGenerationProvider::Nxapi)
+        && settings.nxapi_client_id.is_empty()
+    {
+        return Err("nxapi 模式需要填写 client id".to_owned());
+    }
+    let contents = serde_json::to_string_pretty(&settings)
+        .map_err(|error| format!("保存 f 参数服务配置失败：{error}"))?;
+    if let Some(parent) = state.auth_settings_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    std::fs::write(&state.auth_settings_path, format!("{contents}\n"))
+        .map_err(|error| format!("保存 f 参数服务配置失败：{error}"))
+}
+
+#[tauri::command]
+fn list_accounts(state: State<'_, AppState>) -> Result<Vec<AccountView>, String> {
+    let registry = state
+        .registry
+        .lock()
+        .map_err(|_| "account registry is locked")?;
+    let active_id = registry.active_account_id();
+    Ok(registry
+        .accounts()
+        .iter()
+        .map(|account| {
+            let secret = registry.get_secret(&account.account_id)?;
+            Ok(AccountView {
+                account_id: account.account_id.clone(),
+                display_name: account.display_name.clone(),
+                language: account.language.clone(),
+                country: account.country.clone(),
+                active: active_id == Some(account.account_id.as_str()),
+                splatnet_ready: secret.as_ref().is_some_and(|value| {
+                    value.game_web_token.is_some() && value.bullet_token.is_some()
+                }),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?)
+}
+
+#[tauri::command]
+fn begin_nintendo_login(state: State<'_, AppState>) -> Result<String, String> {
+    let attempt = begin_login()?;
+    let authorize_url = attempt.authorize_url.clone();
+    *state
+        .login_attempt
+        .lock()
+        .map_err(|_| "login state is locked")? = Some(attempt);
+    Ok(authorize_url)
+}
+
+#[tauri::command]
+async fn complete_nintendo_login(
+    callback_url: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let auth_log_path = state.auth_log_path.clone();
+    write_auth_log(&auth_log_path, "start", "开始 Nintendo Account 认证");
+    let attempt = state
+        .login_attempt
+        .lock()
+        .map_err(|_| "login state is locked")?
+        .take()
+        .ok_or_else(|| {
+            auth_error(
+                &auth_log_path,
+                "input",
+                "no Nintendo login is pending".to_owned(),
+            )
+        })?;
+    let callback = attempt
+        .finish(&callback_url)
+        .map_err(|error| auth_error(&auth_log_path, "nintendo-link", error))?;
+    write_auth_log(&auth_log_path, "nintendo-link", "已解析选择此人链接");
+    let identity = exchange_session_token(callback)
+        .await
+        .map_err(|error| auth_error(&auth_log_path, "nintendo-session", error))?;
+    write_auth_log(
+        &auth_log_path,
+        "nintendo-session",
+        "Nintendo session token 交换成功",
+    );
+    let timestamp = now_ms();
+
+    let metadata = AccountMetadata {
+        account_id: identity.account_id.clone(),
+        display_name: identity.display_name,
+        language: identity.language,
+        country: identity.country,
+        created_at_ms: timestamp,
+        last_used_at_ms: timestamp,
+        baseline_at_ms: None,
+        last_seen_battle_id: None,
+    };
+    let secret = AccountSecret {
+        session_token: identity.session_token,
+        game_web_token: None,
+        bullet_token: None,
+    };
+
+    let mut registry = state
+        .registry
+        .lock()
+        .map_err(|_| "account registry is locked")?;
+    registry.upsert(metadata, secret)?;
+    write_auth_log(
+        &auth_log_path,
+        "nintendo-session",
+        "Nintendo Account 已保存，SplatNet token 延后获取",
+    );
+    registry.set_active(&identity.account_id, timestamp)
+}
+
+#[tauri::command]
+async fn refresh_splatnet_tokens(
+    account_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let auth_log_path = state.auth_log_path.clone();
+    let (metadata, session_token) = {
+        let registry = state
+            .registry
+            .lock()
+            .map_err(|_| "account registry is locked")?;
+        let metadata = registry
+            .accounts()
+            .iter()
+            .find(|account| account.account_id == account_id)
+            .cloned()
+            .ok_or_else(|| format!("unknown account: {account_id}"))?;
+        let secret = registry
+            .get_secret(&account_id)?
+            .ok_or_else(|| "该账号没有保存 Nintendo session token".to_owned())?;
+        (metadata, secret.session_token)
+    };
+
+    write_auth_log(
+        &auth_log_path,
+        "splatnet-refresh",
+        "使用已保存的 Nintendo session token 刷新 SplatNet token",
+    );
+    let identity = refresh_identity(&session_token)
+        .await
+        .map_err(|error| auth_error(&auth_log_path, "nintendo-session-refresh", error))?;
+    let (auth_config, provider_url) = auth_config(&state.auth_settings_path)
+        .map_err(|error| auth_error(&auth_log_path, "f-config", error))?;
+    write_auth_log(
+        &auth_log_path,
+        "f-config",
+        &format!("使用 f 参数服务：{provider_url}"),
+    );
+    let splatnet_tokens = exchange_splatnet_tokens(&identity, &auth_config)
+        .await
+        .map_err(|error| auth_error(&auth_log_path, "splatnet-tokens", error))?;
+    let secret = AccountSecret {
+        session_token,
+        game_web_token: Some(splatnet_tokens.game_web_token),
+        bullet_token: Some(splatnet_tokens.bullet_token),
+    };
+    let mut metadata = metadata;
+    metadata.display_name = identity.display_name;
+    metadata.language = identity.language;
+    metadata.country = identity.country;
+
+    let mut registry = state
+        .registry
+        .lock()
+        .map_err(|_| "account registry is locked")?;
+    registry.upsert(metadata, secret)?;
+    write_auth_log(
+        &auth_log_path,
+        "splatnet-tokens",
+        "game web token 和 bullet token 获取成功",
+    );
+    Ok(())
+}
+
+#[tauri::command]
+fn set_active_account(account_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut registry = state
+        .registry
+        .lock()
+        .map_err(|_| "account registry is locked")?;
+    registry.set_active(&account_id, now_ms())
+}
+
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let config_dir = app.path().app_config_dir()?;
+            let metadata_path = config_dir.join("accounts.json");
+            let registry = AccountRegistry::load(metadata_path, KeyringSecretStore::default())
+                .map_err(std::io::Error::other)?;
+            app.manage(AppState {
+                registry: Mutex::new(registry),
+                login_attempt: Mutex::new(None),
+                auth_log_path: config_dir.join("auth.log"),
+                auth_settings_path: config_dir.join("auth-settings.json"),
+            });
+
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            list_accounts,
+            begin_nintendo_login,
+            complete_nintendo_login,
+            refresh_splatnet_tokens,
+            get_auth_provider_settings,
+            save_auth_provider_settings,
+            set_active_account,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running Splat 3 Streaming Widget");
+}
