@@ -32,12 +32,6 @@ const fallback = {
     unknownTime: '时间未知',
     errorNoRecord: '没有找到可用于预览的 VS 对战记录。',
     errorData: '读取本地导出数据失败',
-    variantClassic: 'A — 经典紧凑',
-    variantPower: 'B — 强调战力',
-    variantRibbon: 'C — 极简横条',
-    compareHint: '使用 ← → 比较',
-    previousVariant: '上一个样式',
-    nextVariant: '下一个样式'
   },
   'en-US': {
     language: 'Language',
@@ -57,12 +51,6 @@ const fallback = {
     unknownTime: 'TIME UNKNOWN',
     errorNoRecord: 'No VS battle record is available for preview.',
     errorData: 'Failed to read local export data',
-    variantClassic: 'A — Classic compact',
-    variantPower: 'B — Power focus',
-    variantRibbon: 'C — Minimal ribbon',
-    compareHint: 'use ← → to compare',
-    previousVariant: 'Previous style',
-    nextVariant: 'Next style'
   },
   'ja-JP': {
     language: '言語',
@@ -82,12 +70,6 @@ const fallback = {
     unknownTime: '時刻不明',
     errorNoRecord: 'プレビューできるバトルデータがありません。',
     errorData: 'ローカルのエクスポートデータを読み込めませんでした',
-    variantClassic: 'A — クラシック',
-    variantPower: 'B — パワー重視',
-    variantRibbon: 'C — ミニマル',
-    compareHint: '← → で比較',
-    previousVariant: '前のスタイル',
-    nextVariant: '次のスタイル'
   }
 };
 

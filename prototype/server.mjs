@@ -145,6 +145,6 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, '127.0.0.1', () => {
-  console.log(`Splat 3 style prototype: http://127.0.0.1:${port}/?variant=a`);
-  console.log(`OBS-style transparent preview: http://127.0.0.1:${port}/?variant=a&obs=1`);
+  console.log(`Splat 3 style prototype: http://127.0.0.1:${port}/`);
+  console.log(`OBS-style transparent preview: http://127.0.0.1:${port}/?obs=1`);
 });
