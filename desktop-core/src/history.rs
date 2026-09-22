@@ -15,10 +15,8 @@ const LATEST_BATTLE_QUERY: &str =
     "b24d22fd6cb251c515c2b90044039698aa27bc1fab15801d83014d919cd45780";
 const BATTLE_DETAIL_QUERY: &str =
     "94faa2ff992222d11ced55e0f349920a82ac50f414ae33c83d1d1c9d8161c5dd";
-const COOP_QUERY: &str =
-    "e11a8cf2c3de7348495dea5cdcaa25e0c153541c4ed63f044b6c174bc5b703df";
-const COOP_DETAIL_QUERY: &str =
-    "f2d55873a9281213ae27edc171e2b19131b3021a2ae263757543cdd3bf015cc8";
+const COOP_QUERY: &str = "e11a8cf2c3de7348495dea5cdcaa25e0c153541c4ed63f044b6c174bc5b703df";
+const COOP_DETAIL_QUERY: &str = "f2d55873a9281213ae27edc171e2b19131b3021a2ae263757543cdd3bf015cc8";
 
 const APP_USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 14; Pixel 7a) AppleWebKit/537.36 Chrome/120.0.6099.230 Mobile Safari/537.36";
 
@@ -169,18 +167,10 @@ impl HistoryCache {
 
         self.schema_version = 1;
         self.fetched_at_ms = fetched_at_ms;
-        self.battles.sort_by(|left, right| {
-            right
-                .record
-                .played_time
-                .cmp(&left.record.played_time)
-        });
-        self.coop.sort_by(|left, right| {
-            right
-                .record
-                .played_time
-                .cmp(&left.record.played_time)
-        });
+        self.battles
+            .sort_by(|left, right| right.record.played_time.cmp(&left.record.played_time));
+        self.coop
+            .sort_by(|left, right| right.record.played_time.cmp(&left.record.played_time));
         (added_battles, added_coop)
     }
 }
@@ -205,14 +195,16 @@ impl SplatNetDataClient {
             .map_err(|error| format!("创建 SplatNet 数据客户端失败：{error}"))?;
         let web_view_version = match config.web_view_version.clone() {
             Some(value) if !value.trim().is_empty() => value,
-            _ => fetch_web_view_version(
-                &http,
-                &config.game_web_token,
-                &config.language,
-                &config.country,
-                &config.app_user_agent,
-            )
-            .await,
+            _ => {
+                fetch_web_view_version(
+                    &http,
+                    &config.game_web_token,
+                    &config.language,
+                    &config.country,
+                    &config.app_user_agent,
+                )
+                .await
+            }
         };
 
         Ok(Self {
@@ -228,24 +220,56 @@ impl SplatNetDataClient {
         coop_limit: usize,
         fetched_at_ms: i64,
     ) -> Result<HistoryCache, String> {
+        self.fetch_history_incremental(
+            battle_limit,
+            coop_limit,
+            &HashSet::new(),
+            &HashSet::new(),
+            fetched_at_ms,
+        )
+        .await
+    }
+
+    /// Fetch the latest server windows but request detail records only for IDs
+    /// that are not already present in the local archive.
+    pub async fn fetch_history_incremental(
+        &self,
+        battle_limit: usize,
+        coop_limit: usize,
+        known_battle_ids: &HashSet<String>,
+        known_coop_ids: &HashSet<String>,
+        fetched_at_ms: i64,
+    ) -> Result<HistoryCache, String> {
         let battle_ids = self
-            .fetch_ids(LATEST_BATTLE_QUERY, "latestBattleHistories", battle_limit, None)
+            .fetch_ids(
+                LATEST_BATTLE_QUERY,
+                "latestBattleHistories",
+                battle_limit,
+                None,
+            )
             .await
             .map_err(|error| format!("对战列表查询失败：{error}"))?;
+        let battle_ids = new_ids(battle_ids, known_battle_ids);
         let coop_ids = self
             .fetch_ids(COOP_QUERY, "coopResult", coop_limit, Some("en-US"))
             .await
             .map_err(|error| format!("打工列表查询失败：{error}"))?;
+        let coop_ids = new_ids(coop_ids, known_coop_ids);
 
         let mut battles = Vec::with_capacity(battle_ids.len());
         for id in battle_ids {
             if let Some(detail) = self
                 .fetch_detail(BATTLE_DETAIL_QUERY, "vsResultId", &id, None)
                 .await
-                .map_err(|error| format!("对战详情查询失败（第 {} 条）：{error}", battles.len() + 1))?
+                .map_err(|error| {
+                    format!("对战详情查询失败（第 {} 条）：{error}", battles.len() + 1)
+                })?
             {
                 if let Some(record) = parse_battle(&detail, &id) {
-                    battles.push(ArchivedBattle { record, raw: detail });
+                    battles.push(ArchivedBattle {
+                        record,
+                        raw: detail,
+                    });
                 }
             }
         }
@@ -258,23 +282,16 @@ impl SplatNetDataClient {
                 .map_err(|error| format!("打工详情查询失败（第 {} 条）：{error}", coop.len() + 1))?
             {
                 if let Some(record) = parse_coop(&detail, &id) {
-                    coop.push(ArchivedCoop { record, raw: detail });
+                    coop.push(ArchivedCoop {
+                        record,
+                        raw: detail,
+                    });
                 }
             }
         }
 
-        battles.sort_by(|left, right| {
-            right
-                .record
-                .played_time
-                .cmp(&left.record.played_time)
-        });
-        coop.sort_by(|left, right| {
-            right
-                .record
-                .played_time
-                .cmp(&left.record.played_time)
-        });
+        battles.sort_by(|left, right| right.record.played_time.cmp(&left.record.played_time));
+        coop.sort_by(|left, right| right.record.played_time.cmp(&left.record.played_time));
 
         Ok(HistoryCache {
             schema_version: 1,
@@ -333,11 +350,7 @@ impl SplatNetDataClient {
         language: Option<&str>,
     ) -> Result<Option<Value>, String> {
         let value = self
-            .graphql(
-                query_hash,
-                json!({ variable_name: id }),
-                language,
-            )
+            .graphql(query_hash, json!({ variable_name: id }), language)
             .await?;
         let data = value.get("data").cloned().unwrap_or(Value::Null);
         let detail = if variable_name == "vsResultId" {
@@ -361,7 +374,10 @@ impl SplatNetDataClient {
         let response = self
             .http
             .post(format!("{SPLATNET_URL}/api/graphql"))
-            .header("Authorization", format!("Bearer {}", self.config.bullet_token))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.config.bullet_token),
+            )
             .header("Accept-Language", language)
             .header("User-Agent", &self.config.app_user_agent)
             .header("X-Web-View-Ver", &self.web_view_version)
@@ -369,8 +385,17 @@ impl SplatNetDataClient {
             .header("Accept", "*/*")
             .header("Origin", SPLATNET_URL)
             .header("X-Requested-With", "com.nintendo.znca")
-            .header("Referer", format!("{SPLATNET_URL}?lang={language}&na_country={}&na_lang={language}", self.config.country))
-            .header("Cookie", format!("_gtoken={}; _dnt=1", self.config.game_web_token))
+            .header(
+                "Referer",
+                format!(
+                    "{SPLATNET_URL}?lang={language}&na_country={}&na_lang={language}",
+                    self.config.country
+                ),
+            )
+            .header(
+                "Cookie",
+                format!("_gtoken={}; _dnt=1", self.config.game_web_token),
+            )
             .json(&json!({
                 "extensions": { "persistedQuery": { "sha256Hash": query_hash, "version": 1 } },
                 "variables": variables,
@@ -416,7 +441,10 @@ impl SplatNetDataClient {
         })?;
         if let Some(errors) = value.get("errors").and_then(Value::as_array) {
             if let Some(first) = errors.first() {
-                return Err(format!("SplatNet GraphQL 返回错误：{}", compact_json(first)));
+                return Err(format!(
+                    "SplatNet GraphQL 返回错误：{}",
+                    compact_json(first)
+                ));
             }
         }
         if value.get("data").is_none() {
@@ -424,6 +452,12 @@ impl SplatNetDataClient {
         }
         Ok(value)
     }
+}
+
+fn new_ids(ids: Vec<String>, known_ids: &HashSet<String>) -> Vec<String> {
+    ids.into_iter()
+        .filter(|id| !known_ids.contains(id))
+        .collect()
 }
 
 fn parse_battle(detail: &Value, fallback_id: &str) -> Option<BattleRecord> {
@@ -494,10 +528,8 @@ fn parse_coop(detail: &Value, fallback_id: &str) -> Option<CoopRecord> {
     let (golden_eggs, power_eggs, rescued, rescued_by_others) = player
         .map(|value| {
             (
-                integer_at(value, &["goldenEgg"])
-                    .or_else(|| integer_at(value, &["goldenEggs"])),
-                integer_at(value, &["powerEgg"])
-                    .or_else(|| integer_at(value, &["powerEggs"])),
+                integer_at(value, &["goldenEgg"]).or_else(|| integer_at(value, &["goldenEggs"])),
+                integer_at(value, &["powerEgg"]).or_else(|| integer_at(value, &["powerEggs"])),
                 integer_at(value, &["rescued"]),
                 integer_at(value, &["rescuedByOthers"]),
             )
@@ -605,8 +637,14 @@ mod tests {
             "vsMode": { "mode": "BANKARA" },
             "bankaraMatch": { "mode": "CHALLENGE", "weaponPower": { "power": 2019.8 } }
         });
-        assert_eq!(parse_battle(&open, "open").unwrap().power_kind.as_deref(), Some("team"));
-        assert_eq!(parse_battle(&challenge, "challenge").unwrap().power, Some(2019.8));
+        assert_eq!(
+            parse_battle(&open, "open").unwrap().power_kind.as_deref(),
+            Some("team")
+        );
+        assert_eq!(
+            parse_battle(&challenge, "challenge").unwrap().power,
+            Some(2019.8)
+        );
     }
 
     #[test]
@@ -638,14 +676,38 @@ mod tests {
         };
         assert_eq!(cache.summary().battle_count, 0);
         assert_eq!(cache.summary().added_battle_count, 0);
-        assert_eq!(crate::splatnet_auth::WEB_VIEW_VERSION_FALLBACK, "10.0.0-88706e32");
+        assert_eq!(
+            crate::splatnet_auth::WEB_VIEW_VERSION_FALLBACK,
+            "10.0.0-88706e32"
+        );
     }
 
     #[test]
     fn uses_current_persisted_query_ids_for_history_details() {
-        assert_eq!(BATTLE_DETAIL_QUERY, "94faa2ff992222d11ced55e0f349920a82ac50f414ae33c83d1d1c9d8161c5dd");
-        assert_eq!(COOP_QUERY, "e11a8cf2c3de7348495dea5cdcaa25e0c153541c4ed63f044b6c174bc5b703df");
-        assert_eq!(COOP_DETAIL_QUERY, "f2d55873a9281213ae27edc171e2b19131b3021a2ae263757543cdd3bf015cc8");
+        assert_eq!(
+            BATTLE_DETAIL_QUERY,
+            "94faa2ff992222d11ced55e0f349920a82ac50f414ae33c83d1d1c9d8161c5dd"
+        );
+        assert_eq!(
+            COOP_QUERY,
+            "e11a8cf2c3de7348495dea5cdcaa25e0c153541c4ed63f044b6c174bc5b703df"
+        );
+        assert_eq!(
+            COOP_DETAIL_QUERY,
+            "f2d55873a9281213ae27edc171e2b19131b3021a2ae263757543cdd3bf015cc8"
+        );
+    }
+
+    #[test]
+    fn incremental_sync_skips_details_already_in_archive() {
+        let known = HashSet::from(["battle-1".to_owned(), "battle-3".to_owned()]);
+        let ids = vec![
+            "battle-1".to_owned(),
+            "battle-2".to_owned(),
+            "battle-3".to_owned(),
+        ];
+
+        assert_eq!(new_ids(ids, &known), vec!["battle-2"]);
     }
 
     #[test]

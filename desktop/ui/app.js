@@ -7,48 +7,11 @@ const loginButton = document.querySelector('#login');
 const pastePanel = document.querySelector('#paste-panel');
 const loginLink = document.querySelector('#login-link');
 const authenticateButton = document.querySelector('#authenticate');
-const fProvider = document.querySelector('#f-provider');
-const nxapiClientId = document.querySelector('#nxapi-client-id');
-const saveFProvider = document.querySelector('#save-f-provider');
-const fProviderUrl = document.querySelector('#f-provider-url');
 
 function setMessage(value, error = false) {
   message.textContent = value;
   message.classList.toggle('error', error);
 }
-
-function updateFProviderForm() {
-  const usesNxapi = fProvider.value === 'nxapi';
-  nxapiClientId.disabled = !usesNxapi;
-  nxapiClientId.closest('.field').classList.toggle('disabled', !usesNxapi);
-  fProviderUrl.textContent = usesNxapi
-    ? 'https://nxapi-znca-api.fancy.org.uk/api/znca/f'
-    : 'https://api.imink.app/f';
-}
-
-async function loadFProviderSettings() {
-  const settings = await invoke('get_auth_provider_settings');
-  fProvider.value = settings.fGenerationProvider;
-  nxapiClientId.value = settings.nxapiClientId || '';
-  fProviderUrl.textContent = settings.activeFGenerationUrl;
-  updateFProviderForm();
-}
-
-fProvider.addEventListener('change', updateFProviderForm);
-saveFProvider.addEventListener('click', async () => {
-  saveFProvider.disabled = true;
-  try {
-    await invoke('save_auth_provider_settings', {
-      fGenerationProvider: fProvider.value,
-      nxapiClientId: nxapiClientId.value,
-    });
-    setMessage('f 参数服务配置已保存。');
-  } catch (error) {
-    setMessage(String(error), true);
-  } finally {
-    saveFProvider.disabled = false;
-  }
-});
 
 function renderAccountList(items) {
   accounts.innerHTML = items.length
@@ -158,5 +121,4 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
-Promise.all([refreshAccounts(), loadFProviderSettings()])
-  .catch((error) => setMessage(String(error), true));
+refreshAccounts().catch((error) => setMessage(String(error), true));

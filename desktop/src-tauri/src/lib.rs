@@ -1,17 +1,15 @@
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use splat3_widget_core::{
     history::{HistoryCache, HistorySyncSummary, SplatNetDataClient, SplatNetDataConfig},
     nintendo_auth::{begin_login, exchange_session_token, refresh_identity, LoginAttempt},
-    splatnet_auth::{
-        exchange_splatnet_tokens, SplatNetAuthConfig, DEFAULT_F_GENERATION_URL,
-        DEFAULT_NXAPI_F_GENERATION_URL,
-    },
+    splatnet_auth::{exchange_splatnet_tokens, SplatNetAuthConfig, NXAPI_F_GENERATION_URL},
     AccountMetadata, AccountRegistry, AccountSecret, KeyringSecretStore,
 };
 use tauri::{Manager, State};
@@ -22,37 +20,7 @@ struct AppState {
     registry: Mutex<Registry>,
     login_attempt: Mutex<Option<LoginAttempt>>,
     auth_log_path: PathBuf,
-    auth_settings_path: PathBuf,
     history_dir: PathBuf,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum FGenerationProvider {
-    Nxapi,
-    Imink,
-}
-
-impl Default for FGenerationProvider {
-    fn default() -> Self {
-        Self::Nxapi
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AuthProviderSettings {
-    f_generation_provider: FGenerationProvider,
-    nxapi_client_id: String,
-}
-
-impl Default for AuthProviderSettings {
-    fn default() -> Self {
-        Self {
-            f_generation_provider: FGenerationProvider::default(),
-            nxapi_client_id: String::new(),
-        }
-    }
 }
 
 #[derive(Serialize)]
@@ -66,14 +34,6 @@ struct AccountView {
     history_battle_count: usize,
     history_coop_count: usize,
     history_fetched_at_ms: Option<i64>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AuthProviderSettingsView {
-    f_generation_provider: FGenerationProvider,
-    nxapi_client_id: String,
-    active_f_generation_url: &'static str,
 }
 
 fn now_ms() -> i64 {
@@ -103,102 +63,40 @@ fn history_path(history_dir: &Path, account_id: &str) -> PathBuf {
     history_dir.join(format!("{account_id}.json"))
 }
 
-fn load_history_cache(history_dir: &Path, account_id: &str) -> Result<Option<HistoryCache>, String> {
+fn load_history_cache(
+    history_dir: &Path,
+    account_id: &str,
+) -> Result<Option<HistoryCache>, String> {
     let path = history_path(history_dir, account_id);
     if !path.exists() {
         return Ok(None);
     }
-    let contents = std::fs::read_to_string(&path)
-        .map_err(|error| format!("读取历史缓存失败：{error}"))?;
-    let cache = serde_json::from_str(&contents)
-        .map_err(|error| format!("历史缓存格式无效：{error}"))?;
+    let contents =
+        std::fs::read_to_string(&path).map_err(|error| format!("读取历史缓存失败：{error}"))?;
+    let cache =
+        serde_json::from_str(&contents).map_err(|error| format!("历史缓存格式无效：{error}"))?;
     Ok(Some(cache))
 }
 
-fn load_history_summary(history_dir: &Path, account_id: &str) -> Result<Option<HistorySyncSummary>, String> {
+fn load_history_summary(
+    history_dir: &Path,
+    account_id: &str,
+) -> Result<Option<HistorySyncSummary>, String> {
     Ok(load_history_cache(history_dir, account_id)?.map(|cache| cache.summary()))
 }
 
 fn save_history(history_dir: &Path, account_id: &str, cache: &HistoryCache) -> Result<(), String> {
-    std::fs::create_dir_all(history_dir).map_err(|error| format!("创建历史缓存目录失败：{error}"))?;
+    std::fs::create_dir_all(history_dir)
+        .map_err(|error| format!("创建历史缓存目录失败：{error}"))?;
     // Compact JSON avoids storing formatting whitespace. The raw detail is
     // kept once per stable id and is merged on every overlapping sync.
-    let contents = serde_json::to_string(cache)
-        .map_err(|error| format!("序列化历史缓存失败：{error}"))?;
-    std::fs::write(history_path(history_dir, account_id), format!("{contents}\n"))
-        .map_err(|error| format!("保存历史缓存失败：{error}"))
-}
-
-fn load_auth_settings(path: &Path) -> Result<AuthProviderSettings, String> {
-    if !path.exists() {
-        return Ok(AuthProviderSettings::default());
-    }
-    let contents = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-    serde_json::from_str(&contents).map_err(|error| format!("读取 f 参数服务配置失败：{error}"))
-}
-
-fn auth_config(path: &Path) -> Result<(SplatNetAuthConfig, &'static str), String> {
-    let settings = load_auth_settings(path)?;
-    match settings.f_generation_provider {
-        FGenerationProvider::Nxapi => {
-            let client_id = settings.nxapi_client_id.trim();
-            if client_id.is_empty() {
-                return Err(
-                    "SplatNet token 获取需要 nxapi client id。请先在“f 参数服务”中配置。"
-                        .to_owned(),
-                );
-            }
-            let mut config = SplatNetAuthConfig::default();
-            config.f_generation_url = DEFAULT_NXAPI_F_GENERATION_URL.to_owned();
-            config.nxapi_client_id = Some(client_id.to_owned());
-            Ok((config, DEFAULT_NXAPI_F_GENERATION_URL))
-        }
-        FGenerationProvider::Imink => {
-            let mut config = SplatNetAuthConfig::default();
-            config.f_generation_url = DEFAULT_F_GENERATION_URL.to_owned();
-            Ok((config, DEFAULT_F_GENERATION_URL))
-        }
-    }
-}
-
-#[tauri::command]
-fn get_auth_provider_settings(
-    state: State<'_, AppState>,
-) -> Result<AuthProviderSettingsView, String> {
-    let settings = load_auth_settings(&state.auth_settings_path)?;
-    let active_f_generation_url = match settings.f_generation_provider {
-        FGenerationProvider::Nxapi => DEFAULT_NXAPI_F_GENERATION_URL,
-        FGenerationProvider::Imink => DEFAULT_F_GENERATION_URL,
-    };
-    Ok(AuthProviderSettingsView {
-        f_generation_provider: settings.f_generation_provider,
-        nxapi_client_id: settings.nxapi_client_id,
-        active_f_generation_url,
-    })
-}
-
-#[tauri::command]
-fn save_auth_provider_settings(
-    f_generation_provider: FGenerationProvider,
-    nxapi_client_id: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let settings = AuthProviderSettings {
-        f_generation_provider,
-        nxapi_client_id: nxapi_client_id.trim().to_owned(),
-    };
-    if matches!(settings.f_generation_provider, FGenerationProvider::Nxapi)
-        && settings.nxapi_client_id.is_empty()
-    {
-        return Err("nxapi 模式需要填写 client id".to_owned());
-    }
-    let contents = serde_json::to_string_pretty(&settings)
-        .map_err(|error| format!("保存 f 参数服务配置失败：{error}"))?;
-    if let Some(parent) = state.auth_settings_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    std::fs::write(&state.auth_settings_path, format!("{contents}\n"))
-        .map_err(|error| format!("保存 f 参数服务配置失败：{error}"))
+    let contents =
+        serde_json::to_string(cache).map_err(|error| format!("序列化历史缓存失败：{error}"))?;
+    std::fs::write(
+        history_path(history_dir, account_id),
+        format!("{contents}\n"),
+    )
+    .map_err(|error| format!("保存历史缓存失败：{error}"))
 }
 
 #[tauri::command]
@@ -335,12 +233,11 @@ async fn refresh_splatnet_tokens(
     let identity = refresh_identity(&session_token)
         .await
         .map_err(|error| auth_error(&auth_log_path, "nintendo-session-refresh", error))?;
-    let (auth_config, provider_url) = auth_config(&state.auth_settings_path)
-        .map_err(|error| auth_error(&auth_log_path, "f-config", error))?;
+    let auth_config = SplatNetAuthConfig::default();
     write_auth_log(
         &auth_log_path,
         "f-config",
-        &format!("使用 f 参数服务：{provider_url}"),
+        &format!("使用 nxapi f 参数服务：{NXAPI_F_GENERATION_URL}"),
     );
     let splatnet_tokens = exchange_splatnet_tokens(&identity, &auth_config)
         .await
@@ -407,15 +304,8 @@ async fn sync_history(
     write_auth_log(
         &auth_log_path,
         "history-sync",
-        "开始获取最近 50 条对战和 50 条打工记录",
+        "开始增量同步：检查最近 50 条对战和 50 条打工记录",
     );
-    let client = SplatNetDataClient::connect(config)
-        .await
-        .map_err(|error| auth_error(&auth_log_path, "history-client", error))?;
-    let cache = client
-        .fetch_history(50, 50, now_ms())
-        .await
-        .map_err(|error| auth_error(&auth_log_path, "history-fetch", error))?;
     let mut archive = load_history_cache(&history_dir, &account_id)
         .map_err(|error| auth_error(&auth_log_path, "history-load", error))?
         .unwrap_or(HistoryCache {
@@ -424,6 +314,23 @@ async fn sync_history(
             battles: Vec::new(),
             coop: Vec::new(),
         });
+    let known_battle_ids: HashSet<String> = archive
+        .battles
+        .iter()
+        .map(|item| item.record.id.clone())
+        .collect();
+    let known_coop_ids: HashSet<String> = archive
+        .coop
+        .iter()
+        .map(|item| item.record.id.clone())
+        .collect();
+    let client = SplatNetDataClient::connect(config)
+        .await
+        .map_err(|error| auth_error(&auth_log_path, "history-client", error))?;
+    let cache = client
+        .fetch_history_incremental(50, 50, &known_battle_ids, &known_coop_ids, now_ms())
+        .await
+        .map_err(|error| auth_error(&auth_log_path, "history-fetch", error))?;
     let (added_battle_count, added_coop_count) = archive.merge(cache);
     let mut summary = archive.summary();
     summary.added_battle_count = added_battle_count;
@@ -465,7 +372,6 @@ pub fn run() {
                 registry: Mutex::new(registry),
                 login_attempt: Mutex::new(None),
                 auth_log_path: config_dir.join("auth.log"),
-                auth_settings_path: config_dir.join("auth-settings.json"),
                 history_dir: config_dir.join("history"),
             });
 
@@ -477,8 +383,6 @@ pub fn run() {
             complete_nintendo_login,
             refresh_splatnet_tokens,
             sync_history,
-            get_auth_provider_settings,
-            save_auth_provider_settings,
             set_active_account,
         ])
         .run(tauri::generate_context!())

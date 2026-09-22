@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+pub mod history;
 pub mod monitor;
 pub mod nintendo_auth;
-pub mod history;
 pub mod splatnet_auth;
 
 pub const KEYRING_SERVICE: &str = "com.splat3.streaming-widget";

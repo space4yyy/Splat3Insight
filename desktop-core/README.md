@@ -55,12 +55,9 @@ repeatable operation: `splatnet_auth` follows the token chain of Coral
 `/api/bullet_tokens`. The resulting `game_web_token` and `bullet_token` are
 kept with the account secret in the native credential store. A failed
 f-generation request therefore does not require another Nintendo login.
-The desktop app defaults to nxapi because the imink-compatible endpoint can
-return a generic HTTP 500 while its service is unavailable. Configure the
-nxapi OAuth client id in the app's “f 参数服务” panel; this id is unrelated to
-Nintendo credentials. The imink-compatible endpoint remains available as a
-manual fallback. The core crate exposes both provider URLs through
-`SplatNetAuthConfig`.
+The desktop app uses nxapi for f generation. Its public OAuth client id is
+embedded in the application configuration, so users do not need to configure
+an f-generation provider or client id manually.
 
 Authentication failures are also written to the desktop app's `auth.log`
 inside its platform application-config directory. The log records stages and
