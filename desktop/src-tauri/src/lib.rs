@@ -236,7 +236,7 @@ impl Default for SyncStatus {
 }
 
 const HISTORY_WINDOW_SIZE: usize = 50;
-const BACKGROUND_SYNC_INTERVAL_SECS: u64 = 30;
+const BACKGROUND_SYNC_INTERVAL_SECS: u64 = 15;
 const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 const LOG_BACKUP_COUNT: usize = 3;
 

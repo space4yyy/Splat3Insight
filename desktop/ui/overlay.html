@@ -17,8 +17,6 @@
       const root = document.querySelector('#root');
       const BASE_WIDTH = 560;
       const BASE_HEIGHT = 100;
-      let lastState = null;
-
       function fitOverlay() {
         const viewportWidth = window.innerWidth;
         const viewportHeight = window.innerHeight;
@@ -36,7 +34,7 @@
       }
 
       function render(state) {
-        root.innerHTML = window.Splat3OverlayCard.render(state);
+        window.Splat3OverlayCard.update(root, state);
         fitOverlay();
       }
 
@@ -48,17 +46,14 @@
           }
           const state = await response.json();
           if (state?.error) throw new Error(state.error);
-          lastState = state;
           render(state);
-          // 字体加载失败不应阻止卡片显示；先用 fallback 渲染，字体可用后再刷新一次。
-          document.fonts.load('16px "DFP GBZY7"')
-            .then(() => render(lastState))
-            .catch(() => {});
         } catch (_) {
           // 保留上一次有效卡片，等待下一轮轮询恢复，避免短暂请求失败导致 OBS 闪烁。
         }
       }
 
+      // 字体完成加载后浏览器会自行重绘，无需重建卡片 DOM。
+      document.fonts.load('16px "DFP GBZY7"').catch(() => {});
       update();
       window.addEventListener('resize', fitOverlay);
       window.setInterval(update, 5000);

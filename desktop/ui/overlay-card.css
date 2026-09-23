@@ -24,11 +24,16 @@
   min-height: 0;
   max-height: none;
   overflow: hidden;
-  padding: 8px 10px 6px;
+  padding: 8px 10px 8px;
   border-radius: 6px;
   color: #f5f5f2;
   background: #383838;
   font-family: "DFP GBZY7", Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
+}
+
+.overlay-card[hidden],
+.overlay-card__bankara-mode[hidden] {
+  display: none;
 }
 
 .overlay-card__top,
@@ -89,7 +94,7 @@
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: flex-end;
   gap: 10px;
-  margin-top: 10px;
+  margin-top: 18px;
   padding-top: 0;
 }
 

@@ -94,16 +94,21 @@ function fitOverlayPreview() {
 }
 
 function renderOverlay(state) {
-  const card = window.Splat3OverlayCard.render(state);
-  if (!card) {
+  if (!state?.selected) {
     overlayPreview.innerHTML = '<div class="overlay-empty">没有找到可显示的 X 或蛮颓比赛记录。</div>';
     return;
   }
 
-  overlayPreview.innerHTML = `
-    <div class="overlay-preview__viewport">
-      <div class="overlay-preview__scale">${card}</div>
-    </div>`;
+  let scaleElement = overlayPreview.querySelector('.overlay-preview__scale');
+  if (!scaleElement) {
+    overlayPreview.innerHTML = `
+      <div class="overlay-preview__viewport">
+        <div class="overlay-preview__scale"></div>
+      </div>`;
+    scaleElement = overlayPreview.querySelector('.overlay-preview__scale');
+  }
+
+  window.Splat3OverlayCard.update(scaleElement, state);
   fitOverlayPreview();
 }
 
