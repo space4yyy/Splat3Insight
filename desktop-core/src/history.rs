@@ -961,8 +961,18 @@ fn new_ids(ids: Vec<String>, known_ids: &HashSet<String>) -> Vec<String> {
 
 fn parse_battle(detail: &Value, fallback_id: &str) -> Option<BattleRecord> {
     let id = string_at(detail, &["id"]).unwrap_or_else(|| fallback_id.to_owned());
-    let mode = string_at(detail, &["vsMode", "mode"]).unwrap_or_else(|| "BATTLE".to_owned());
+    let raw_mode = string_at(detail, &["vsMode", "mode"]).unwrap_or_else(|| "BATTLE".to_owned());
     let bankara_mode = string_at(detail, &["bankaraMatch", "mode"]);
+    let mode = if bankara_mode.is_none()
+        && (is_event_battle_mode(&raw_mode)
+            || ["eventMatch", "eventBattle", "event", "leagueMatch"]
+                .iter()
+                .any(|key| detail.get(*key).is_some_and(Value::is_object)))
+    {
+        "EVENT_MATCH".to_owned()
+    } else {
+        raw_mode
+    };
     let player = detail
         .get("myTeam")
         .and_then(|value| value.get("players"))
@@ -984,6 +994,25 @@ fn parse_battle(detail: &Value, fallback_id: &str) -> Option<BattleRecord> {
         "BANKARA" => (
             number_at(detail, &["bankaraMatch", "bankaraPower", "power"]),
             Some("team"),
+        ),
+        "EVENT_MATCH" => (
+            [
+                &["eventMatch", "eventPower"][..],
+                &["eventMatch", "power"],
+                &["eventBattle", "eventPower"],
+                &["eventBattle", "power"],
+                &["challenge", "eventPower"],
+                &["challenge", "power"],
+                &["challengePower"],
+                &["event", "eventPower"],
+                &["event", "power"],
+                &["leagueMatch", "eventPower"],
+                &["leagueMatch", "power"],
+                &["eventPower"],
+            ]
+            .iter()
+            .find_map(|path| number_at(detail, path)),
+            Some("event"),
         ),
         _ => (None, None),
     };
@@ -1007,6 +1036,10 @@ fn parse_battle(detail: &Value, fallback_id: &str) -> Option<BattleRecord> {
         deaths: result.and_then(|value| integer_at(value, &["death"])),
         specials: result.and_then(|value| integer_at(value, &["special"])),
     })
+}
+
+fn is_event_battle_mode(mode: &str) -> bool {
+    matches!(mode, "EVENT" | "EVENT_MATCH" | "CHALLENGE" | "LEAGUE")
 }
 
 fn parse_coop(detail: &Value, fallback_id: &str) -> Option<CoopRecord> {
@@ -1233,6 +1266,31 @@ mod tests {
             parse_battle(&challenge, "challenge").unwrap().power,
             Some(2019.8)
         );
+    }
+
+    #[test]
+    fn parses_event_match_and_event_power() {
+        let detail = json!({
+            "id": "event-battle-1",
+            "vsMode": { "mode": "CHALLENGE" },
+            "vsRule": { "name": "LOFT" },
+            "eventMatch": {
+                "eventId": "event-2026-09",
+                "timeSlotId": "slot-2",
+                "isSolo": true,
+                "eventPower": { "power": 1842.6 }
+            },
+            "myTeam": { "players": [{
+                "isMyself": true,
+                "result": { "kill": 7, "assist": 2, "death": 4 }
+            }]}
+        });
+
+        let record = parse_battle(&detail, "fallback").unwrap();
+        assert_eq!(record.mode, "EVENT_MATCH");
+        assert_eq!(record.power, Some(1842.6));
+        assert_eq!(record.power_kind.as_deref(), Some("event"));
+        assert_eq!(record.rule.as_deref(), Some("LOFT"));
     }
 
     #[test]

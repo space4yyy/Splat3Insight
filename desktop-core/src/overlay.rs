@@ -78,7 +78,7 @@ impl OverlayState {
 }
 
 fn is_overlay_battle(record: &BattleRecord) -> bool {
-    matches!(record.mode.as_str(), "X_MATCH" | "BANKARA")
+    matches!(record.mode.as_str(), "X_MATCH" | "BANKARA" | "EVENT_MATCH")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +94,12 @@ enum PowerTrack {
     AnarchyOpen {
         power_kind: String,
         player_ids: Vec<String>,
+    },
+    EventMatch {
+        power_kind: String,
+        event_id: String,
+        division: String,
+        group_id: String,
     },
 }
 
@@ -155,23 +161,237 @@ fn power_track(item: &ArchivedBattle) -> Option<PowerTrack> {
                 player_ids,
             })
         }
+        ("EVENT_MATCH", _) => {
+            let event_id = event_session_id(&item.raw)?;
+            let (division, group_id) = event_group_identity(&item.raw)?;
+            Some(PowerTrack::EventMatch {
+                power_kind,
+                event_id,
+                division,
+                group_id,
+            })
+        }
         _ => None,
     }
 }
 
+fn event_session_id(raw: &serde_json::Value) -> Option<String> {
+    let event_id = identifier_at_any(
+        raw,
+        &[
+            &["eventMatch", "eventId"],
+            &["eventMatch", "id"],
+            &["eventBattle", "eventId"],
+            &["eventBattle", "id"],
+            &["challenge", "eventId"],
+            &["challenge", "id"],
+            &["event", "eventId"],
+            &["event", "id"],
+            &["leagueMatch", "eventId"],
+            &["leagueMatch", "id"],
+            &["eventMatchId"],
+            &["eventId"],
+            &["eventBattleId"],
+            &["challengeId"],
+        ],
+    )?;
+    let time_slot = identifier_at_any(
+        raw,
+        &[
+            &["eventMatch", "timeSlotId"],
+            &["eventMatch", "scheduleId"],
+            &["eventBattle", "timeSlotId"],
+            &["eventBattle", "scheduleId"],
+            &["leagueMatch", "timeSlotId"],
+            &["leagueMatch", "scheduleId"],
+            &["eventTimeSlotId"],
+            &["timeSlotId"],
+        ],
+    );
+    Some(match time_slot {
+        Some(time_slot) => format!("{event_id}:{time_slot}"),
+        None => event_id,
+    })
+}
+
+fn event_group_identity(raw: &serde_json::Value) -> Option<(String, String)> {
+    let explicit_type = string_at_any(
+        raw,
+        &[
+            &["eventMatch", "participationType"],
+            &["eventMatch", "groupType"],
+            &["eventMatch", "division"],
+            &["eventMatch", "category"],
+            &["eventBattle", "participationType"],
+            &["eventBattle", "groupType"],
+            &["eventBattle", "division"],
+            &["eventBattle", "category"],
+            &["event", "participationType"],
+            &["leagueMatch", "participationType"],
+            &["leagueMatch", "groupType"],
+            &["leagueMatch", "division"],
+        ],
+    )
+    .map(|value| value.to_ascii_uppercase());
+    let is_solo = bool_at_any(
+        raw,
+        &[
+            &["eventMatch", "isSolo"],
+            &["eventBattle", "isSolo"],
+            &["event", "isSolo"],
+            &["leagueMatch", "isSolo"],
+        ],
+    )
+    .or_else(|| explicit_type.as_deref().map(|kind| kind == "SOLO"));
+
+    if is_solo == Some(true) {
+        return Some(("SOLO".to_owned(), "solo".to_owned()));
+    }
+
+    let group_id = identifier_at_any(
+        raw,
+        &[
+            &["eventMatch", "groupId"],
+            &["eventMatch", "partyId"],
+            &["eventMatch", "teamId"],
+            &["eventMatch", "group", "id"],
+            &["eventMatch", "party", "id"],
+            &["eventMatch", "team", "id"],
+            &["eventBattle", "groupId"],
+            &["eventBattle", "partyId"],
+            &["eventBattle", "teamId"],
+            &["eventBattle", "group", "id"],
+            &["eventBattle", "party", "id"],
+            &["eventBattle", "team", "id"],
+            &["leagueMatch", "groupId"],
+            &["leagueMatch", "partyId"],
+            &["leagueMatch", "teamId"],
+            &["leagueMatch", "group", "id"],
+            &["leagueMatch", "party", "id"],
+            &["leagueMatch", "team", "id"],
+            &["eventGroupId"],
+            &["partyId"],
+        ],
+    );
+    let group_roster = group_roster_id(raw);
+    let group_id = group_id.or(group_roster)?;
+    let division = match explicit_type.as_deref() {
+        Some("DUO") | Some("PAIR") => "DUO",
+        Some("TEAM") | Some("GROUP") => "TEAM",
+        _ => "GROUP",
+    };
+    Some((division.to_owned(), group_id))
+}
+
+fn group_roster_id(raw: &serde_json::Value) -> Option<String> {
+    let paths: &[&[&str]] = &[
+        &["eventMatch", "group", "members"],
+        &["eventMatch", "group", "players"],
+        &["eventMatch", "party", "members"],
+        &["eventMatch", "party", "players"],
+        &["eventMatch", "team", "members"],
+        &["eventMatch", "team", "players"],
+        &["eventBattle", "group", "members"],
+        &["eventBattle", "group", "players"],
+        &["eventBattle", "party", "members"],
+        &["eventBattle", "party", "players"],
+        &["eventBattle", "team", "members"],
+        &["eventBattle", "team", "players"],
+        &["leagueMatch", "group", "members"],
+        &["leagueMatch", "group", "players"],
+        &["leagueMatch", "party", "members"],
+        &["leagueMatch", "party", "players"],
+        &["leagueMatch", "team", "members"],
+        &["leagueMatch", "team", "players"],
+    ];
+    let mut members = paths.iter().find_map(|path| {
+        let mut value = raw;
+        for key in *path {
+            value = value.get(*key)?;
+        }
+        value.as_array().map(|members| {
+            members
+                .iter()
+                .map(|member| identifier_at_any(member, &[&["id"], &["playerId"], &["nameId"]]))
+                .collect::<Option<Vec<_>>>()
+        })
+    })??;
+    if members.is_empty() {
+        return None;
+    }
+    members.sort_unstable();
+    Some(members.join(","))
+}
+
+fn string_at_any(value: &serde_json::Value, paths: &[&[&str]]) -> Option<String> {
+    paths.iter().find_map(|path| {
+        let mut current = value;
+        for key in *path {
+            current = current.get(*key)?;
+        }
+        current.as_str().map(ToOwned::to_owned)
+    })
+}
+
+fn bool_at_any(value: &serde_json::Value, paths: &[&[&str]]) -> Option<bool> {
+    paths.iter().find_map(|path| {
+        let mut current = value;
+        for key in *path {
+            current = current.get(*key)?;
+        }
+        current.as_bool()
+    })
+}
+
+fn identifier_at_any(value: &serde_json::Value, paths: &[&[&str]]) -> Option<String> {
+    paths.iter().find_map(|path| {
+        let mut current = value;
+        for key in *path {
+            current = current.get(*key)?;
+        }
+        current
+            .as_str()
+            .map(ToOwned::to_owned)
+            .or_else(|| current.as_i64().map(|identifier| identifier.to_string()))
+    })
+}
+
+fn event_power_is_placed(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> bool {
+    let Some(track @ PowerTrack::EventMatch { .. }) = power_track(item) else {
+        // Without stable event and participation identifiers, the rating cannot be safely
+        // separated from another event or a different group.
+        return false;
+    };
+    1 + older
+        .iter()
+        .filter(|candidate| power_track(candidate).as_ref() == Some(&track))
+        .count()
+        >= 5
+}
+
 fn to_overlay_battle(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> OverlayBattle {
     let current_track = power_track(item);
-    let power_delta = item.record.power.and_then(|current_power| {
+    let power = if item.record.mode == "EVENT_MATCH" && !event_power_is_placed(item, older) {
+        None
+    } else {
+        item.record.power
+    };
+    let power_delta = power.and_then(|current_power| {
         let track = current_track.as_ref()?;
         Some(
             older
                 .iter()
-                .filter(|candidate| {
+                .enumerate()
+                .filter(|(index, candidate)| {
                     candidate.record.power.is_some()
                         && power_track(candidate).as_ref() == Some(track)
+                        && (!matches!(track, PowerTrack::EventMatch { .. })
+                            || event_power_is_placed(candidate, &older[*index + 1..]))
                         && (candidate.record.power.unwrap() - current_power).abs() > 0.0001
                 })
-                .find_map(|candidate| candidate.record.power.map(|power| current_power - power))
+                .find_map(|(_, candidate)| {
+                    candidate.record.power.map(|power| current_power - power)
+                })
                 // A newly rated track starts at +0; an unplaced track has no current power,
                 // so the outer `and_then` keeps both values absent until a rating exists.
                 .unwrap_or(0.0),
@@ -185,7 +405,7 @@ fn to_overlay_battle(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> Overla
         bankara_mode: item.record.bankara_mode.clone(),
         rule: item.record.rule.clone(),
         judgement: item.record.judgement.clone(),
-        power: item.record.power,
+        power,
         power_kind: item.record.power_kind.clone(),
         power_delta,
         kills: item.record.kills,
@@ -382,6 +602,160 @@ mod tests {
         assert!((state.selected.unwrap().power_delta.unwrap() - 48.4).abs() < 0.0001);
     }
 
+    #[test]
+    fn event_match_power_is_hidden_until_five_matches_are_placed() {
+        let battles = (1..=4)
+            .map(|index| {
+                event_battle(
+                    &format!("solo-{index}"),
+                    &format!("2026-09-22T00:0{index}:00Z"),
+                    Some(1800.0 + f64::from(index)),
+                    "event-a",
+                    "slot-1",
+                    true,
+                    None,
+                )
+            })
+            .collect();
+        let state = OverlayState::from_history(&HistoryCache {
+            schema_version: 1,
+            fetched_at_ms: 1,
+            battles,
+            coop: Vec::new(),
+        });
+        let selected = state.selected.unwrap();
+        assert_eq!(selected.mode, "EVENT_MATCH");
+        assert_eq!(selected.power, None);
+        assert_eq!(selected.power_delta, None);
+    }
+
+    #[test]
+    fn event_match_power_is_unavailable_without_stable_track_identity() {
+        let item = battle(
+            "event-without-track",
+            "2026-09-22T04:00:00Z",
+            "EVENT_MATCH",
+            Some(1842.6),
+            "WIN",
+        );
+        let state = OverlayState::from_history(&HistoryCache {
+            schema_version: 1,
+            fetched_at_ms: 1,
+            battles: vec![item],
+            coop: Vec::new(),
+        });
+        let selected = state.selected.unwrap();
+        assert_eq!(selected.power, None);
+        assert_eq!(selected.power_delta, None);
+    }
+
+    #[test]
+    fn event_match_power_and_delta_are_scoped_to_event_slot_and_group() {
+        let mut battles = Vec::new();
+        for index in 1..=5 {
+            battles.push(event_battle(
+                &format!("solo-{index}"),
+                &format!("2026-09-22T00:0{index}:00Z"),
+                Some(1800.0 + f64::from(index)),
+                "event-a",
+                "slot-1",
+                true,
+                None,
+            ));
+        }
+        battles.push(event_battle(
+            "other-group",
+            "2026-09-22T00:06:00Z",
+            Some(2400.0),
+            "event-a",
+            "slot-1",
+            false,
+            Some("friends-a"),
+        ));
+        battles.push(event_battle(
+            "other-slot",
+            "2026-09-22T00:07:00Z",
+            Some(2300.0),
+            "event-a",
+            "slot-2",
+            true,
+            None,
+        ));
+        battles.push(event_battle(
+            "other-event",
+            "2026-09-22T00:08:00Z",
+            Some(2200.0),
+            "event-b",
+            "slot-1",
+            true,
+            None,
+        ));
+        battles.push(event_battle(
+            "solo-6",
+            "2026-09-22T00:09:00Z",
+            Some(1815.0),
+            "event-a",
+            "slot-1",
+            true,
+            None,
+        ));
+
+        let state = OverlayState::from_history(&HistoryCache {
+            schema_version: 1,
+            fetched_at_ms: 1,
+            battles,
+            coop: Vec::new(),
+        });
+        let selected = state.selected.unwrap();
+        assert_eq!(selected.id, "solo-6");
+        assert_eq!(selected.power, Some(1815.0));
+        assert_eq!(selected.power_delta, Some(10.0));
+    }
+
+    #[test]
+    fn event_match_group_power_uses_group_identity_not_solo_rating() {
+        let mut battles = Vec::new();
+        for index in 1..=5 {
+            battles.push(event_battle(
+                &format!("group-a-{index}"),
+                &format!("2026-09-22T00:0{index}:00Z"),
+                Some(1700.0 + f64::from(index)),
+                "event-a",
+                "slot-1",
+                false,
+                Some("friends-a"),
+            ));
+        }
+        battles.push(event_battle(
+            "group-b",
+            "2026-09-22T00:06:00Z",
+            Some(2300.0),
+            "event-a",
+            "slot-1",
+            false,
+            Some("friends-b"),
+        ));
+        battles.push(event_battle(
+            "group-a-6",
+            "2026-09-22T00:07:00Z",
+            Some(1715.0),
+            "event-a",
+            "slot-1",
+            false,
+            Some("friends-a"),
+        ));
+
+        let state = OverlayState::from_history(&HistoryCache {
+            schema_version: 1,
+            fetched_at_ms: 1,
+            battles,
+            coop: Vec::new(),
+        });
+        let selected = state.selected.unwrap();
+        assert_eq!(selected.id, "group-a-6");
+        assert_eq!(selected.power_delta, Some(10.0));
+    }
+
     fn challenge_battle(id: &str, time: &str, power: f64, weapon_id: &str) -> ArchivedBattle {
         let mut item = battle(
             id,
@@ -410,6 +784,28 @@ mod tests {
         item.record.power_kind = Some("team".to_owned());
         item.raw = serde_json::json!({
             "myTeam": { "players": player_ids.iter().map(|id| serde_json::json!({"id":id})).collect::<Vec<_>>() }
+        });
+        item
+    }
+
+    fn event_battle(
+        id: &str,
+        time: &str,
+        power: Option<f64>,
+        event_id: &str,
+        time_slot_id: &str,
+        is_solo: bool,
+        group_id: Option<&str>,
+    ) -> ArchivedBattle {
+        let mut item = battle(id, time, "EVENT_MATCH", power, "WIN");
+        item.record.power_kind = Some("event".to_owned());
+        item.raw = serde_json::json!({
+            "eventMatch": {
+                "eventId": event_id,
+                "timeSlotId": time_slot_id,
+                "isSolo": is_solo,
+                "groupId": group_id
+            }
         });
         item
     }

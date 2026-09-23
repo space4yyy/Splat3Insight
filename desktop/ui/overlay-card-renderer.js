@@ -28,7 +28,7 @@
     root.innerHTML = `
       <section class="overlay-card">
         <div class="overlay-card__top">
-          <div class="overlay-card__mode mode-x-match">
+          <div class="overlay-card__mode">
             <span data-field="rule"></span>
             <small class="overlay-card__bankara-mode" data-field="bankara-mode" hidden></small>
           </div>
@@ -109,7 +109,8 @@
     refs.bankaraMode.textContent = bankaraMode;
     refs.bankaraMode.hidden = !bankaraMode;
     refs.mode.classList.toggle('mode-x-match', battle.mode === 'X_MATCH');
-    refs.mode.classList.toggle('mode-bankara', battle.mode !== 'X_MATCH');
+    refs.mode.classList.toggle('mode-bankara', battle.mode === 'BANKARA');
+    refs.mode.classList.toggle('mode-event-match', battle.mode === 'EVENT_MATCH');
 
     refs.wins.textContent = `Win ${displayNumber(summary.win)}`;
     refs.losses.textContent = `Lose ${displayNumber(summary.lose)}`;

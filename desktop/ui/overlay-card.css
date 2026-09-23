@@ -61,6 +61,10 @@
   color: #f54910;
 }
 
+.overlay-card__mode.mode-event-match {
+  color: #ff62b3;
+}
+
 .overlay-card__bankara-mode {
   color: #f54910;
   font-family: inherit;
