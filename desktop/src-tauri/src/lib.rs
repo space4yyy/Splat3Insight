@@ -1129,8 +1129,6 @@ async fn complete_nintendo_login(
         country: identity.country,
         created_at_ms: timestamp,
         last_used_at_ms: timestamp,
-        baseline_at_ms: None,
-        last_seen_battle_id: None,
     };
     let secret = AccountSecret {
         session_token: identity.session_token,

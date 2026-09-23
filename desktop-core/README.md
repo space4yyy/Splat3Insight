@@ -25,9 +25,9 @@ both a compact parsed form and the raw detail JSON, so later parser changes can
 recover fields without requesting old records again. The desktop app stores
 these records in `history/history.sqlite3`: the primary key prevents duplicate
 rows and raw detail JSON is gzip-compressed. Incremental syncs only upsert the
-newly fetched window, leaving older rows untouched. Existing per-account JSON
-archives are migrated automatically to the database and retained under
-`history/legacy-json/` as backups.
+newly fetched window, leaving older rows untouched. The app does not import old
+per-account JSON archives. When an account is deleted, any stale JSON archive or
+export files for that account are removed as part of the account-data cleanup.
 
 Each detail is committed in its own SQLite transaction while it is being
 fetched. The per-account `history_meta.sync_complete` checkpoint is set to
@@ -47,13 +47,6 @@ The desktop app exports a complete account archive as a `.json.gz` file under
 raw JSON is retained permanently, while repeated syncs only update the parsed
 index fields for the same stable record ID. This keeps the original payload
 available for future parser changes without accumulating duplicate copies.
-
-## Current-only monitoring
-
-`CurrentBattleMonitor::establish_baseline` records the newest visible battle
-without emitting it. Later calls to `observe` return only battles newer than
-the persisted cursor. This monitor is separate from the historical archive and
-is reserved for the later live-overlay path.
 
 ## Nintendo Account login
 

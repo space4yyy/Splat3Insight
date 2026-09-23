@@ -9,7 +9,6 @@ use std::fs;
 use std::path::PathBuf;
 
 pub mod history;
-pub mod monitor;
 pub mod nintendo_auth;
 pub mod overlay;
 pub mod splatnet_auth;
@@ -24,8 +23,6 @@ pub struct AccountMetadata {
     pub country: Option<String>,
     pub created_at_ms: i64,
     pub last_used_at_ms: i64,
-    pub baseline_at_ms: Option<i64>,
-    pub last_seen_battle_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -238,23 +235,6 @@ impl<S: SecretStore> AccountRegistry<S> {
         self.persist()
     }
 
-    pub fn update_cursor(
-        &mut self,
-        account_id: &str,
-        baseline_at_ms: i64,
-        last_seen_battle_id: Option<String>,
-    ) -> Result<(), String> {
-        let account = self
-            .file
-            .accounts
-            .iter_mut()
-            .find(|account| account.account_id == account_id)
-            .ok_or_else(|| format!("unknown account: {account_id}"))?;
-        account.baseline_at_ms = Some(baseline_at_ms);
-        account.last_seen_battle_id = last_seen_battle_id;
-        self.persist()
-    }
-
     pub fn remove(&mut self, account_id: &str) -> Result<(), String> {
         self.secret_store.delete(account_id)?;
         self.file
@@ -327,8 +307,6 @@ mod tests {
             country: Some("JP".to_owned()),
             created_at_ms: 1,
             last_used_at_ms: 1,
-            baseline_at_ms: None,
-            last_seen_battle_id: None,
         }
     }
 
