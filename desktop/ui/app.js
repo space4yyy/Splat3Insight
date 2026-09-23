@@ -14,11 +14,68 @@ const overlayServiceStatusElement = document.querySelector('#overlay-service-sta
 const startOverlayServiceButton = document.querySelector('#start-overlay-service');
 const stopOverlayServiceButton = document.querySelector('#stop-overlay-service');
 const copyOverlayUrlButton = document.querySelector('#copy-overlay-url');
+const backgroundClosePrompt = document.querySelector('#background-close-prompt');
+const cancelCloseButton = document.querySelector('#cancel-close');
+const exitFromCloseButton = document.querySelector('#exit-from-close');
+const hideToTrayButton = document.querySelector('#hide-to-tray');
 
 const OBS_OVERLAY_URL = 'http://127.0.0.1:17353/overlay';
 
 let currentSyncStatus = null;
 let lastCompletedSyncAt = null;
+let closePromptAcknowledged = false;
+
+try {
+  closePromptAcknowledged = localStorage.getItem('splat3-close-prompt-acknowledged') === 'true';
+} catch {}
+
+function acknowledgeClosePrompt() {
+  closePromptAcknowledged = true;
+  try {
+    localStorage.setItem('splat3-close-prompt-acknowledged', 'true');
+  } catch {}
+}
+
+window.__TAURI__.event.listen('main-close-requested', async () => {
+  if (backgroundClosePrompt.open) {
+    return;
+  }
+  if (closePromptAcknowledged) {
+    try {
+      await invoke('hide_main_window');
+    } catch (error) {
+      setMessage(`隐藏主窗口失败：${String(error)}`, true);
+    }
+    return;
+  }
+  backgroundClosePrompt.showModal();
+}).catch((error) => setMessage(`初始化窗口关闭提示失败：${String(error)}`, true));
+
+cancelCloseButton.addEventListener('click', () => backgroundClosePrompt.close());
+backgroundClosePrompt.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  backgroundClosePrompt.close();
+});
+
+hideToTrayButton.addEventListener('click', async () => {
+  acknowledgeClosePrompt();
+  backgroundClosePrompt.close();
+  try {
+    await invoke('hide_main_window');
+  } catch (error) {
+    setMessage(`隐藏主窗口失败：${String(error)}`, true);
+  }
+});
+
+exitFromCloseButton.addEventListener('click', async () => {
+  acknowledgeClosePrompt();
+  backgroundClosePrompt.close();
+  try {
+    await invoke('exit_app');
+  } catch (error) {
+    setMessage(`退出应用失败：${String(error)}`, true);
+  }
+});
 
 function setMessage(value, error = false) {
   message.textContent = value;

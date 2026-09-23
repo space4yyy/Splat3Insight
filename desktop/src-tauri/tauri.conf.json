@@ -14,6 +14,7 @@
         "title": "Splat3StreamingWidget",
         "width": 560,
         "height": 680,
+        "visible": false,
         "resizable": false
       }
     ],

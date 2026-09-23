@@ -54,6 +54,12 @@
       .overlay-preview__viewport { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; width: 100%; }
       .overlay-preview__scale { width: max-content; transform-origin: top center; }
       .overlay-empty { padding: 24px 0; color: #9d9aa8; text-align: center; }
+      #background-close-prompt { width: min(420px, calc(100% - 32px)); border: 1px solid #4b4857; border-radius: 18px; padding: 22px; color: #f5f5f2; background: #1b1a23; box-shadow: 0 24px 80px #0009; }
+      #background-close-prompt::backdrop { background: #09090dbb; }
+      #background-close-prompt h2 { margin: 0; font-size: 20px; }
+      #background-close-prompt p { margin: 12px 0 20px; font-size: 14px; }
+      .close-prompt-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+      .close-prompt-actions button { padding: 9px 13px; font-size: 13px; }
       @media (max-width: 700px) {
         main { width: calc(100% - 20px); padding-top: 20px; }
         .panel { padding: 16px; }
@@ -109,6 +115,15 @@
         </div>
       </section>
     </main>
+    <dialog id="background-close-prompt" aria-labelledby="background-close-title">
+      <h2 id="background-close-title">让小组件在后台运行？</h2>
+      <p>隐藏主界面后，OBS 服务和数据同步会继续运行。之后可从状态栏图标重新打开，或选择退出应用。</p>
+      <div class="close-prompt-actions">
+        <button id="cancel-close" class="secondary" type="button">取消</button>
+        <button id="exit-from-close" class="secondary" type="button">退出应用</button>
+        <button id="hide-to-tray" type="button">隐藏到状态栏</button>
+      </div>
+    </dialog>
     <script src="./overlay-card-renderer.js"></script>
     <script src="./app.js"></script>
   </body>

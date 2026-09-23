@@ -18,7 +18,12 @@ use splat3_widget_core::{
     splatnet_auth::{exchange_splatnet_tokens, SplatNetAuthConfig, NXAPI_F_GENERATION_URL},
     AccountMetadata, AccountRegistry, AccountSecret, KeyringSecretStore,
 };
-use tauri::{Manager, State};
+use tauri::{
+    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
+    tray::TrayIconBuilder,
+    AppHandle, Emitter, Manager, State, WebviewWindow,
+};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 use tokio::sync::watch;
 
 pub(crate) mod history_store;
@@ -1296,10 +1301,167 @@ fn set_active_account(account_id: String, state: State<'_, AppState>) -> Result<
     Ok(())
 }
 
+#[tauri::command]
+fn hide_main_window(window: WebviewWindow) -> Result<(), String> {
+    window.hide().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn exit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn associate_autostart_agent_with_app(app: &AppHandle) -> Result<(), String> {
+    let executable_path = std::env::current_exe().map_err(|error| error.to_string())?;
+    let agent_path = app
+        .path()
+        .home_dir()
+        .map_err(|error| error.to_string())?
+        .join("Library/LaunchAgents")
+        .join(format!("{}.plist", app.package_info().name));
+    associate_launch_agent_with_bundle(&agent_path, &app.config().identifier, &executable_path)
+}
+
+#[cfg(target_os = "macos")]
+fn associate_launch_agent_with_bundle(
+    agent_path: &Path,
+    bundle_identifier: &str,
+    executable_path: &Path,
+) -> Result<(), String> {
+    if !agent_path.exists() {
+        return Ok(());
+    }
+
+    let mut launch_agent = plist::Value::from_file(&agent_path)
+        .map_err(|error| format!("读取 macOS 登录项配置失败：{error}"))?;
+    let dictionary = launch_agent
+        .as_dictionary_mut()
+        .ok_or_else(|| "macOS 登录项配置格式无效".to_owned())?;
+    let arguments = dictionary
+        .get_mut("ProgramArguments")
+        .and_then(plist::Value::as_array_mut)
+        .ok_or_else(|| "macOS 登录项缺少启动命令".to_owned())?;
+    match arguments.first_mut() {
+        Some(plist::Value::String(executable)) => {
+            *executable = executable_path.display().to_string();
+        }
+        _ => return Err("macOS 登录项启动命令格式无效".to_owned()),
+    }
+    dictionary.insert(
+        "AssociatedBundleIdentifiers".to_owned(),
+        plist::Value::Array(vec![plist::Value::String(bundle_identifier.to_owned())]),
+    );
+
+    let mut serialized = Vec::new();
+    plist::to_writer_xml(&mut serialized, &launch_agent)
+        .map_err(|error| format!("更新 macOS 登录项配置失败：{error}"))?;
+    let temporary_path = agent_path.with_extension(format!("plist.{}.tmp", std::process::id()));
+    fs::write(&temporary_path, serialized)
+        .map_err(|error| format!("写入 macOS 登录项配置失败：{error}"))?;
+    if let Err(error) = fs::rename(&temporary_path, &agent_path) {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(format!("保存 macOS 登录项配置失败：{error}"));
+    }
+
+    Ok(())
+}
+
+fn toggle_autostart(app: &AppHandle, menu_item: &CheckMenuItem<tauri::Wry>) {
+    let manager = app.autolaunch();
+    let was_enabled = manager.is_enabled().unwrap_or(false);
+    let result = if was_enabled {
+        manager.disable()
+    } else {
+        manager.enable().and_then(|()| {
+            #[cfg(target_os = "macos")]
+            if let Err(error) = associate_autostart_agent_with_app(app) {
+                let _ = manager.disable();
+                return Err(tauri_plugin_autostart::Error::Anyhow(error));
+            }
+            Ok(())
+        })
+    };
+
+    match result {
+        Ok(()) => {
+            let _ = menu_item.set_checked(!was_enabled);
+            log_console(
+                "app-lifecycle",
+                if was_enabled {
+                    "已关闭开机启动"
+                } else {
+                    "已开启开机启动"
+                },
+            );
+        }
+        Err(error) => {
+            let _ = menu_item.set_checked(was_enabled);
+            log_console_error("app-lifecycle", &format!("设置开机启动失败：{error}"));
+        }
+    }
+}
+
+fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
+    let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
+    let open_item = MenuItem::with_id(app, "open-main", "打开主界面", true, None::<&str>)?;
+    let autostart_item = CheckMenuItem::with_id(
+        app,
+        "toggle-autostart",
+        "开机启动",
+        true,
+        autostart_enabled,
+        None::<&str>,
+    )?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let exit_item = MenuItem::with_id(app, "exit-app", "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open_item, &autostart_item, &separator, &exit_item])?;
+    let autostart_item_for_events = autostart_item.clone();
+
+    TrayIconBuilder::with_id("main-tray")
+        .icon(tauri::include_image!("./icons/44x44.png"))
+        .icon_as_template(false)
+        .tooltip("斯普拉遁3直播小组件")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(move |app, event| match event.id().as_ref() {
+            "open-main" => show_main_window(app),
+            "toggle-autostart" => toggle_autostart(app, &autostart_item_for_events),
+            "exit-app" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec!["--background"]),
+        ))
         .setup(|app| {
+            let launch_in_background =
+                std::env::args_os().any(|argument| argument == "--background");
+            #[cfg(target_os = "macos")]
+            if app.autolaunch().is_enabled().unwrap_or(false) {
+                if let Err(error) = associate_autostart_agent_with_app(app.handle()) {
+                    log_console_error(
+                        "app-lifecycle",
+                        &format!("修复 macOS 登录项标识失败：{error}"),
+                    );
+                }
+            }
             let config_dir = app.path().app_config_dir()?;
             let metadata_path = config_dir.join("accounts.json");
             let history_dir = config_dir.join("history");
@@ -1359,7 +1521,26 @@ pub fn run() {
 
             overlay_service.start().map_err(std::io::Error::other)?;
 
+            build_tray(app)?;
+            if !launch_in_background {
+                let window = app
+                    .get_webview_window("main")
+                    .ok_or_else(|| std::io::Error::other("主窗口未创建"))?;
+                window.show()?;
+            }
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                if let Err(error) = window.emit("main-close-requested", ()) {
+                    log_console_error(
+                        "app-lifecycle",
+                        &format!("通知前端处理窗口关闭失败：{error}"),
+                    );
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             list_accounts,
@@ -1376,6 +1557,8 @@ pub fn run() {
             refresh_splatnet_tokens,
             sync_history,
             set_active_account,
+            hide_main_window,
+            exit_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Splat 3 Streaming Widget");
@@ -1388,7 +1571,66 @@ mod tests {
         SyncClaim, SyncError, SyncRuntime, LOG_BACKUP_COUNT, MAX_LOG_BYTES,
     };
     use std::fs;
+    #[cfg(target_os = "macos")]
+    use std::path::Path;
     use tempfile::tempdir;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn associates_login_agent_with_app_bundle_identifier() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("Splat3StreamingWidget.plist");
+        let mut dictionary = plist::Dictionary::new();
+        dictionary.insert(
+            "Label".to_owned(),
+            plist::Value::String("Splat3StreamingWidget".to_owned()),
+        );
+        dictionary.insert(
+            "ProgramArguments".to_owned(),
+            plist::Value::Array(vec![
+                plist::Value::String("/old/path/splat3-streaming-widget".to_owned()),
+                plist::Value::String("--background".to_owned()),
+            ]),
+        );
+        plist::Value::Dictionary(dictionary)
+            .to_file_xml(&path)
+            .unwrap();
+
+        let expected_executable = Path::new(
+            "/Applications/Splat3StreamingWidget.app/Contents/MacOS/Splat3StreamingWidget",
+        );
+        super::associate_launch_agent_with_bundle(
+            &path,
+            "ink.space4.splat3streamingwidget",
+            expected_executable,
+        )
+        .unwrap();
+
+        let updated = plist::Value::from_file(path).unwrap();
+        let dictionary = updated.as_dictionary().unwrap();
+        assert_eq!(
+            dictionary.get("AssociatedBundleIdentifiers"),
+            Some(&plist::Value::Array(vec![plist::Value::String(
+                "ink.space4.splat3streamingwidget".to_owned()
+            )]))
+        );
+        assert_eq!(
+            dictionary
+                .get("ProgramArguments")
+                .and_then(plist::Value::as_array)
+                .and_then(|arguments| arguments.first())
+                .and_then(plist::Value::as_string),
+            expected_executable.to_str()
+        );
+        assert_eq!(
+            dictionary
+                .get("ProgramArguments")
+                .and_then(plist::Value::as_array)
+                .and_then(|arguments| arguments.get(1))
+                .and_then(plist::Value::as_string),
+            Some("--background")
+        );
+    }
 
     #[test]
     fn refreshes_only_for_typed_splatnet_token_expiration_errors() {
