@@ -3810,7 +3810,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "flate2",
- "png 0.18.1",
  "rusqlite",
  "serde",
  "serde_json",

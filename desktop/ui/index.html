@@ -33,7 +33,8 @@
       #message { min-height: 24px; margin: 14px 0 0; color: #bdbbc7; white-space: pre-line; }
       #sync-status { min-height: 20px; margin: 4px 0 0; color: #9d9aa8; white-space: pre-line; }
       #sync-status.syncing { color: #ecff20; }
-      .service-status { min-height: 20px; margin: 8px 0 0; color: #9d9aa8; font-size: 13px; white-space: pre-line; overflow-wrap: anywhere; }
+      .overlay-details { display: grid; gap: 2px; margin-top: 6px; }
+      .service-status { min-height: 20px; margin: 0; color: #9d9aa8; font-size: 13px; line-height: 20px; white-space: pre-line; overflow-wrap: anywhere; }
       .service-status.running { color: #62e6ad; }
       .service-status.starting { color: #ecff20; }
       .service-status.stopped { color: #aaa8b5; }
@@ -45,10 +46,10 @@
       .auth-actions button { padding: 10px 14px; font-size: 13px; }
       textarea { width: 100%; min-height: 92px; resize: vertical; border: 1px solid #4b4857; border-radius: 12px; padding: 10px; color: #f5f5f2; background: #111117; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
       .paste-help { margin: 8px 0 10px; font-size: 13px; color: #9d9aa8; }
-      .overlay-url-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
-      .overlay-url-row code { min-width: 0; flex: 1; overflow-wrap: anywhere; color: #aaa8b5; font-size: 13px; }
-      .overlay-url-row button { flex: 0 0 auto; padding: 8px 12px; font-size: 12px; }
-      .obs-help { margin-top: 8px; color: #aaa8b5; font-size: 12px; }
+      .overlay-url-row { display: flex; align-items: center; gap: 10px; min-height: 20px; }
+      .overlay-url-row code { min-width: 0; flex: 1; color: #aaa8b5; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+      .overlay-url-row button { flex: 0 0 auto; height: 20px; min-height: 20px; padding: 3px 9px; font-size: 11px; line-height: 1; }
+      .obs-help { min-height: 20px; margin: 0; color: #aaa8b5; font-size: 13px; line-height: 20px; }
       .overlay-preview { margin-top: 14px; padding: 8px 0 2px; overflow: hidden; }
       .overlay-preview__viewport { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; width: 100%; }
       .overlay-preview__scale { width: max-content; transform-origin: top center; }
@@ -93,14 +94,16 @@
             <button id="stop-overlay-service" class="secondary" hidden>停止服务</button>
           </div>
         </div>
-        <div class="overlay-url-row">
-          <code>http://127.0.0.1:17353/overlay</code>
-          <button id="copy-overlay-url" class="secondary">复制 OBS 地址</button>
+        <div class="overlay-details">
+          <div class="overlay-url-row">
+            <code>http://127.0.0.1:17353/overlay</code>
+            <button id="copy-overlay-url" class="secondary">复制 OBS 地址</button>
+          </div>
+          <div class="obs-help">
+            OBS 尺寸推荐：560 x 100
+          </div>
+          <div id="overlay-service-status" class="service-status">正在检查 OBS 服务状态…</div>
         </div>
-        <div class="obs-help">
-          OBS 尺寸推荐：460 x 100
-        </div>
-        <div id="overlay-service-status" class="service-status">正在检查 OBS 服务状态…</div>
         <div id="overlay-preview" class="overlay-preview">
           <div class="overlay-empty">登录并同步历史后显示真实对战数据。</div>
         </div>

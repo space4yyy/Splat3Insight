@@ -8,7 +8,7 @@
 
 :root {
   font-family: "DFP GBZY7", Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
-  --overlay-base-width: 460px;
+  --overlay-base-width: 560px;
   --overlay-base-height: 100px;
 }
 
@@ -85,8 +85,10 @@
 }
 
 .overlay-card__bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
   align-items: flex-end;
-  justify-content: flex-start;
+  gap: 10px;
   margin-top: 10px;
   padding-top: 0;
 }
@@ -95,21 +97,30 @@
   display: flex;
   align-items: flex-end;
   gap: 8px;
+  min-width: 0;
   min-height: 44px;
+  overflow: hidden;
+  white-space: nowrap;
   font-size: 60px;
   line-height: .82;
   letter-spacing: -.08em;
 }
 
 .overlay-card__power-value {
+  flex: 0 0 auto;
   color: #fff;
+  white-space: nowrap;
 }
 
 .overlay-card__power-delta {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
   margin-bottom: 0;
   font-size: 22px;
   line-height: .82;
   letter-spacing: -.04em;
+  white-space: nowrap;
 }
 
 .overlay-card__power-value.is-placeholder,
@@ -141,16 +152,19 @@
 .overlay-card__stats {
   display: flex;
   align-items: flex-end;
-  margin-left: auto;
+  justify-self: end;
+  min-width: max-content;
 }
 
 .overlay-card__kad {
   display: flex;
-  gap: 10px;
+  flex: 0 0 auto;
+  gap: 6px;
   color: #f5f5f2;
   font-family: inherit;
   font-size: 28px;
   font-weight: 800;
+  white-space: nowrap;
 }
 
 .overlay-card__kad span {

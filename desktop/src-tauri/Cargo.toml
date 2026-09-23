@@ -10,7 +10,6 @@ name = "splat3_streaming_widget_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-png = "0.18"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]

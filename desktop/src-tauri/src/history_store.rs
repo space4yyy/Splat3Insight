@@ -3,7 +3,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use splat3_widget_core::history::{
     ArchivedBattle, ArchivedCoop, BattleRecord, CoopRecord, HistoryCache, HistoryFetchedRecord,
     HistorySyncSummary,
@@ -290,22 +290,30 @@ pub(crate) fn load_overlay_cache(
         .unwrap_or(0);
     let mut statement = connection
         .prepare(
-            "SELECT record_json FROM history_records
+            "SELECT record_json, raw_json, raw_encoding FROM history_records
              WHERE account_id = ?1 AND record_type = 'battle'
              ORDER BY played_time IS NULL, played_time DESC, rowid DESC",
         )
         .map_err(|error| format!("准备卡片历史查询失败：{error}"))?;
     let rows = statement
-        .query_map([account_id], |row| row.get::<_, String>(0))
+        .query_map([account_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
         .map_err(|error| format!("读取卡片历史失败：{error}"))?;
     let mut battles = Vec::new();
     for row in rows {
-        let record_json = row.map_err(|error| format!("读取卡片历史行失败：{error}"))?;
+        let (record_json, raw_json, raw_encoding) =
+            row.map_err(|error| format!("读取卡片历史行失败：{error}"))?;
         let record = serde_json::from_str::<BattleRecord>(&record_json)
             .map_err(|error| format!("解析卡片对战记录失败：{error}"))?;
+        let raw = decode_raw_json(&raw_json, &raw_encoding)?;
         battles.push(ArchivedBattle {
             record,
-            raw: Value::Null,
+            raw: overlay_identity_raw(&raw),
         });
     }
     Ok(Some(HistoryCache {
@@ -535,6 +543,32 @@ fn encode_raw_json(raw: &Value) -> Result<Vec<u8>, String> {
     encoder
         .finish()
         .map_err(|error| format!("完成原始记录压缩失败：{error}"))
+}
+
+fn overlay_identity_raw(raw: &Value) -> Value {
+    let rule = raw.pointer("/vsRule/rule").cloned().unwrap_or(Value::Null);
+    let players = raw
+        .pointer("/myTeam/players")
+        .and_then(Value::as_array)
+        .map(|players| {
+            players
+                .iter()
+                .map(|player| {
+                    json!({
+                        "isMyself": player.get("isMyself"),
+                        "id": player.get("id"),
+                        "nameId": player.get("nameId"),
+                        "weapon": { "id": player.pointer("/weapon/id") },
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    json!({
+        "vsRule": { "rule": rule },
+        "myTeam": { "players": players },
+    })
 }
 
 fn decode_raw_json(bytes: &[u8], encoding: &str) -> Result<Value, String> {

@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/overlay-card.css" />
     <style>
       html, body { margin: 0; background: transparent; overflow: hidden; }
-      #root { width: 460px; height: 100px; }
+      #root { width: 560px; height: 100px; }
       .empty { display: none; }
     </style>
   </head>
@@ -15,7 +15,7 @@
     <main id="root"></main>
     <script>
       const root = document.querySelector('#root');
-      const BASE_WIDTH = 460;
+      const BASE_WIDTH = 560;
       const BASE_HEIGHT = 100;
       let lastState = null;
 
@@ -23,7 +23,7 @@
         const viewportWidth = window.innerWidth;
         const viewportHeight = window.innerHeight;
         const scale = viewportWidth > 0 && viewportHeight > 0
-          ? Math.min(viewportWidth / BASE_WIDTH, viewportHeight / BASE_HEIGHT)
+          ? Math.min(1, viewportWidth / BASE_WIDTH, viewportHeight / BASE_HEIGHT)
           : 1;
         const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
         const card = root.querySelector('.overlay-card');
@@ -74,7 +74,7 @@
           ? Number(deaths) === 0 ? '∞' : displayNumber(Number(kills) / Number(deaths), 1)
           : '—';
         const delta = isNumber(battle.power_delta)
-          ? `${battle.power_delta > 0 ? '+' : ''}${displayNumber(battle.power_delta, 1)}`
+          ? `${battle.power_delta >= 0 ? '+' : ''}${displayNumber(battle.power_delta, 1)}`
           : '—';
         const deltaClass = battle.power_delta > 0 ? 'positive' : battle.power_delta < 0 ? 'negative' : '';
         const mode = battle.mode === 'X_MATCH' ? 'mode-x-match' : 'mode-bankara';

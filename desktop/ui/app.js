@@ -16,6 +16,8 @@ const stopOverlayServiceButton = document.querySelector('#stop-overlay-service')
 const copyOverlayUrlButton = document.querySelector('#copy-overlay-url');
 
 const OBS_OVERLAY_URL = 'http://127.0.0.1:17353/overlay';
+// Temporary visual sample for the app preview only; set to null to show the real delta again.
+const PREVIEW_DELTA_OVERRIDE = 200.0;
 
 let currentSyncStatus = null;
 let lastCompletedSyncAt = null;
@@ -144,10 +146,11 @@ function renderOverlay(state) {
     ? Number(deaths) === 0 ? '∞' : displayNumber(Number(kills) / Number(deaths), 1)
     : '—';
   const kdMissing = !hasKills || !hasDeaths;
-  const delta = battle.power_delta === null || battle.power_delta === undefined
+  const previewDelta = PREVIEW_DELTA_OVERRIDE ?? battle.power_delta;
+  const delta = previewDelta === null || previewDelta === undefined
     ? '—'
-    : `${battle.power_delta > 0 ? '+' : ''}${displayNumber(battle.power_delta, 1)}`;
-  const deltaClass = battle.power_delta > 0 ? 'positive' : battle.power_delta < 0 ? 'negative' : '';
+    : `${previewDelta >= 0 ? '+' : ''}${displayNumber(previewDelta, 1)}`;
+  const deltaClass = previewDelta > 0 ? 'positive' : previewDelta < 0 ? 'negative' : '';
 
   overlayPreview.innerHTML = `
     <div class="overlay-preview__viewport">
@@ -167,7 +170,7 @@ function renderOverlay(state) {
           <div class="overlay-card__bottom">
             <div class="overlay-card__power">
               <span class="overlay-card__power-value ${placeholderClass(battle.power)}">${displayNumber(battle.power, 1)}</span>
-              <span class="overlay-card__power-delta ${deltaClass} ${placeholderClass(battle.power_delta)}">${delta}</span>
+              <span class="overlay-card__power-delta ${deltaClass} ${placeholderClass(previewDelta)}">${delta}</span>
             </div>
             <div class="overlay-card__stats">
               <div class="overlay-card__kad">

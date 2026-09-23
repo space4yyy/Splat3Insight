@@ -81,22 +81,78 @@ fn is_overlay_battle(record: &BattleRecord) -> bool {
     matches!(record.mode.as_str(), "X_MATCH" | "BANKARA")
 }
 
-fn power_track(record: &BattleRecord) -> Option<(String, String)> {
+fn power_track(item: &ArchivedBattle) -> Option<(String, String, String)> {
+    let record = &item.record;
     let power_kind = record.power_kind.as_ref()?.clone();
-    Some((record.mode.clone(), power_kind))
+    let scope = match (record.mode.as_str(), record.bankara_mode.as_deref()) {
+        ("X_MATCH", _) => item
+            .raw
+            .pointer("/vsRule/rule")
+            .and_then(serde_json::Value::as_str)
+            .or(record.rule.as_deref())
+            .filter(|rule| !rule.is_empty())
+            .map(|rule| format!("rule:{rule}"))?,
+        ("BANKARA", Some("CHALLENGE")) => {
+            let players = item.raw.pointer("/myTeam/players")?.as_array()?;
+            let player = players
+                .iter()
+                .find(|player| {
+                    player.get("isMyself").and_then(serde_json::Value::as_bool) == Some(true)
+                })
+                .or_else(|| players.first())?;
+            let weapon_id = player
+                .pointer("/weapon/id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| !id.is_empty())?;
+            format!("weapon:{weapon_id}")
+        }
+        ("BANKARA", Some("OPEN")) => {
+            let players = item.raw.pointer("/myTeam/players")?.as_array()?;
+            if players.is_empty() {
+                return None;
+            }
+            let mut player_ids = players
+                .iter()
+                .map(|player| {
+                    player
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|id| !id.is_empty())
+                        .or_else(|| {
+                            player
+                                .get("nameId")
+                                .and_then(serde_json::Value::as_str)
+                                .filter(|id| !id.is_empty())
+                        })
+                        .map(str::to_owned)
+                })
+                .collect::<Option<Vec<_>>>()?;
+            player_ids.sort_unstable();
+            format!("team:{}", player_ids.join("|"))
+        }
+        _ => return None,
+    };
+
+    Some((record.mode.clone(), power_kind, scope))
 }
 
 fn to_overlay_battle(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> OverlayBattle {
-    let current_track = power_track(&item.record);
+    let current_track = power_track(item);
     let power_delta = item.record.power.and_then(|current_power| {
-        older
-            .iter()
-            .filter(|candidate| {
-                candidate.record.power.is_some()
-                    && power_track(&candidate.record) == current_track
-                    && (candidate.record.power.unwrap() - current_power).abs() > 0.0001
-            })
-            .find_map(|candidate| candidate.record.power.map(|power| current_power - power))
+        let track = current_track.as_ref()?;
+        Some(
+            older
+                .iter()
+                .filter(|candidate| {
+                    candidate.record.power.is_some()
+                        && power_track(candidate).as_ref() == Some(track)
+                        && (candidate.record.power.unwrap() - current_power).abs() > 0.0001
+                })
+                .find_map(|candidate| candidate.record.power.map(|power| current_power - power))
+                // A newly rated track starts at +0; an unplaced track has no current power,
+                // so the outer `and_then` keeps both values absent until a rating exists.
+                .unwrap_or(0.0),
+        )
     });
 
     OverlayBattle {
