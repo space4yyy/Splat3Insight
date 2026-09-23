@@ -506,8 +506,13 @@ fn write_response(
 }
 
 fn load_overlay_state(config: &OverlayServerConfig) -> Result<OverlayState, String> {
-    let registry = fs::read_to_string(&config.accounts_path)
-        .map_err(|error| format!("读取账号配置失败: {error}"))?;
+    let registry = match fs::read_to_string(&config.accounts_path) {
+        Ok(registry) => registry,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(crate::empty_overlay_state());
+        }
+        Err(error) => return Err(format!("读取账号配置失败: {error}")),
+    };
     let snapshot: RegistrySnapshot =
         serde_json::from_str(&registry).map_err(|error| format!("读取账号配置失败: {error}"))?;
     let Some(account_id) = snapshot.active_account_id else {
@@ -649,13 +654,33 @@ mod tests {
     }
 
     #[test]
-    fn overlay_api_returns_server_error_for_data_failures() {
+    fn overlay_api_returns_empty_state_when_account_registry_is_missing() {
         let directory = tempdir().unwrap();
         let response = route_request(
             "GET",
             "/api/overlay",
             &OverlayServerConfig {
                 accounts_path: directory.path().join("missing-accounts.json"),
+                history_dir: directory.path().join("history"),
+            },
+        )
+        .unwrap();
+        assert_eq!(response.status, "200 OK");
+        let body = String::from_utf8(response.body).unwrap();
+        assert!(body.contains("\"selected\":null"));
+        assert!(body.contains("\"sample_size\":0"));
+    }
+
+    #[test]
+    fn overlay_api_returns_server_error_for_invalid_account_registry() {
+        let directory = tempdir().unwrap();
+        let accounts_path = directory.path().join("accounts.json");
+        std::fs::write(&accounts_path, "not-json").unwrap();
+        let response = route_request(
+            "GET",
+            "/api/overlay",
+            &OverlayServerConfig {
+                accounts_path,
                 history_dir: directory.path().join("history"),
             },
         )

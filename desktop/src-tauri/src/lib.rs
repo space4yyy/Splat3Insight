@@ -574,15 +574,6 @@ async fn sync_account_inner(
         status.error = None;
     });
 
-    history_store::migrate_legacy_if_needed(history_dir, account_id).map_err(|error| {
-        account_auth_error(
-            auth_log_path,
-            "history-migration",
-            &metadata.display_name,
-            account_id,
-            error,
-        )
-    })?;
     let existing_summary = load_history_summary(history_dir, account_id).map_err(|error| {
         account_auth_error(
             auth_log_path,

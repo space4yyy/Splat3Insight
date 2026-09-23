@@ -22,11 +22,19 @@ let lastCompletedSyncAt = null;
 
 function setMessage(value, error = false) {
   message.textContent = value;
+  message.hidden = !value;
   message.classList.toggle('error', error);
 }
 
 function renderSyncStatus(status) {
   currentSyncStatus = status;
+  if (status?.state === 'idle' && !status.account_id) {
+    syncStatusElement.textContent = '';
+    syncStatusElement.hidden = true;
+    syncStatusElement.classList.remove('error', 'syncing');
+    return;
+  }
+  syncStatusElement.hidden = false;
   if (!status) {
     syncStatusElement.textContent = '同步状态不可用。';
     syncStatusElement.classList.add('error');
@@ -139,7 +147,7 @@ function renderAccountList(items) {
           ${account.splatnet_ready ? '' : `<button class="secondary" data-refresh-account="${escapeHtml(account.account_id)}">获取权限</button>`}
         </div>
       </div>`).join('')
-    : '<p class="status">还没有登录账号。</p>';
+    : '<p class="status">点击“添加 Nintendo Account”开始。</p>';
 
   accounts.querySelectorAll('[data-account]').forEach((button) => {
     button.addEventListener('click', async () => {
@@ -217,7 +225,7 @@ async function refreshAccounts() {
   const result = await invoke('list_accounts');
   renderAccountList(result);
   await refreshOverlay(result.find((account) => account.active)?.account_id || null);
-  setMessage(result.length ? '账号信息已保存到系统凭据库。' : '请先登录一个 Nintendo Account。');
+  setMessage(result.length ? '账号信息已保存到系统凭据库。' : '');
 }
 
 async function refreshSyncStatus() {

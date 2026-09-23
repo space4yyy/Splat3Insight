@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "斯普拉遁3直播小组件",
+  "productName": "Splat3StreamingWidget",
   "version": "0.1.0",
-  "identifier": "com.splat3.streaming-widget",
+  "identifier": "ink.space4.splat3streamingwidget",
   "build": {
     "frontendDist": "../ui"
   },
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "斯普拉遁3直播小组件",
+        "title": "Splat3StreamingWidget",
         "width": 560,
         "height": 680,
         "resizable": false

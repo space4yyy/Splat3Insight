@@ -164,7 +164,6 @@ pub(crate) fn load_cache(
     history_dir: &Path,
     account_id: &str,
 ) -> Result<Option<HistoryCache>, String> {
-    migrate_legacy_if_needed(history_dir, account_id)?;
     let connection = open_database(history_dir)?;
     let record_count: i64 = connection
         .query_row(
@@ -234,26 +233,6 @@ pub(crate) fn load_cache(
     }))
 }
 
-pub(crate) fn migrate_legacy_if_needed(history_dir: &Path, account_id: &str) -> Result<(), String> {
-    let connection = open_database(history_dir)?;
-    let record_count: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM history_records WHERE account_id = ?1",
-            [account_id],
-            |row| row.get(0),
-        )
-        .map_err(|error| format!("检查旧历史数据失败：{error}"))?;
-    drop(connection);
-
-    if record_count == 0 {
-        if let Some(legacy) = load_legacy_cache(history_dir, account_id)? {
-            save_cache(history_dir, account_id, &legacy)?;
-            archive_legacy_file(history_dir, account_id);
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn load_known_record_ids(
     history_dir: &Path,
     account_id: &str,
@@ -300,8 +279,7 @@ pub(crate) fn load_summary(
         )
         .map_err(|error| format!("读取历史统计失败：{error}"))?;
     if counts.0.unwrap_or(0) == 0 && counts.1.unwrap_or(0) == 0 {
-        drop(connection);
-        return Ok(load_legacy_cache(history_dir, account_id)?.map(|cache| cache.summary()));
+        return Ok(None);
     }
     let fetched_at_ms = connection
         .query_row(
@@ -335,8 +313,7 @@ pub(crate) fn load_overlay_cache(
         )
         .map_err(|error| format!("读取卡片历史统计失败：{error}"))?;
     if record_count == 0 {
-        drop(connection);
-        return load_legacy_cache(history_dir, account_id);
+        return Ok(None);
     }
     let fetched_at_ms = connection
         .query_row(
@@ -448,6 +425,7 @@ pub(crate) fn save_overlay_state(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn save_cache(
     history_dir: &Path,
     account_id: &str,
@@ -735,31 +713,6 @@ fn decode_raw_json(bytes: &[u8], encoding: &str) -> Result<Value, String> {
     serde_json::from_slice(&decoded).map_err(|error| format!("解析原始记录失败：{error}"))
 }
 
-fn load_legacy_cache(history_dir: &Path, account_id: &str) -> Result<Option<HistoryCache>, String> {
-    let path = legacy_path(history_dir, account_id);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let contents =
-        fs::read_to_string(&path).map_err(|error| format!("读取旧历史缓存失败：{error}"))?;
-    serde_json::from_str(&contents)
-        .map(Some)
-        .map_err(|error| format!("旧历史缓存格式无效：{error}"))
-}
-
-fn archive_legacy_file(history_dir: &Path, account_id: &str) {
-    let source = legacy_path(history_dir, account_id);
-    let directory = history_dir.join(LEGACY_DIRECTORY);
-    if fs::create_dir_all(&directory).is_err() {
-        return;
-    }
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |value| value.as_millis());
-    let target = directory.join(format!("{account_id}-{timestamp}.json"));
-    let _ = fs::rename(source, target);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -973,20 +926,5 @@ mod tests {
         assert!(battles.contains("battle-1"));
         assert!(battles.contains("battle-2"));
         assert!(coop.is_empty());
-    }
-
-    #[test]
-    fn migrates_legacy_json_and_keeps_a_backup() {
-        let directory = tempdir().unwrap();
-        fs::create_dir_all(directory.path()).unwrap();
-        fs::write(
-            legacy_path(directory.path(), "account"),
-            serde_json::to_vec(&sample_cache()).unwrap(),
-        )
-        .unwrap();
-        let loaded = load_cache(directory.path(), "account").unwrap().unwrap();
-        assert_eq!(loaded.battles.len(), 1);
-        assert!(!legacy_path(directory.path(), "account").exists());
-        assert!(directory.path().join(LEGACY_DIRECTORY).exists());
     }
 }
