@@ -108,9 +108,11 @@
     refs.rule.textContent = localizeRule(battle.rule);
     refs.bankaraMode.textContent = bankaraMode;
     refs.bankaraMode.hidden = !bankaraMode;
+    const isPrivateBattle = battle.mode === 'PRIVATE_BATTLE';
     refs.mode.classList.toggle('mode-x-match', battle.mode === 'X_MATCH');
     refs.mode.classList.toggle('mode-bankara', battle.mode === 'BANKARA');
     refs.mode.classList.toggle('mode-event-match', battle.mode === 'EVENT_MATCH');
+    refs.mode.classList.toggle('mode-private-battle', isPrivateBattle);
 
     refs.wins.textContent = `Win ${displayNumber(summary.win)}`;
     refs.losses.textContent = `Lose ${displayNumber(summary.lose)}`;

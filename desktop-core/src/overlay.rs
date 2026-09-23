@@ -78,7 +78,10 @@ impl OverlayState {
 }
 
 fn is_overlay_battle(record: &BattleRecord) -> bool {
-    matches!(record.mode.as_str(), "X_MATCH" | "BANKARA" | "EVENT_MATCH")
+    matches!(
+        record.mode.as_str(),
+        "X_MATCH" | "BANKARA" | "EVENT_MATCH" | "PRIVATE_BATTLE"
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -371,7 +374,9 @@ fn event_power_is_placed(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> bo
 
 fn to_overlay_battle(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> OverlayBattle {
     let current_track = power_track(item);
-    let power = if item.record.mode == "EVENT_MATCH" && !event_power_is_placed(item, older) {
+    let power = if item.record.mode == "PRIVATE_BATTLE"
+        || (item.record.mode == "EVENT_MATCH" && !event_power_is_placed(item, older))
+    {
         None
     } else {
         item.record.power
@@ -406,7 +411,9 @@ fn to_overlay_battle(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> Overla
         rule: item.record.rule.clone(),
         judgement: item.record.judgement.clone(),
         power,
-        power_kind: item.record.power_kind.clone(),
+        power_kind: (item.record.mode != "PRIVATE_BATTLE")
+            .then(|| item.record.power_kind.clone())
+            .flatten(),
         power_delta,
         kills: item.record.kills,
         assists: item.record.assists,
@@ -627,6 +634,31 @@ mod tests {
         assert_eq!(selected.mode, "EVENT_MATCH");
         assert_eq!(selected.power, None);
         assert_eq!(selected.power_delta, None);
+    }
+
+    #[test]
+    fn private_battle_keeps_only_combat_stats_without_power() {
+        let mut item = battle(
+            "private",
+            "2026-09-22T04:00:00Z",
+            "PRIVATE_BATTLE",
+            Some(2400.0),
+            "WIN",
+        );
+        item.record.power_kind = Some("x".to_owned());
+        let state = OverlayState::from_history(&HistoryCache {
+            schema_version: 1,
+            fetched_at_ms: 1,
+            battles: vec![item],
+            coop: Vec::new(),
+        });
+
+        let selected = state.selected.unwrap();
+        assert_eq!(selected.power, None);
+        assert_eq!(selected.power_delta, None);
+        assert_eq!(selected.kills, Some(9));
+        assert_eq!(selected.deaths, Some(5));
+        assert_eq!(selected.power_kind, None);
     }
 
     #[test]

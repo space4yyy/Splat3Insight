@@ -65,6 +65,10 @@
   color: #ff62b3;
 }
 
+.overlay-card__mode.mode-private-battle {
+  color: #a855f7;
+}
+
 .overlay-card__bankara-mode {
   color: #f54910;
   font-family: inherit;

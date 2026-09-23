@@ -963,7 +963,9 @@ fn parse_battle(detail: &Value, fallback_id: &str) -> Option<BattleRecord> {
     let id = string_at(detail, &["id"]).unwrap_or_else(|| fallback_id.to_owned());
     let raw_mode = string_at(detail, &["vsMode", "mode"]).unwrap_or_else(|| "BATTLE".to_owned());
     let bankara_mode = string_at(detail, &["bankaraMatch", "mode"]);
-    let mode = if bankara_mode.is_none()
+    let mode = if bankara_mode.is_none() && is_private_battle_mode(&raw_mode) {
+        "PRIVATE_BATTLE".to_owned()
+    } else if bankara_mode.is_none()
         && (is_event_battle_mode(&raw_mode)
             || ["eventMatch", "eventBattle", "event", "leagueMatch"]
                 .iter()
@@ -1040,6 +1042,10 @@ fn parse_battle(detail: &Value, fallback_id: &str) -> Option<BattleRecord> {
 
 fn is_event_battle_mode(mode: &str) -> bool {
     matches!(mode, "EVENT" | "EVENT_MATCH" | "CHALLENGE" | "LEAGUE")
+}
+
+fn is_private_battle_mode(mode: &str) -> bool {
+    matches!(mode, "PRIVATE" | "PRIVATE_MATCH" | "PRIVATE_BATTLE")
 }
 
 fn parse_coop(detail: &Value, fallback_id: &str) -> Option<CoopRecord> {
@@ -1291,6 +1297,28 @@ mod tests {
         assert_eq!(record.power, Some(1842.6));
         assert_eq!(record.power_kind.as_deref(), Some("event"));
         assert_eq!(record.rule.as_deref(), Some("LOFT"));
+    }
+
+    #[test]
+    fn parses_private_battle_without_power() {
+        let detail = json!({
+            "id": "private-battle-1",
+            "vsMode": { "mode": "PRIVATE" },
+            "vsRule": { "name": "LOFT" },
+            "privateBattle": { "power": 2400.0 },
+            "myTeam": { "players": [{
+                "isMyself": true,
+                "result": { "kill": 8, "assist": 3, "death": 4 }
+            }]}
+        });
+
+        let record = parse_battle(&detail, "fallback").unwrap();
+        assert_eq!(record.mode, "PRIVATE_BATTLE");
+        assert_eq!(record.power, None);
+        assert_eq!(record.power_kind, None);
+        assert_eq!(record.kills, Some(8));
+        assert_eq!(record.assists, Some(3));
+        assert_eq!(record.deaths, Some(4));
     }
 
     #[test]

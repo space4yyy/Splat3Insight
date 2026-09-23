@@ -28,6 +28,7 @@ const DISPLAY_FONT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/fonts/DFP_GBZY7.ttf"
 ));
+const APP_ICON: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/icons/icon.png"));
 const MAX_CONCURRENT_CONNECTIONS: usize = 16;
 const MAX_REQUEST_HEADER_BYTES: usize = 8 * 1024;
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
@@ -438,6 +439,11 @@ fn route_request(
     }
 
     match path {
+        "/favicon.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: APP_ICON.to_vec(),
+        }),
         "/" | "/overlay" => Ok(HttpResponse {
             status: "200 OK",
             content_type: "text/html; charset=utf-8",
@@ -706,6 +712,24 @@ mod tests {
         assert_eq!(response.status, "200 OK");
         assert_eq!(response.content_type, "font/ttf");
         assert_eq!(response.body.len(), DISPLAY_FONT.len());
+    }
+
+    #[test]
+    fn serves_the_app_icon_as_favicon() {
+        let directory = tempdir().unwrap();
+        let response = route_request(
+            "GET",
+            "/favicon.png",
+            &OverlayServerConfig {
+                accounts_path: directory.path().join("accounts.json"),
+                history_dir: directory.path().join("history"),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(response.status, "200 OK");
+        assert_eq!(response.content_type, "image/png");
+        assert_eq!(response.body, APP_ICON);
     }
 
     #[test]
