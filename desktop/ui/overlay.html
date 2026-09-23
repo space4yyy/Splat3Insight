@@ -8,11 +8,11 @@
     <style>
       html, body { margin: 0; background: transparent; overflow: hidden; }
       #root { width: 560px; height: 100px; }
-      .empty { display: none; }
     </style>
   </head>
   <body>
     <main id="root"></main>
+    <script src="/overlay-card-renderer.js"></script>
     <script>
       const root = document.querySelector('#root');
       const BASE_WIDTH = 560;
@@ -34,81 +34,9 @@
         root.style.width = `${BASE_WIDTH * safeScale}px`;
         root.style.height = `${BASE_HEIGHT * safeScale}px`;
       }
-      const ruleLabels = Object.freeze({
-        '真格魚虎對戰': '真格鱼虎',
-        '真格區域對戰': '真格区域',
-        '真格塔樓對戰': '真格塔楼',
-        '真格蛤蜊對戰': '真格蛤蜊',
-        '真格魚虎': '真格鱼虎',
-        '真格區域': '真格区域',
-        '真格塔樓': '真格塔楼',
-        Rainmaker: '真格鱼虎',
-        'Splat Zones': '真格区域',
-        'Tower Control': '真格塔楼',
-        'Clam Blitz': '真格蛤蜊',
-        'Turf War': '占地对战'
-      });
-
-      const escapeHtml = (value) => String(value ?? '')
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#039;');
-      const isNumber = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
-      const displayNumber = (value, digits = 0) => isNumber(value) ? Number(value).toFixed(digits) : '—';
-      const placeholder = (value) => isNumber(value) ? '' : 'is-placeholder';
-      const localizeRule = (value) => ruleLabels[String(value ?? '').trim()] || String(value ?? '').trim() || '—';
 
       function render(state) {
-        const battle = state?.selected;
-        if (!battle) {
-          root.innerHTML = '';
-          return;
-        }
-        const kills = battle.kills;
-        const deaths = battle.deaths;
-        const hasKills = isNumber(kills);
-        const hasDeaths = isNumber(deaths);
-        const kd = hasKills && hasDeaths
-          ? Number(deaths) === 0 ? '∞' : displayNumber(Number(kills) / Number(deaths), 1)
-          : '—';
-        const delta = isNumber(battle.power_delta)
-          ? `${battle.power_delta >= 0 ? '+' : ''}${displayNumber(battle.power_delta, 1)}`
-          : '—';
-        const deltaClass = battle.power_delta > 0 ? 'positive' : battle.power_delta < 0 ? 'negative' : '';
-        const mode = battle.mode === 'X_MATCH' ? 'mode-x-match' : 'mode-bankara';
-        const bankaraMode = battle.bankara_mode === 'CHALLENGE' ? '挑战'
-          : battle.bankara_mode === 'OPEN' ? '开放' : '';
-        const summary = state.recent_summary || { win: 0, lose: 0, win_rate: 0 };
-
-        root.innerHTML = `
-          <section class="overlay-card">
-            <div class="overlay-card__top">
-              <div class="overlay-card__mode ${mode}">
-                <span>${escapeHtml(localizeRule(battle.rule))}</span>
-                ${bankaraMode ? `<small class="overlay-card__bankara-mode">${bankaraMode}</small>` : ''}
-              </div>
-              <div class="overlay-card__summary">
-                <span class="overlay-card__summary-win">Win ${summary.win}</span>
-                <span class="overlay-card__summary-lose">Lose ${summary.lose}</span>
-                <span>${displayNumber(summary.win_rate, 0)}%</span>
-              </div>
-            </div>
-            <div class="overlay-card__bottom">
-              <div class="overlay-card__power">
-                <span class="overlay-card__power-value ${placeholder(battle.power)}">${displayNumber(battle.power, 1)}</span>
-                <span class="overlay-card__power-delta ${deltaClass} ${placeholder(battle.power_delta)}">${delta}</span>
-              </div>
-              <div class="overlay-card__stats">
-                <div class="overlay-card__kad">
-                  <span class="${placeholder(kills)}">${displayNumber(kills)}<small>(${displayNumber(battle.assists)})k</small></span>
-                  <span class="${placeholder(deaths)}">${displayNumber(deaths)}<small>d</small></span>
-                  <span class="${!hasKills || !hasDeaths ? 'is-placeholder' : ''}">${kd}<small>k/d</small></span>
-                </div>
-              </div>
-            </div>
-          </section>`;
+        root.innerHTML = window.Splat3OverlayCard.render(state);
         fitOverlay();
       }
 
@@ -119,9 +47,7 @@
             throw new Error(`Overlay 数据请求失败（HTTP ${response.status}）`);
           }
           const state = await response.json();
-          if (state?.error) {
-            throw new Error(state.error);
-          }
+          if (state?.error) throw new Error(state.error);
           lastState = state;
           render(state);
           // 字体加载失败不应阻止卡片显示；先用 fallback 渲染，字体可用后再刷新一次。

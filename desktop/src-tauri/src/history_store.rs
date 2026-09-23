@@ -8,6 +8,7 @@ use splat3_widget_core::history::{
     ArchivedBattle, ArchivedCoop, BattleRecord, CoopRecord, HistoryCache, HistoryFetchedRecord,
     HistorySyncSummary,
 };
+use splat3_widget_core::overlay::{OverlayState, RecentSummary};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -24,6 +25,13 @@ fn database_path(history_dir: &Path) -> PathBuf {
 
 fn legacy_path(history_dir: &Path, account_id: &str) -> PathBuf {
     history_dir.join(format!("{account_id}.json"))
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or_default()
 }
 
 fn open_database(history_dir: &Path) -> Result<Connection, String> {
@@ -54,6 +62,11 @@ fn open_database(history_dir: &Path) -> Result<Connection, String> {
                  schema_version INTEGER NOT NULL,
                  fetched_at_ms INTEGER NOT NULL,
                  sync_complete INTEGER NOT NULL DEFAULT 1
+             );
+             CREATE TABLE IF NOT EXISTS overlay_snapshots (
+                 account_id TEXT PRIMARY KEY,
+                 state_json TEXT NOT NULL,
+                 updated_at_ms INTEGER NOT NULL
              );",
         )
         .map_err(|error| format!("初始化历史数据库失败：{error}"))?;
@@ -324,6 +337,71 @@ pub(crate) fn load_overlay_cache(
     }))
 }
 
+pub(crate) fn load_overlay_state(
+    history_dir: &Path,
+    account_id: &str,
+) -> Result<OverlayState, String> {
+    let connection = open_database(history_dir)?;
+    let snapshot = connection
+        .query_row(
+            "SELECT state_json FROM overlay_snapshots WHERE account_id = ?1",
+            [account_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取卡片缓存失败：{error}"))?;
+    if let Some(snapshot) = snapshot {
+        match serde_json::from_str(&snapshot) {
+            Ok(state) => return Ok(state),
+            Err(_) => {
+                connection
+                    .execute(
+                        "DELETE FROM overlay_snapshots WHERE account_id = ?1",
+                        [account_id],
+                    )
+                    .map_err(|error| format!("清理损坏的卡片缓存失败：{error}"))?;
+            }
+        }
+    }
+    drop(connection);
+
+    let state = match load_overlay_cache(history_dir, account_id)? {
+        Some(cache) => OverlayState::from_history(&cache),
+        None => OverlayState {
+            selected: None,
+            recent_summary: RecentSummary {
+                sample_size: 0,
+                win: 0,
+                lose: 0,
+                win_rate: 0.0,
+            },
+        },
+    };
+    save_overlay_state(history_dir, account_id, &state)?;
+    Ok(state)
+}
+
+pub(crate) fn save_overlay_state(
+    history_dir: &Path,
+    account_id: &str,
+    state: &OverlayState,
+) -> Result<(), String> {
+    let state_json =
+        serde_json::to_string(state).map_err(|error| format!("序列化卡片缓存失败：{error}"))?;
+    let connection = open_database(history_dir)?;
+    connection
+        .execute(
+            "INSERT INTO overlay_snapshots(account_id, state_json, updated_at_ms)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(account_id) DO UPDATE SET
+                 state_json = excluded.state_json,
+                 updated_at_ms = excluded.updated_at_ms",
+            params![account_id, state_json, now_ms()],
+        )
+        .map_err(|error| format!("保存卡片缓存失败：{error}"))?;
+    Ok(())
+}
+
 pub(crate) fn save_cache(
     history_dir: &Path,
     account_id: &str,
@@ -369,7 +447,8 @@ pub(crate) fn save_cache(
         .map_err(|error| format!("保存历史同步信息失败：{error}"))?;
     transaction
         .commit()
-        .map_err(|error| format!("提交历史数据库事务失败：{error}"))
+        .map_err(|error| format!("提交历史数据库事务失败：{error}"))?;
+    save_overlay_state(history_dir, account_id, &OverlayState::from_history(cache))
 }
 
 pub(crate) fn save_record(
@@ -488,6 +567,12 @@ pub(crate) fn delete_account(history_dir: &Path, account_id: &str) -> Result<(),
             [account_id],
         )
         .map_err(|error| format!("删除账号历史状态失败：{error}"))?;
+    transaction
+        .execute(
+            "DELETE FROM overlay_snapshots WHERE account_id = ?1",
+            [account_id],
+        )
+        .map_err(|error| format!("删除账号卡片缓存失败：{error}"))?;
     transaction
         .commit()
         .map_err(|error| format!("提交账号历史删除事务失败：{error}"))?;
@@ -666,10 +751,64 @@ mod tests {
     }
 
     #[test]
+    fn overlay_state_is_cached_and_refreshed_without_reading_raw_history() {
+        let directory = tempdir().unwrap();
+        save_cache(directory.path(), "account", &sample_cache()).unwrap();
+        let connection = open_database(directory.path()).unwrap();
+        connection
+            .execute(
+                "DELETE FROM overlay_snapshots WHERE account_id = 'account'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let first = load_overlay_state(directory.path(), "account").unwrap();
+        assert_eq!(
+            first.selected.as_ref().and_then(|battle| battle.power),
+            Some(2100.0)
+        );
+
+        let connection = open_database(directory.path()).unwrap();
+        connection
+            .execute(
+                "UPDATE overlay_snapshots SET state_json = 'not-json' WHERE account_id = 'account'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        let recovered = load_overlay_state(directory.path(), "account").unwrap();
+        assert_eq!(
+            recovered.selected.as_ref().and_then(|battle| battle.power),
+            Some(2100.0)
+        );
+
+        let mut updated = recovered;
+        updated.selected.as_mut().unwrap().power = Some(2200.0);
+        save_overlay_state(directory.path(), "account", &updated).unwrap();
+
+        let connection = open_database(directory.path()).unwrap();
+        connection
+            .execute(
+                "UPDATE history_records SET raw_json = X'00' WHERE account_id = 'account'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let cached = load_overlay_state(directory.path(), "account").unwrap();
+        assert_eq!(
+            cached.selected.as_ref().and_then(|battle| battle.power),
+            Some(2200.0)
+        );
+    }
+
+    #[test]
     fn deletes_account_records_and_export_files() {
         let directory = tempdir().unwrap();
         save_cache(directory.path(), "account", &sample_cache()).unwrap();
         let export_path = export(directory.path(), "account").unwrap();
+        load_overlay_state(directory.path(), "account").unwrap();
         fs::write(
             legacy_path(directory.path(), "account"),
             serde_json::to_vec(&sample_cache()).unwrap(),
@@ -685,6 +824,15 @@ mod tests {
         delete_account(directory.path(), "account").unwrap();
 
         assert!(load_cache(directory.path(), "account").unwrap().is_none());
+        let connection = open_database(directory.path()).unwrap();
+        let snapshot_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM overlay_snapshots WHERE account_id = 'account'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(snapshot_count, 0);
         assert!(!export_path.exists());
         assert!(!legacy_path(directory.path(), "account").exists());
         assert!(!legacy_archive.exists());

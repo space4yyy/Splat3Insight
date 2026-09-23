@@ -16,8 +16,6 @@ const stopOverlayServiceButton = document.querySelector('#stop-overlay-service')
 const copyOverlayUrlButton = document.querySelector('#copy-overlay-url');
 
 const OBS_OVERLAY_URL = 'http://127.0.0.1:17353/overlay';
-// Temporary visual sample for the app preview only; set to null to show the real delta again.
-const PREVIEW_DELTA_OVERRIDE = 200.0;
 
 let currentSyncStatus = null;
 let lastCompletedSyncAt = null;
@@ -76,38 +74,6 @@ function renderOverlayServiceStatus(status) {
   stopOverlayServiceButton.disabled = starting;
 }
 
-function displayNumber(value, digits = 0) {
-  return value === null || value === undefined || !Number.isFinite(Number(value))
-    ? '—'
-    : Number(value).toFixed(digits);
-}
-
-function placeholderClass(value) {
-  return value === null || value === undefined || !Number.isFinite(Number(value))
-    ? 'is-placeholder'
-    : '';
-}
-
-const simplifiedRuleLabels = Object.freeze({
-  '真格魚虎對戰': '真格鱼虎',
-  '真格區域對戰': '真格区域',
-  '真格塔樓對戰': '真格塔楼',
-  '真格蛤蜊對戰': '真格蛤蜊',
-  '真格魚虎': '真格鱼虎',
-  '真格區域': '真格区域',
-  '真格塔樓': '真格塔楼',
-  'Rainmaker': '真格鱼虎',
-  'Splat Zones': '真格区域',
-  'Tower Control': '真格塔楼',
-  'Clam Blitz': '真格蛤蜊',
-  'Turf War': '占地对战'
-});
-
-function localizeRule(value) {
-  const label = String(value ?? '').trim();
-  return simplifiedRuleLabels[label] || label || '—';
-}
-
 function fitOverlayPreview() {
   const viewport = overlayPreview.querySelector('.overlay-preview__viewport');
   const scaleElement = overlayPreview.querySelector('.overlay-preview__scale');
@@ -128,60 +94,15 @@ function fitOverlayPreview() {
 }
 
 function renderOverlay(state) {
-  const battle = state?.selected;
-  if (!battle) {
+  const card = window.Splat3OverlayCard.render(state);
+  if (!card) {
     overlayPreview.innerHTML = '<div class="overlay-empty">没有找到可显示的 X 或蛮颓比赛记录。</div>';
     return;
   }
 
-  const modeClass = battle.mode === 'X_MATCH' ? 'mode-x-match' : 'mode-bankara';
-  const bankaraMode = battle.bankara_mode === 'CHALLENGE' ? '挑战'
-    : battle.bankara_mode === 'OPEN' ? '开放' : '';
-  const summary = state.recent_summary || { win: 0, lose: 0, win_rate: 0 };
-  const kills = battle.kills;
-  const deaths = battle.deaths;
-  const hasKills = kills !== null && kills !== undefined && Number.isFinite(Number(kills));
-  const hasDeaths = deaths !== null && deaths !== undefined && Number.isFinite(Number(deaths));
-  const kd = hasKills && hasDeaths
-    ? Number(deaths) === 0 ? '∞' : displayNumber(Number(kills) / Number(deaths), 1)
-    : '—';
-  const kdMissing = !hasKills || !hasDeaths;
-  const previewDelta = PREVIEW_DELTA_OVERRIDE ?? battle.power_delta;
-  const delta = previewDelta === null || previewDelta === undefined
-    ? '—'
-    : `${previewDelta >= 0 ? '+' : ''}${displayNumber(previewDelta, 1)}`;
-  const deltaClass = previewDelta > 0 ? 'positive' : previewDelta < 0 ? 'negative' : '';
-
   overlayPreview.innerHTML = `
     <div class="overlay-preview__viewport">
-      <div class="overlay-preview__scale">
-        <section class="overlay-card">
-          <div class="overlay-card__top">
-            <div class="overlay-card__mode ${modeClass}">
-              <span>${escapeHtml(localizeRule(battle.rule))}</span>
-              ${bankaraMode ? `<small class="overlay-card__bankara-mode">${bankaraMode}</small>` : ''}
-            </div>
-            <div class="overlay-card__summary">
-              <span class="overlay-card__summary-win">Win ${summary.win}</span>
-              <span class="overlay-card__summary-lose">Lose ${summary.lose}</span>
-              <span>${displayNumber(summary.win_rate, 0)}%</span>
-            </div>
-          </div>
-          <div class="overlay-card__bottom">
-            <div class="overlay-card__power">
-              <span class="overlay-card__power-value ${placeholderClass(battle.power)}">${displayNumber(battle.power, 1)}</span>
-              <span class="overlay-card__power-delta ${deltaClass} ${placeholderClass(previewDelta)}">${delta}</span>
-            </div>
-            <div class="overlay-card__stats">
-              <div class="overlay-card__kad">
-                <span class="${placeholderClass(kills)}">${displayNumber(kills)}<small>(${displayNumber(battle.assists)})k</small></span>
-                <span class="${placeholderClass(deaths)}">${displayNumber(deaths)}<small>d</small></span>
-                <span class="${kdMissing ? 'is-placeholder' : ''}">${kd}<small>k/d</small></span>
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
+      <div class="overlay-preview__scale">${card}</div>
     </div>`;
   fitOverlayPreview();
 }

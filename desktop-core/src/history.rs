@@ -1,9 +1,8 @@
 //! SplatNet 3 history client and the compact records used by the overlay.
 //!
-//! The client deliberately talks to SplatNet directly. It does not read the
-//! s3s export directory. It keeps one raw detail response per stable SplatNet
-//! detail id together with a compact parsed record, so old data can be
-//! re-parsed later without storing duplicate responses on every sync.
+//! The client talks directly to SplatNet. It keeps one raw detail response per
+//! stable SplatNet detail id together with a compact parsed record, so old data
+//! can be re-parsed later without storing duplicate responses on every sync.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -32,6 +31,66 @@ pub struct HistoryFetchProgress {
     pub completed: usize,
     pub total: usize,
     pub retry_attempt: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryErrorKind {
+    TokenExpired,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryError {
+    kind: HistoryErrorKind,
+    message: String,
+}
+
+impl HistoryError {
+    pub fn other(message: impl Into<String>) -> Self {
+        Self {
+            kind: HistoryErrorKind::Other,
+            message: message.into(),
+        }
+    }
+
+    pub fn token_expired(message: impl Into<String>) -> Self {
+        Self {
+            kind: HistoryErrorKind::TokenExpired,
+            message: message.into(),
+        }
+    }
+
+    pub fn kind(&self) -> HistoryErrorKind {
+        self.kind
+    }
+
+    pub fn with_context(self, context: impl AsRef<str>) -> Self {
+        Self {
+            kind: self.kind,
+            message: format!("{}{}", context.as_ref(), self.message),
+        }
+    }
+
+    pub fn with_message(self, message: impl Into<String>) -> Self {
+        Self {
+            kind: self.kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for HistoryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for HistoryError {}
+
+impl From<String> for HistoryError {
+    fn from(message: String) -> Self {
+        Self::other(message)
+    }
 }
 
 pub type HistoryProgressCallback = Arc<dyn Fn(HistoryFetchProgress) + Send + Sync>;
@@ -326,6 +385,26 @@ impl SplatNetDataClient {
         .await
     }
 
+    pub async fn fetch_history_full_with_progress_and_records_from_typed(
+        &self,
+        known_battle_ids: &HashSet<String>,
+        known_coop_ids: &HashSet<String>,
+        fetched_at_ms: i64,
+        progress: HistoryProgressCallback,
+        on_record: Option<HistoryRecordCallback>,
+    ) -> Result<HistoryCache, HistoryError> {
+        self.fetch_history_with_limits_typed(
+            usize::MAX,
+            usize::MAX,
+            known_battle_ids,
+            known_coop_ids,
+            fetched_at_ms,
+            Some(&progress),
+            on_record.as_ref(),
+        )
+        .await
+    }
+
     /// Fetch the latest server windows but request detail records only for IDs
     /// that are not already present in the local archive.
     pub async fn fetch_history_incremental(
@@ -391,6 +470,28 @@ impl SplatNetDataClient {
         .await
     }
 
+    pub async fn fetch_history_incremental_with_progress_and_records_typed(
+        &self,
+        battle_limit: usize,
+        coop_limit: usize,
+        known_battle_ids: &HashSet<String>,
+        known_coop_ids: &HashSet<String>,
+        fetched_at_ms: i64,
+        progress: HistoryProgressCallback,
+        on_record: Option<HistoryRecordCallback>,
+    ) -> Result<HistoryCache, HistoryError> {
+        self.fetch_history_with_limits_typed(
+            battle_limit,
+            coop_limit,
+            known_battle_ids,
+            known_coop_ids,
+            fetched_at_ms,
+            Some(&progress),
+            on_record.as_ref(),
+        )
+        .await
+    }
+
     async fn fetch_history_with_limits(
         &self,
         battle_limit: usize,
@@ -401,6 +502,29 @@ impl SplatNetDataClient {
         progress: Option<&HistoryProgressCallback>,
         on_record: Option<&HistoryRecordCallback>,
     ) -> Result<HistoryCache, String> {
+        self.fetch_history_with_limits_typed(
+            battle_limit,
+            coop_limit,
+            known_battle_ids,
+            known_coop_ids,
+            fetched_at_ms,
+            progress,
+            on_record,
+        )
+        .await
+        .map_err(|error| error.to_string())
+    }
+
+    async fn fetch_history_with_limits_typed(
+        &self,
+        battle_limit: usize,
+        coop_limit: usize,
+        known_battle_ids: &HashSet<String>,
+        known_coop_ids: &HashSet<String>,
+        fetched_at_ms: i64,
+        progress: Option<&HistoryProgressCallback>,
+        on_record: Option<&HistoryRecordCallback>,
+    ) -> Result<HistoryCache, HistoryError> {
         notify_progress(progress, "battle-list", 0, 0, 0);
         let battle_ids = self
             .fetch_ids(
@@ -412,7 +536,7 @@ impl SplatNetDataClient {
                 "battle-list",
             )
             .await
-            .map_err(|error| format!("对战列表查询失败：{error}"))?;
+            .map_err(|error| error.with_context("对战列表查询失败："))?;
         let battle_ids = new_ids(battle_ids, known_battle_ids);
         notify_progress(progress, "coop-list", 0, 0, 0);
         let coop_ids = self
@@ -425,7 +549,7 @@ impl SplatNetDataClient {
                 "coop-list",
             )
             .await
-            .map_err(|error| format!("打工列表查询失败：{error}"))?;
+            .map_err(|error| error.with_context("打工列表查询失败："))?;
         let coop_ids = new_ids(coop_ids, known_coop_ids);
 
         let mut battles = Vec::with_capacity(battle_ids.len());
@@ -443,7 +567,7 @@ impl SplatNetDataClient {
                 )
                 .await
                 .map_err(|error| {
-                    format!("对战详情查询失败（第 {} 条）：{error}", battles.len() + 1)
+                    error.with_context(format!("对战详情查询失败（第 {} 条）：", battles.len() + 1))
                 })?
             {
                 if let Some(record) = parse_battle(&detail, &id) {
@@ -476,7 +600,9 @@ impl SplatNetDataClient {
                     "coop-details",
                 )
                 .await
-                .map_err(|error| format!("打工详情查询失败（第 {} 条）：{error}", coop.len() + 1))?
+                .map_err(|error| {
+                    error.with_context(format!("打工详情查询失败（第 {} 条）：", coop.len() + 1))
+                })?
             {
                 if let Some(record) = parse_coop(&detail, &id) {
                     let archived = ArchivedCoop {
@@ -513,7 +639,7 @@ impl SplatNetDataClient {
         language: Option<&str>,
         progress: Option<&HistoryProgressCallback>,
         progress_phase: &str,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, HistoryError> {
         let value = self
             .graphql(query_hash, json!({}), language, progress, progress_phase)
             .await?;
@@ -558,7 +684,7 @@ impl SplatNetDataClient {
         language: Option<&str>,
         progress: Option<&HistoryProgressCallback>,
         progress_phase: &str,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, HistoryError> {
         let value = self
             .graphql(
                 query_hash,
@@ -596,7 +722,7 @@ impl SplatNetDataClient {
         language: Option<&str>,
         progress: Option<&HistoryProgressCallback>,
         progress_phase: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<Value, HistoryError> {
         let language = language.unwrap_or(&self.config.language);
         let request_body = json!({
             "extensions": { "persistedQuery": { "sha256Hash": query_hash, "version": 1 } },
@@ -638,19 +764,28 @@ impl SplatNetDataClient {
                 Ok(response) => response,
                 Err(error) if is_retryable_network_error(&error) => {
                     if retry_attempt >= MAX_NETWORK_RETRIES {
-                        return Err(format!(
+                        return Err(HistoryError::other(format!(
                             "SplatNet 网络请求失败，已重试 {} 次：{}",
                             retry_attempt, error
-                        ));
+                        )));
                     }
                     retry_attempt += 1;
                     notify_retry(progress, progress_phase, retry_attempt);
                     tokio::time::sleep(retry_delay(retry_attempt, None)).await;
                     continue;
                 }
-                Err(error) => return Err(format!("SplatNet 网络请求失败：{error}")),
+                Err(error) => {
+                    return Err(HistoryError::other(format!(
+                        "SplatNet 网络请求失败：{error}"
+                    )))
+                }
             };
             let status = response.status();
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                return Err(HistoryError::token_expired(
+                    "SplatNet bullet token 已失效，请重新获取 SplatNet 权限",
+                ));
+            }
             let retry_after = parse_retry_after(response.headers());
             let content_type = response
                 .headers()
@@ -674,10 +809,10 @@ impl SplatNetDataClient {
                     continue;
                 }
                 Err(error) => {
-                    return Err(format!(
+                    return Err(HistoryError::other(format!(
                         "读取 SplatNet 数据响应失败（HTTP {status}，已重试 {} 次）：{error}",
                         retry_attempt
-                    ));
+                    )));
                 }
             };
 
@@ -689,29 +824,28 @@ impl SplatNetDataClient {
             }
             break (status, content_type, request_id, response_body);
         };
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err("SplatNet bullet token 已失效，请重新获取 SplatNet 权限".to_owned());
-        }
         if status == reqwest::StatusCode::FORBIDDEN {
-            return Err("SplatNet 拒绝了数据请求，客户端版本或 Web View 版本可能已过期".to_owned());
+            return Err(HistoryError::other(
+                "SplatNet 拒绝了数据请求，客户端版本或 Web View 版本可能已过期",
+            ));
         }
         if !status.is_success() {
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                return Err(format!(
+                return Err(HistoryError::other(format!(
                     "SplatNet 请求过于频繁（HTTP 429），已重试 {} 次，请稍后再试",
                     retry_attempt
-                ));
+                )));
             }
             if status.is_server_error() {
-                return Err(format!(
+                return Err(HistoryError::other(format!(
                     "SplatNet 服务暂时不可用（HTTP {status}），已重试 {} 次，请稍后再试；Request-ID: {request_id}",
                     retry_attempt
-                ));
+                )));
             }
-            return Err(format!(
+            return Err(HistoryError::other(format!(
                 "SplatNet 数据请求失败（HTTP {status}，Content-Type: {content_type}，Request-ID: {request_id}，响应：{}）",
                 response_preview(&response_body)
-            ));
+            )));
         }
         let value: Value = serde_json::from_slice(&response_body).map_err(|error| {
             format!(
@@ -721,14 +855,15 @@ impl SplatNetDataClient {
         })?;
         if let Some(errors) = value.get("errors").and_then(Value::as_array) {
             if let Some(first) = errors.first() {
-                return Err(format!(
-                    "SplatNet GraphQL 返回错误：{}",
-                    compact_json(first)
-                ));
+                let error_message = format!("SplatNet GraphQL 返回错误：{}", compact_json(first));
+                if graphql_error_is_unauthorized(first) {
+                    return Err(HistoryError::token_expired(error_message));
+                }
+                return Err(HistoryError::other(error_message));
             }
         }
         if value.get("data").is_none() {
-            return Err("SplatNet 响应缺少 data".to_owned());
+            return Err(HistoryError::other("SplatNet 响应缺少 data"));
         }
         Ok(value)
     }
@@ -766,6 +901,17 @@ fn is_retryable_network_error(error: &reqwest::Error) -> bool {
 
 fn is_retryable_status(status: reqwest::StatusCode) -> bool {
     status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+fn graphql_error_is_unauthorized(error: &Value) -> bool {
+    matches!(
+        error
+            .pointer("/extensions/code")
+            .and_then(Value::as_str)
+            .map(str::to_ascii_uppercase)
+            .as_deref(),
+        Some("UNAUTHENTICATED") | Some("UNAUTHORIZED") | Some("AUTHENTICATION_ERROR")
+    )
 }
 
 fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
@@ -933,6 +1079,29 @@ fn response_preview(body: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_expiration_remains_typed_through_error_context() {
+        let error = HistoryError::token_expired("HTTP 401")
+            .with_context("对战列表查询失败：")
+            .with_message("账号 peanuts：对战列表查询失败：HTTP 401");
+        assert_eq!(error.kind(), HistoryErrorKind::TokenExpired);
+        assert!(error.to_string().contains("HTTP 401"));
+        assert_eq!(
+            HistoryError::other("HTTP 429").kind(),
+            HistoryErrorKind::Other
+        );
+    }
+
+    #[test]
+    fn only_explicit_graphql_auth_codes_mark_a_token_expired() {
+        assert!(graphql_error_is_unauthorized(&json!({
+            "extensions": { "code": "UNAUTHENTICATED" }
+        })));
+        assert!(!graphql_error_is_unauthorized(&json!({
+            "extensions": { "code": "RATE_LIMITED" }
+        })));
+    }
 
     #[test]
     fn parses_x_battle_with_assists_and_power() {

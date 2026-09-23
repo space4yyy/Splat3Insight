@@ -9,8 +9,9 @@ use chrono::Local;
 use serde::Serialize;
 use splat3_widget_core::{
     history::{
-        HistoryCache, HistoryFetchProgress, HistoryFetchedRecord, HistoryProgressCallback,
-        HistoryRecordCallback, HistorySyncSummary, SplatNetDataClient, SplatNetDataConfig,
+        HistoryCache, HistoryError, HistoryErrorKind, HistoryFetchProgress, HistoryFetchedRecord,
+        HistoryProgressCallback, HistoryRecordCallback, HistorySyncSummary, SplatNetDataClient,
+        SplatNetDataConfig,
     },
     nintendo_auth::{begin_login, exchange_session_token, refresh_identity, LoginAttempt},
     overlay::OverlayState,
@@ -18,6 +19,7 @@ use splat3_widget_core::{
     AccountMetadata, AccountRegistry, AccountSecret, KeyringSecretStore,
 };
 use tauri::{Manager, State};
+use tokio::sync::watch;
 
 pub(crate) mod history_store;
 mod overlay_server;
@@ -55,40 +57,100 @@ struct SyncStatus {
 
 struct SyncRuntime {
     statuses: Mutex<HashMap<String, SyncStatus>>,
-    in_progress: Mutex<HashSet<String>>,
+    tasks: Mutex<HashMap<String, watch::Sender<Option<SyncResult>>>>,
+}
+
+type SyncResult = Result<HistorySyncSummary, String>;
+
+#[derive(Debug, Clone)]
+enum SyncError {
+    TokenExpired(String),
+    Other(String),
+}
+
+impl SyncError {
+    fn from_history(kind: HistoryErrorKind, message: String) -> Self {
+        match kind {
+            HistoryErrorKind::TokenExpired => Self::TokenExpired(message),
+            HistoryErrorKind::Other => Self::Other(message),
+        }
+    }
+
+    fn is_token_expired(&self) -> bool {
+        matches!(self, Self::TokenExpired(_))
+    }
+}
+
+impl std::fmt::Display for SyncError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TokenExpired(message) | Self::Other(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl From<String> for SyncError {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
+impl From<&str> for SyncError {
+    fn from(message: &str) -> Self {
+        Self::Other(message.to_owned())
+    }
+}
+
+impl From<HistoryError> for SyncError {
+    fn from(error: HistoryError) -> Self {
+        Self::from_history(error.kind(), error.to_string())
+    }
+}
+
+enum SyncClaim {
+    Owner(watch::Sender<Option<SyncResult>>),
+    Join(watch::Receiver<Option<SyncResult>>),
 }
 
 impl SyncRuntime {
     fn new() -> Self {
         Self {
             statuses: Mutex::new(HashMap::new()),
-            in_progress: Mutex::new(HashSet::new()),
+            tasks: Mutex::new(HashMap::new()),
         }
     }
 
-    fn try_start(&self, account_id: &str) -> Result<(), String> {
-        let mut in_progress = self
-            .in_progress
+    fn claim_or_join(&self, account_id: &str) -> Result<SyncClaim, String> {
+        let mut tasks = self.tasks.lock().map_err(|_| "sync state is locked")?;
+        if let Some(sender) = tasks.get(account_id) {
+            return Ok(SyncClaim::Join(sender.subscribe()));
+        }
+
+        let (sender, _receiver) = watch::channel(None);
+        tasks.insert(account_id.to_owned(), sender.clone());
+        Ok(SyncClaim::Owner(sender))
+    }
+
+    fn complete(
+        &self,
+        account_id: &str,
+        sender: &watch::Sender<Option<SyncResult>>,
+        result: SyncResult,
+    ) {
+        sender.send_replace(Some(result));
+        let mut tasks = self
+            .tasks
             .lock()
-            .map_err(|_| "sync state is locked")?;
-        if !in_progress.insert(account_id.to_owned()) {
-            return Err("该账号已有同步任务正在进行".to_owned());
-        }
-        Ok(())
-    }
-
-    fn finish(&self, account_id: &str) {
-        if let Ok(mut in_progress) = self.in_progress.lock() {
-            in_progress.remove(account_id);
-        }
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        tasks.remove(account_id);
     }
 
     fn is_in_progress(&self, account_id: &str) -> Result<bool, String> {
         Ok(self
-            .in_progress
+            .tasks
             .lock()
             .map_err(|_| "sync state is locked")?
-            .contains(account_id))
+            .contains_key(account_id))
     }
 
     fn update(&self, account_id: &str, update: impl FnOnce(&mut SyncStatus)) {
@@ -103,20 +165,51 @@ impl SyncRuntime {
 
     fn get(&self, account_id: Option<&str>) -> SyncStatus {
         let Some(account_id) = account_id else {
-            let mut status = SyncStatus::default();
-            status.message = "等待登录账号".to_owned();
-            return status;
+            return SyncStatus {
+                message: "等待登录账号".to_owned(),
+                ..SyncStatus::default()
+            };
         };
         self.statuses
             .lock()
             .ok()
             .and_then(|statuses| statuses.get(account_id).cloned())
-            .unwrap_or_else(|| {
-                let mut status = SyncStatus::default();
-                status.account_id = Some(account_id.to_owned());
-                status.message = "等待同步".to_owned();
-                status
+            .unwrap_or_else(|| SyncStatus {
+                account_id: Some(account_id.to_owned()),
+                message: "等待同步".to_owned(),
+                ..SyncStatus::default()
             })
+    }
+}
+
+struct SyncOwnerGuard {
+    runtime: Arc<SyncRuntime>,
+    account_id: String,
+    sender: Option<watch::Sender<Option<SyncResult>>>,
+}
+
+impl SyncOwnerGuard {
+    fn complete(mut self, result: SyncResult) {
+        if let Some(sender) = self.sender.take() {
+            self.runtime.complete(&self.account_id, &sender, result);
+        }
+    }
+}
+
+impl Drop for SyncOwnerGuard {
+    fn drop(&mut self) {
+        if let Some(sender) = self.sender.take() {
+            let message = "同步任务提前结束，请重试".to_owned();
+            self.runtime.update(&self.account_id, |status| {
+                status.state = "error".to_owned();
+                status.phase = "error".to_owned();
+                status.message = "同步任务提前结束".to_owned();
+                status.error = Some(message.clone());
+                status.completed_at_ms = Some(now_ms());
+            });
+            self.runtime
+                .complete(&self.account_id, &sender, Err(message));
+        }
     }
 }
 
@@ -301,17 +394,6 @@ fn active_account_sync_state(
     Ok(Some((account_id, ready)))
 }
 
-fn is_splatnet_token_expired(error: &str) -> bool {
-    let lower = error.to_ascii_lowercase();
-    error.contains("SplatNet bullet token 已失效")
-        || error.contains("SplatNet game web token 无效或已过期")
-        || (lower.contains("splatnet")
-            && (lower.contains("http 401")
-                || lower.contains("unauthorized")
-                || lower.contains("unauthenticated")
-                || error.contains("未授权")))
-}
-
 async fn sync_account(
     account_id: String,
     registry: Arc<Mutex<Registry>>,
@@ -319,10 +401,24 @@ async fn sync_account(
     auth_log_path: PathBuf,
     sync_runtime: Arc<SyncRuntime>,
 ) -> Result<HistorySyncSummary, String> {
-    sync_runtime.try_start(&account_id)?;
+    let owner = match sync_runtime.claim_or_join(&account_id)? {
+        SyncClaim::Owner(sender) => SyncOwnerGuard {
+            runtime: Arc::clone(&sync_runtime),
+            account_id: account_id.clone(),
+            sender: Some(sender),
+        },
+        SyncClaim::Join(mut receiver) => loop {
+            if let Some(result) = receiver.borrow().clone() {
+                return result;
+            }
+            if receiver.changed().await.is_err() {
+                return Err("同步任务提前结束，请重试".to_owned());
+            }
+        },
+    };
     let display_name = account_display_name(&registry, &account_id);
 
-    let mut result = sync_account_inner(
+    let initial_result = sync_account_inner(
         &account_id,
         &registry,
         &history_dir,
@@ -331,8 +427,8 @@ async fn sync_account(
     )
     .await;
 
-    if let Err(error) = &result {
-        if is_splatnet_token_expired(error) {
+    let result = match initial_result {
+        Err(error) if error.is_token_expired() => {
             update_sync_status(&sync_runtime, &account_id, |status| {
                 status.state = "refreshing".to_owned();
                 status.account_id = Some(account_id.clone());
@@ -360,23 +456,23 @@ async fn sync_account(
                         &account_id,
                         "SplatNet token 自动刷新成功，重试历史同步",
                     );
-                    result = sync_account_inner(
+                    sync_account_inner(
                         &account_id,
                         &registry,
                         &history_dir,
                         &auth_log_path,
                         &sync_runtime,
                     )
-                    .await;
+                    .await
+                    .map_err(|error| error.to_string())
                 }
-                Err(refresh_error) => {
-                    result = Err(format_token_refresh_error(&refresh_error));
-                }
+                Err(refresh_error) => Err(format_token_refresh_error(&refresh_error)),
             }
         }
-    }
+        Ok(summary) => Ok(summary),
+        Err(error) => Err(error.to_string()),
+    };
 
-    sync_runtime.finish(&account_id);
     match &result {
         Ok(summary) => update_sync_status(&sync_runtime, &account_id, |status| {
             status.state = "completed".to_owned();
@@ -404,6 +500,7 @@ async fn sync_account(
             status.completed_at_ms = Some(now_ms());
         }),
     }
+    owner.complete(result.clone());
     result
 }
 
@@ -424,7 +521,7 @@ async fn sync_account_inner(
     history_dir: &Path,
     auth_log_path: &Path,
     sync_runtime: &Arc<SyncRuntime>,
-) -> Result<HistorySyncSummary, String> {
+) -> Result<HistorySyncSummary, SyncError> {
     let (metadata, secret) = {
         let registry = registry.lock().map_err(|_| "account registry is locked")?;
         let metadata = registry
@@ -579,7 +676,7 @@ async fn sync_account_inner(
     });
     let cache = if initial_sync {
         client
-            .fetch_history_full_with_progress_and_records_from(
+            .fetch_history_full_with_progress_and_records_from_typed(
                 &known_battle_ids,
                 &known_coop_ids,
                 fetched_at_ms,
@@ -588,17 +685,19 @@ async fn sync_account_inner(
             )
             .await
             .map_err(|error| {
-                account_auth_error(
+                let kind = error.kind();
+                let message = account_auth_error(
                     auth_log_path,
                     "history-fetch",
                     &metadata.display_name,
                     account_id,
-                    error,
-                )
+                    error.to_string(),
+                );
+                SyncError::from_history(kind, message)
             })?
     } else {
         client
-            .fetch_history_incremental_with_progress_and_records(
+            .fetch_history_incremental_with_progress_and_records_typed(
                 HISTORY_WINDOW_SIZE,
                 HISTORY_WINDOW_SIZE,
                 &known_battle_ids,
@@ -609,15 +708,32 @@ async fn sync_account_inner(
             )
             .await
             .map_err(|error| {
-                account_auth_error(
+                let kind = error.kind();
+                let message = account_auth_error(
                     auth_log_path,
                     "history-fetch",
                     &metadata.display_name,
                     account_id,
-                    error,
-                )
+                    error.to_string(),
+                );
+                SyncError::from_history(kind, message)
             })?
     };
+    let (added_battle_count, added_coop_count) = archive.merge(cache);
+    history_store::save_overlay_state(
+        history_dir,
+        account_id,
+        &OverlayState::from_history(&archive),
+    )
+    .map_err(|error| {
+        account_auth_error(
+            auth_log_path,
+            "overlay-cache",
+            &metadata.display_name,
+            account_id,
+            error,
+        )
+    })?;
     history_store::mark_sync_complete(history_dir, account_id, fetched_at_ms).map_err(|error| {
         account_auth_error(
             auth_log_path,
@@ -627,7 +743,6 @@ async fn sync_account_inner(
             error,
         )
     })?;
-    let (added_battle_count, added_coop_count) = archive.merge(cache);
     let mut summary = archive.summary();
     summary.added_battle_count = added_battle_count;
     summary.added_coop_count = added_coop_count;
@@ -713,7 +828,7 @@ fn list_accounts(state: State<'_, AppState>) -> Result<Vec<AccountView>, String>
         .lock()
         .map_err(|_| "account registry is locked")?;
     let active_id = registry.active_account_id();
-    Ok(registry
+    registry
         .accounts()
         .iter()
         .map(|account| {
@@ -733,7 +848,7 @@ fn list_accounts(state: State<'_, AppState>) -> Result<Vec<AccountView>, String>
                 history_fetched_at_ms: history.map(|value| value.fetched_at_ms),
             })
         })
-        .collect::<Result<Vec<_>, String>>()?)
+        .collect::<Result<Vec<_>, String>>()
 }
 
 #[tauri::command]
@@ -875,13 +990,7 @@ fn get_overlay_state(
         account_id
     };
 
-    let cache = load_history_cache(&state.history_dir, &account_id)?.unwrap_or(HistoryCache {
-        schema_version: 1,
-        fetched_at_ms: 0,
-        battles: Vec::new(),
-        coop: Vec::new(),
-    });
-    Ok(OverlayState::from_history(&cache))
+    history_store::load_overlay_state(&state.history_dir, &account_id)
 }
 
 #[tauri::command]
@@ -1029,7 +1138,7 @@ async fn refresh_splatnet_tokens_for_account(
     })?;
     let auth_config = SplatNetAuthConfig::default();
     write_account_log(
-        &auth_log_path,
+        auth_log_path,
         "f-config",
         &metadata.display_name,
         account_id,
@@ -1196,26 +1305,29 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_timestamped_log, is_splatnet_token_expired, local_log_timestamp, SyncRuntime,
-        LOG_BACKUP_COUNT, MAX_LOG_BYTES,
+        append_timestamped_log, local_log_timestamp, HistoryErrorKind, HistorySyncSummary,
+        SyncClaim, SyncError, SyncRuntime, LOG_BACKUP_COUNT, MAX_LOG_BYTES,
     };
     use std::fs;
     use tempfile::tempdir;
 
     #[test]
-    fn refreshes_only_for_splatnet_token_expiration_errors() {
-        assert!(is_splatnet_token_expired(
-            "对战列表查询失败：SplatNet bullet token 已失效，请重新获取 SplatNet 权限"
-        ));
-        assert!(is_splatnet_token_expired(
-            "SplatNet 数据请求失败（HTTP 401 Unauthorized）"
-        ));
-        assert!(!is_splatnet_token_expired(
-            "Nintendo session token 已失效，请重新登录"
-        ));
-        assert!(!is_splatnet_token_expired(
-            "SplatNet 数据请求失败（HTTP 400 Bad Request）"
-        ));
+    fn refreshes_only_for_typed_splatnet_token_expiration_errors() {
+        assert!(SyncError::from_history(
+            HistoryErrorKind::TokenExpired,
+            "对战列表查询失败：HTTP 401".to_owned()
+        )
+        .is_token_expired());
+        assert!(!SyncError::from_history(
+            HistoryErrorKind::Other,
+            "SplatNet 数据请求失败（HTTP 401）".to_owned()
+        )
+        .is_token_expired());
+        assert!(!SyncError::from_history(
+            HistoryErrorKind::Other,
+            "SplatNet 数据请求失败（HTTP 429）".to_owned()
+        )
+        .is_token_expired());
     }
 
     #[test]
@@ -1227,13 +1339,34 @@ mod tests {
     }
 
     #[test]
-    fn sync_runtime_locks_accounts_independently() {
+    fn sync_runtime_joins_duplicate_account_requests() {
         let runtime = SyncRuntime::new();
-        assert!(runtime.try_start("account-a").is_ok());
-        assert!(runtime.try_start("account-b").is_ok());
-        assert!(runtime.try_start("account-a").is_err());
-        runtime.finish("account-a");
-        assert!(runtime.try_start("account-a").is_ok());
+        let SyncClaim::Owner(owner) = runtime.claim_or_join("account-a").unwrap() else {
+            panic!("first request should own the sync");
+        };
+        let SyncClaim::Owner(other_account) = runtime.claim_or_join("account-b").unwrap() else {
+            panic!("different accounts should sync independently");
+        };
+        let SyncClaim::Join(joiner) = runtime.claim_or_join("account-a").unwrap() else {
+            panic!("duplicate request should join the existing sync");
+        };
+
+        let result = HistorySyncSummary {
+            battle_count: 4,
+            coop_count: 2,
+            fetched_at_ms: 123,
+            added_battle_count: 1,
+            added_coop_count: 0,
+        };
+        runtime.complete("account-a", &owner, Ok(result.clone()));
+
+        assert_eq!(joiner.borrow().as_ref(), Some(&Ok(result)));
+        assert!(matches!(
+            runtime.claim_or_join("account-a").unwrap(),
+            SyncClaim::Owner(_)
+        ));
+        runtime.complete("account-b", &other_account, Err("test complete".to_owned()));
+        drop(other_account);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Cross-platform account and current-battle state for the desktop app.
 //!
-//! This crate deliberately does not know about the s3s export directory. It
-//! is the storage boundary that the future Tauri commands will call.
+//! This crate owns account data and the live SplatNet data boundary used by
+//! the desktop app.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

@@ -1,6 +1,6 @@
 //! SplatNet 3 token generation.
 //!
-//! This is the post-Nintendo-Account portion of the login flow used by s3s:
+//! This is the post-Nintendo-Account token exchange sequence:
 //! Nintendo `id_token` -> Coral `Account/Login` -> Coral
 //! `Game/GetWebServiceToken` -> SplatNet `bullet_tokens`.
 //!

@@ -313,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_s3s_style_custom_scheme_fragment() {
+    fn accepts_custom_scheme_fragment() {
         let attempt = begin_login().unwrap();
         let copied_link = format!(
             "{REDIRECT_URI}#session_token_code=eyJhbGciOiJIUzI1NiJ9.fake-token&state={}&session_state=opaque",

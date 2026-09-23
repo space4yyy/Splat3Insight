@@ -55,11 +55,9 @@ without emitting it. Later calls to `observe` return only battles newer than
 the persisted cursor. This monitor is separate from the historical archive and
 is reserved for the later live-overlay path.
 
-The crate does not read or depend on the `s3s` export directory.
-
 ## Nintendo Account login
 
-The desktop flow follows the manual flow used by `s3s`:
+The desktop flow uses a manual Nintendo Account authorization flow:
 
 1. Generate a Nintendo Account authorization URL and open it in the system browser.
 2. The user signs in and copies the link address of the “Select this account” button.

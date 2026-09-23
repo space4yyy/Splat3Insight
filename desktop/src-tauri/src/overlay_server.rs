@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -20,10 +20,44 @@ const OVERLAY_CARD_CSS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/overlay-card.css"
 ));
+const OVERLAY_CARD_RENDERER: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/overlay-card-renderer.js"
+));
 const DISPLAY_FONT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/fonts/DFP_GBZY7.ttf"
 ));
+const MAX_CONCURRENT_CONNECTIONS: usize = 16;
+const MAX_REQUEST_HEADER_BYTES: usize = 8 * 1024;
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+const OVERLOAD_WRITE_TIMEOUT: Duration = Duration::from_millis(250);
+
+struct ConnectionPermit(Arc<AtomicUsize>);
+
+impl Drop for ConnectionPermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn try_reserve_connection(active: &AtomicUsize) -> bool {
+    let mut current = active.load(Ordering::Acquire);
+    loop {
+        if current >= MAX_CONCURRENT_CONNECTIONS {
+            return false;
+        }
+        match active.compare_exchange_weak(
+            current,
+            current + 1,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return true,
+            Err(actual) => current = actual,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct OverlayServerConfig {
@@ -219,9 +253,10 @@ fn run_server(
     set_status(&status, "running", "OBS 服务运行中", None);
     write_log(&config, &format!("监听成功，OBS 地址: {OVERLAY_URL}"));
     crate::log_console("overlay", &format!("OBS 地址: {OVERLAY_URL}"));
+    let active_connections = Arc::new(AtomicUsize::new(0));
     while !stop_signal.load(Ordering::SeqCst) {
         match listener.accept() {
-            Ok((stream, _)) => {
+            Ok((mut stream, _)) => {
                 if let Err(error) = stream.set_nonblocking(false) {
                     write_log(&config, &format!("设置客户端连接为阻塞模式失败: {error}"));
                     crate::log_console_error(
@@ -230,14 +265,37 @@ fn run_server(
                     );
                     continue;
                 }
+                if !try_reserve_connection(&active_connections) {
+                    let _ = stream.set_write_timeout(Some(OVERLOAD_WRITE_TIMEOUT));
+                    let _ = write_response(
+                        &mut stream,
+                        "503 Service Unavailable",
+                        "text/plain; charset=utf-8",
+                        b"server busy",
+                    );
+                    continue;
+                }
                 set_status(&status, "running", "OBS 服务运行中", None);
-                let config = config.clone();
-                thread::spawn(move || {
-                    if let Err(error) = handle_connection(stream, &config) {
-                        write_log(&config, &format!("请求失败: {error}"));
-                        crate::log_console_error("overlay", &format!("请求失败: {error}"));
-                    }
-                });
+                let worker_config = config.clone();
+                let connection_permit = ConnectionPermit(Arc::clone(&active_connections));
+                if let Err(error) = thread::Builder::new()
+                    .name("overlay-http-client".to_owned())
+                    .spawn(move || {
+                        let _connection_permit = connection_permit;
+                        if let Err(error) = handle_connection(stream, &worker_config) {
+                            if !error.contains("请求读取超时") {
+                                write_log(&worker_config, &format!("请求失败: {error}"));
+                                crate::log_console_error("overlay", &format!("请求失败: {error}"));
+                            }
+                        }
+                    })
+                {
+                    write_log(&config, &format!("创建 OBS 请求处理线程失败: {error}"));
+                    crate::log_console_error(
+                        "overlay",
+                        &format!("创建 OBS 请求处理线程失败: {error}"),
+                    );
+                }
             }
             Err(error) if error.kind() == ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(100));
@@ -254,6 +312,10 @@ fn run_server(
                 break;
             }
         }
+    }
+
+    while active_connections.load(Ordering::Acquire) > 0 {
+        thread::sleep(Duration::from_millis(20));
     }
 
     if stop_signal.load(Ordering::SeqCst) {
@@ -283,12 +345,36 @@ fn write_log(config: &OverlayServerConfig, message: &str) {
     crate::append_timestamped_log(&path, "overlay", message);
 }
 
-fn handle_connection(mut stream: TcpStream, config: &OverlayServerConfig) -> Result<(), String> {
-    let mut buffer = [0_u8; 8 * 1024];
-    let size = stream
-        .read(&mut buffer)
-        .map_err(|error| format!("读取请求失败: {error}"))?;
-    let request = String::from_utf8_lossy(&buffer[..size]);
+fn handle_connection(stream: TcpStream, config: &OverlayServerConfig) -> Result<(), String> {
+    handle_connection_with_timeout(stream, config, CONNECTION_TIMEOUT)
+}
+
+fn handle_connection_with_timeout(
+    mut stream: TcpStream,
+    config: &OverlayServerConfig,
+    timeout: Duration,
+) -> Result<(), String> {
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|error| format!("设置请求读取超时失败: {error}"))?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|error| format!("设置响应写入超时失败: {error}"))?;
+
+    let Some(request_bytes) = read_request_headers(&mut stream)? else {
+        let _ = write_response(
+            &mut stream,
+            "431 Request Header Fields Too Large",
+            "text/plain; charset=utf-8",
+            b"request headers too large",
+        );
+        return Ok(());
+    };
+    if request_bytes.is_empty() {
+        return Ok(());
+    }
+
+    let request = String::from_utf8_lossy(&request_bytes);
     let mut parts = request
         .lines()
         .next()
@@ -299,12 +385,41 @@ fn handle_connection(mut stream: TcpStream, config: &OverlayServerConfig) -> Res
     let path = raw_path.split('?').next().unwrap_or(raw_path);
 
     let response = route_request(method, path, config)?;
-    write_response(
+    if let Err(error) = write_response(
         &mut stream,
         response.status,
         response.content_type,
         &response.body,
-    )
+    ) {
+        // A browser may close the request while the response is being written.
+        // This is a normal client disconnect and should not pollute the logs.
+        if error.starts_with("写入响应失败:") {
+            return Ok(());
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn read_request_headers(reader: &mut impl Read) -> Result<Option<Vec<u8>>, String> {
+    let mut request_bytes = Vec::with_capacity(2048);
+    let mut chunk = [0_u8; 2048];
+    while !request_bytes.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+        match reader.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(size) => {
+                request_bytes.extend_from_slice(&chunk[..size]);
+                if request_bytes.len() > MAX_REQUEST_HEADER_BYTES {
+                    return Ok(None);
+                }
+            }
+            Err(error) if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                return Err("请求读取超时".to_owned());
+            }
+            Err(error) => return Err(format!("读取请求失败: {error}")),
+        }
+    }
+    Ok(Some(request_bytes))
 }
 
 fn route_request(
@@ -335,6 +450,11 @@ fn route_request(
             status: "200 OK",
             content_type: "text/css; charset=utf-8",
             body: OVERLAY_CARD_CSS.as_bytes().to_vec(),
+        }),
+        "/overlay-card-renderer.js" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "text/javascript; charset=utf-8",
+            body: OVERLAY_CARD_RENDERER.as_bytes().to_vec(),
         }),
         "/api/overlay" => match load_overlay_state(config) {
             Ok(state) => Ok(HttpResponse {
@@ -389,29 +509,21 @@ fn load_overlay_state(config: &OverlayServerConfig) -> Result<OverlayState, Stri
     let snapshot: RegistrySnapshot =
         serde_json::from_str(&registry).map_err(|error| format!("读取账号配置失败: {error}"))?;
     let Some(account_id) = snapshot.active_account_id else {
-        return Ok(empty_overlay_state());
+        return Ok(OverlayState {
+            selected: None,
+            recent_summary: RecentSummary {
+                sample_size: 0,
+                win: 0,
+                lose: 0,
+                win_rate: 0.0,
+            },
+        });
     };
     if !is_safe_account_id(&account_id) {
         return Err("活动账号标识无效".to_owned());
     }
 
-    let Some(cache) = crate::history_store::load_overlay_cache(&config.history_dir, &account_id)?
-    else {
-        return Ok(empty_overlay_state());
-    };
-    Ok(OverlayState::from_history(&cache))
-}
-
-fn empty_overlay_state() -> OverlayState {
-    OverlayState {
-        selected: None,
-        recent_summary: RecentSummary {
-            sample_size: 0,
-            win: 0,
-            lose: 0,
-            win_rate: 0.0,
-        },
-    }
+    crate::history_store::load_overlay_state(&config.history_dir, &account_id)
 }
 
 fn is_safe_account_id(value: &str) -> bool {
@@ -425,7 +537,36 @@ fn is_safe_account_id(value: &str) -> bool {
 mod tests {
     use super::*;
     use splat3_widget_core::history::{ArchivedBattle, BattleRecord, HistoryCache};
+    use std::collections::VecDeque;
+    use std::io::{self, Cursor};
     use tempfile::tempdir;
+
+    struct TestReader {
+        chunks: VecDeque<io::Result<Vec<u8>>>,
+        current: Cursor<Vec<u8>>,
+    }
+
+    impl TestReader {
+        fn new(chunks: Vec<io::Result<Vec<u8>>>) -> Self {
+            Self {
+                chunks: chunks.into(),
+                current: Cursor::new(Vec::new()),
+            }
+        }
+    }
+
+    impl Read for TestReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.current.position() >= self.current.get_ref().len() as u64 {
+                match self.chunks.pop_front() {
+                    Some(Ok(chunk)) => self.current = Cursor::new(chunk),
+                    Some(Err(error)) => return Err(error),
+                    None => return Ok(0),
+                }
+            }
+            self.current.read(buffer)
+        }
+    }
 
     fn sample_cache() -> HistoryCache {
         HistoryCache {
@@ -531,5 +672,55 @@ mod tests {
         assert!(String::from_utf8(response.body)
             .unwrap()
             .contains(".overlay-card__kad"));
+    }
+
+    #[test]
+    fn serves_the_shared_overlay_card_renderer() {
+        let directory = tempdir().unwrap();
+        let response = route_request(
+            "GET",
+            "/overlay-card-renderer.js",
+            &OverlayServerConfig {
+                accounts_path: directory.path().join("accounts.json"),
+                history_dir: directory.path().join("history"),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(response.status, "200 OK");
+        assert_eq!(response.content_type, "text/javascript; charset=utf-8");
+        assert_eq!(response.body, OVERLAY_CARD_RENDERER.as_bytes());
+    }
+
+    #[test]
+    fn connection_limit_is_enforced_and_released() {
+        let active = AtomicUsize::new(MAX_CONCURRENT_CONNECTIONS);
+        assert!(!try_reserve_connection(&active));
+        active.fetch_sub(1, Ordering::AcqRel);
+        assert!(try_reserve_connection(&active));
+    }
+
+    #[test]
+    fn reads_fragmented_headers_and_handles_timeouts_and_oversized_headers() {
+        let mut fragmented = TestReader::new(vec![
+            Ok(b"GET /hea".to_vec()),
+            Ok(b"lthz HTTP/1.1\r\nHost: localhost\r\n\r\n".to_vec()),
+        ]);
+        let request = read_request_headers(&mut fragmented).unwrap().unwrap();
+        assert!(String::from_utf8(request)
+            .unwrap()
+            .starts_with("GET /healthz HTTP/1.1"));
+
+        let mut timeout = TestReader::new(vec![Err(io::Error::new(
+            ErrorKind::TimedOut,
+            "test timeout",
+        ))]);
+        assert_eq!(
+            read_request_headers(&mut timeout).unwrap_err(),
+            "请求读取超时"
+        );
+
+        let mut oversized = TestReader::new(vec![Ok(vec![b'x'; MAX_REQUEST_HEADER_BYTES + 1])]);
+        assert!(read_request_headers(&mut oversized).unwrap().is_none());
     }
 }
