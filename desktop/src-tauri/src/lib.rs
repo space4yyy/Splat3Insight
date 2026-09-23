@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use chrono::Local;
 use serde::Serialize;
 use splat3_widget_core::{
     history::{
-        HistoryCache, HistoryError, HistoryErrorKind, HistoryFetchProgress, HistoryFetchedRecord,
+        HistoryError, HistoryErrorKind, HistoryFetchProgress, HistoryFetchedRecord,
         HistoryProgressCallback, HistoryRecordCallback, HistorySyncSummary, SplatNetDataClient,
         SplatNetDataConfig,
     },
@@ -359,18 +359,23 @@ fn auth_error(path: &Path, stage: &str, error: String) -> String {
     format!("{error}\n认证日志：{}", path.display())
 }
 
-fn load_history_cache(
-    history_dir: &Path,
-    account_id: &str,
-) -> Result<Option<HistoryCache>, String> {
-    history_store::load_cache(history_dir, account_id)
-}
-
 fn load_history_summary(
     history_dir: &Path,
     account_id: &str,
 ) -> Result<Option<HistorySyncSummary>, String> {
     history_store::load_summary(history_dir, account_id)
+}
+
+fn empty_overlay_state() -> OverlayState {
+    OverlayState {
+        selected: None,
+        recent_summary: splat3_widget_core::overlay::RecentSummary {
+            sample_size: 0,
+            win: 0,
+            lose: 0,
+            win_rate: 0.0,
+        },
+    }
 }
 
 fn update_sync_status(
@@ -388,6 +393,9 @@ fn active_account_sync_state(
     let Some(account_id) = registry.active_account_id().map(ToOwned::to_owned) else {
         return Ok(None);
     };
+    if registry.is_account_deletion_pending(&account_id) {
+        return Ok(None);
+    }
     let ready = registry
         .get_secret(&account_id)?
         .is_some_and(|secret| secret.game_web_token.is_some() && secret.bullet_token.is_some());
@@ -530,6 +538,11 @@ async fn sync_account_inner(
             .find(|account| account.account_id == account_id)
             .cloned()
             .ok_or_else(|| format!("unknown account: {account_id}"))?;
+        if registry.is_account_deletion_pending(account_id) {
+            return Err(SyncError::Other(
+                "该账号正在完成删除，请稍后重试".to_owned(),
+            ));
+        }
         let secret = registry
             .get_secret(account_id)?
             .ok_or_else(|| "该账号没有保存登录信息".to_owned())?;
@@ -561,17 +574,26 @@ async fn sync_account_inner(
         status.error = None;
     });
 
-    let existing_archive = load_history_cache(history_dir, account_id).map_err(|error| {
+    history_store::migrate_legacy_if_needed(history_dir, account_id).map_err(|error| {
         account_auth_error(
             auth_log_path,
-            "history-load",
+            "history-migration",
             &metadata.display_name,
             account_id,
             error,
         )
     })?;
-    let initial_sync = existing_archive.is_none()
-        || history_store::needs_full_sync(history_dir, account_id).map_err(|error| {
+    let existing_summary = load_history_summary(history_dir, account_id).map_err(|error| {
+        account_auth_error(
+            auth_log_path,
+            "history-summary",
+            &metadata.display_name,
+            account_id,
+            error,
+        )
+    })?;
+    let initial_sync =
+        history_store::needs_full_sync(history_dir, account_id).map_err(|error| {
             account_auth_error(
                 auth_log_path,
                 "history-state",
@@ -580,22 +602,16 @@ async fn sync_account_inner(
                 error,
             )
         })?;
-    let mut archive = existing_archive.unwrap_or(HistoryCache {
-        schema_version: 1,
-        fetched_at_ms: 0,
-        battles: Vec::new(),
-        coop: Vec::new(),
-    });
-    let known_battle_ids: HashSet<String> = archive
-        .battles
-        .iter()
-        .map(|item| item.record.id.clone())
-        .collect();
-    let known_coop_ids: HashSet<String> = archive
-        .coop
-        .iter()
-        .map(|item| item.record.id.clone())
-        .collect();
+    let (known_battle_ids, known_coop_ids) =
+        history_store::load_known_record_ids(history_dir, account_id).map_err(|error| {
+            account_auth_error(
+                auth_log_path,
+                "history-dedup",
+                &metadata.display_name,
+                account_id,
+                error,
+            )
+        })?;
 
     let sync_description = if initial_sync {
         "首次同步：正在拉取当前账号可用的全部历史对战和打工记录…"
@@ -611,8 +627,14 @@ async fn sync_account_inner(
         status.progress_total = 0;
         status.retry_attempt = 0;
         status.initial = initial_sync;
-        status.battle_count = archive.battles.len();
-        status.coop_count = archive.coop.len();
+        status.battle_count = existing_summary
+            .as_ref()
+            .map(|summary| summary.battle_count)
+            .unwrap_or_default();
+        status.coop_count = existing_summary
+            .as_ref()
+            .map(|summary| summary.coop_count)
+            .unwrap_or_default();
     });
     write_account_log(
         auth_log_path,
@@ -664,15 +686,24 @@ async fn sync_account_inner(
             };
         });
     });
-    let record_history_dir = history_dir.to_path_buf();
+    let record_writer = Arc::new(Mutex::new(
+        history_store::HistoryRecordWriter::open(history_dir).map_err(|error| {
+            account_auth_error(
+                auth_log_path,
+                "history-store",
+                &metadata.display_name,
+                account_id,
+                error,
+            )
+        })?,
+    ));
+    let record_writer_for_callback = Arc::clone(&record_writer);
     let record_account_id = account_id.to_owned();
     let on_record: HistoryRecordCallback = Arc::new(move |record: HistoryFetchedRecord| {
-        history_store::save_record(
-            &record_history_dir,
-            &record_account_id,
-            fetched_at_ms,
-            record,
-        )
+        record_writer_for_callback
+            .lock()
+            .map_err(|_| "历史记录写入器已锁定".to_owned())?
+            .save(&record_account_id, fetched_at_ms, record)
     });
     let cache = if initial_sync {
         client
@@ -719,21 +750,38 @@ async fn sync_account_inner(
                 SyncError::from_history(kind, message)
             })?
     };
-    let (added_battle_count, added_coop_count) = archive.merge(cache);
-    history_store::save_overlay_state(
-        history_dir,
-        account_id,
-        &OverlayState::from_history(&archive),
-    )
-    .map_err(|error| {
-        account_auth_error(
-            auth_log_path,
-            "overlay-cache",
-            &metadata.display_name,
-            account_id,
-            error,
-        )
-    })?;
+    drop(on_record);
+    drop(record_writer);
+    let added_battle_count = cache.battles.len();
+    let added_coop_count = cache.coop.len();
+    if initial_sync || added_battle_count > 0 {
+        if let Some(overlay_cache) = history_store::load_overlay_cache(history_dir, account_id)
+            .map_err(|error| {
+                account_auth_error(
+                    auth_log_path,
+                    "overlay-cache",
+                    &metadata.display_name,
+                    account_id,
+                    error,
+                )
+            })?
+        {
+            history_store::save_overlay_state(
+                history_dir,
+                account_id,
+                &OverlayState::from_history(&overlay_cache),
+            )
+            .map_err(|error| {
+                account_auth_error(
+                    auth_log_path,
+                    "overlay-cache",
+                    &metadata.display_name,
+                    account_id,
+                    error,
+                )
+            })?;
+        }
+    }
     history_store::mark_sync_complete(history_dir, account_id, fetched_at_ms).map_err(|error| {
         account_auth_error(
             auth_log_path,
@@ -743,7 +791,17 @@ async fn sync_account_inner(
             error,
         )
     })?;
-    let mut summary = archive.summary();
+    let mut summary = load_history_summary(history_dir, account_id)
+        .map_err(|error| {
+            account_auth_error(
+                auth_log_path,
+                "history-summary",
+                &metadata.display_name,
+                account_id,
+                error,
+            )
+        })?
+        .unwrap_or_default();
     summary.added_battle_count = added_battle_count;
     summary.added_coop_count = added_coop_count;
     write_account_log(
@@ -877,6 +935,9 @@ fn resolve_account_id(
     {
         return Err(format!("unknown account: {account_id}"));
     }
+    if registry.is_account_deletion_pending(&account_id) {
+        return Err("该账号正在完成删除，请稍后重试".to_owned());
+    }
     Ok(account_id)
 }
 
@@ -926,8 +987,10 @@ fn remove_account(account_id: String, state: State<'_, AppState>) -> Result<(), 
         .find(|account| account.account_id == account_id)
         .map(|account| account.display_name.clone())
         .unwrap_or_else(|| "未知账号".to_owned());
+    registry.mark_account_deletion_pending(&account_id)?;
     history_store::delete_account(&state.history_dir, &account_id)?;
     registry.remove(&account_id)?;
+    registry.clear_account_deletion_pending(&account_id)?;
     write_account_log(
         &state.auth_log_path,
         "account-delete",
@@ -986,6 +1049,9 @@ fn get_overlay_state(
             .any(|account| account.account_id == account_id)
         {
             return Err(format!("unknown account: {account_id}"));
+        }
+        if registry.is_account_deletion_pending(&account_id) {
+            return Ok(empty_overlay_state());
         }
         account_id
     };
@@ -1245,12 +1311,34 @@ pub fn run() {
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let metadata_path = config_dir.join("accounts.json");
-            let registry = AccountRegistry::load(&metadata_path, KeyringSecretStore::default())
+            let history_dir = config_dir.join("history");
+            let mut registry = AccountRegistry::load(&metadata_path, KeyringSecretStore::default())
                 .map_err(std::io::Error::other)?;
+            for account_id in registry.pending_account_deletions().to_vec() {
+                let display_name = registry
+                    .accounts()
+                    .iter()
+                    .find(|account| account.account_id == account_id)
+                    .map(|account| account.display_name.clone())
+                    .unwrap_or_else(|| "未知账号".to_owned());
+                let cleanup = history_store::delete_account(&history_dir, &account_id)
+                    .and_then(|()| registry.remove(&account_id))
+                    .and_then(|()| registry.clear_account_deletion_pending(&account_id));
+                if let Err(error) = cleanup {
+                    log_console_error(
+                        "account-delete-recovery",
+                        &format!("账号“{display_name}”删除未完成：{error}"),
+                    );
+                } else {
+                    log_console(
+                        "account-delete-recovery",
+                        &format!("账号“{display_name}”上次未完成的删除已完成"),
+                    );
+                }
+            }
             let registry = Arc::new(Mutex::new(registry));
             let sync_runtime = Arc::new(SyncRuntime::new());
             let sync_trigger = Arc::new(tokio::sync::Notify::new());
-            let history_dir = config_dir.join("history");
             if let Err(error) = history_store::check_integrity(&history_dir) {
                 log_console_error("history", &error);
             }

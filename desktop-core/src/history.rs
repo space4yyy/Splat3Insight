@@ -190,7 +190,7 @@ pub struct HistoryCache {
     pub coop: Vec<ArchivedCoop>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HistorySyncSummary {
     pub battle_count: usize,
     pub coop_count: usize,
@@ -824,49 +824,71 @@ impl SplatNetDataClient {
             }
             break (status, content_type, request_id, response_body);
         };
-        if status == reqwest::StatusCode::FORBIDDEN {
-            return Err(HistoryError::other(
-                "SplatNet 拒绝了数据请求，客户端版本或 Web View 版本可能已过期",
-            ));
-        }
-        if !status.is_success() {
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                return Err(HistoryError::other(format!(
-                    "SplatNet 请求过于频繁（HTTP 429），已重试 {} 次，请稍后再试",
-                    retry_attempt
-                )));
-            }
-            if status.is_server_error() {
-                return Err(HistoryError::other(format!(
-                    "SplatNet 服务暂时不可用（HTTP {status}），已重试 {} 次，请稍后再试；Request-ID: {request_id}",
-                    retry_attempt
-                )));
-            }
+        parse_graphql_response(
+            status,
+            &content_type,
+            &request_id,
+            &response_body,
+            retry_attempt,
+        )
+    }
+}
+
+fn parse_graphql_response(
+    status: reqwest::StatusCode,
+    content_type: &str,
+    request_id: &str,
+    response_body: &[u8],
+    retry_attempt: usize,
+) -> Result<Value, HistoryError> {
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(HistoryError::token_expired(
+            "SplatNet bullet token 已失效，请重新获取 SplatNet 权限",
+        ));
+    }
+    if status == reqwest::StatusCode::FORBIDDEN {
+        return Err(HistoryError::other(
+            "SplatNet 拒绝了数据请求，客户端版本或 Web View 版本可能已过期",
+        ));
+    }
+    if !status.is_success() {
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             return Err(HistoryError::other(format!(
-                "SplatNet 数据请求失败（HTTP {status}，Content-Type: {content_type}，Request-ID: {request_id}，响应：{}）",
-                response_preview(&response_body)
+                "SplatNet 请求过于频繁（HTTP 429），已重试 {retry_attempt} 次，请稍后再试"
             )));
         }
-        let value: Value = serde_json::from_slice(&response_body).map_err(|error| {
-            format!(
-                "SplatNet 数据响应不是有效 JSON（HTTP {status}，Content-Type: {content_type}，Request-ID: {request_id}，响应：{}）：{error}",
-                response_preview(&response_body)
-            )
-        })?;
-        if let Some(errors) = value.get("errors").and_then(Value::as_array) {
-            if let Some(first) = errors.first() {
-                let error_message = format!("SplatNet GraphQL 返回错误：{}", compact_json(first));
-                if graphql_error_is_unauthorized(first) {
-                    return Err(HistoryError::token_expired(error_message));
-                }
-                return Err(HistoryError::other(error_message));
-            }
+        if status.is_server_error() {
+            return Err(HistoryError::other(format!(
+                "SplatNet 服务暂时不可用（HTTP {status}），已重试 {retry_attempt} 次，请稍后再试；Request-ID: {request_id}"
+            )));
         }
-        if value.get("data").is_none() {
-            return Err(HistoryError::other("SplatNet 响应缺少 data"));
-        }
-        Ok(value)
+        return Err(HistoryError::other(format!(
+            "SplatNet 数据请求失败（HTTP {status}，Content-Type: {content_type}，Request-ID: {request_id}，响应：{}）",
+            response_preview(response_body)
+        )));
     }
+
+    let value: Value = serde_json::from_slice(response_body).map_err(|_| {
+        HistoryError::other(format!(
+            "SplatNet 数据响应不是有效 JSON（HTTP {status}，Content-Type: {content_type}，Request-ID: {request_id}，响应：{}）",
+            response_preview(response_body)
+        ))
+    })?;
+    if let Some(first) = value
+        .get("errors")
+        .and_then(Value::as_array)
+        .and_then(|errors| errors.first())
+    {
+        let error_message = format!("SplatNet GraphQL 返回错误：{}", compact_json(first));
+        if graphql_error_is_unauthorized(first) {
+            return Err(HistoryError::token_expired(error_message));
+        }
+        return Err(HistoryError::other(error_message));
+    }
+    if value.get("data").is_none() {
+        return Err(HistoryError::other("SplatNet 响应缺少 data"));
+    }
+    Ok(value)
 }
 
 fn notify_progress(
@@ -1060,19 +1082,85 @@ fn integer_at(value: &Value, path: &[&str]) -> Option<i64> {
 }
 
 fn compact_json(value: &Value) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "未知 GraphQL 错误".to_owned())
+    let mut sanitized = value.clone();
+    redact_sensitive_fields(&mut sanitized);
+    serde_json::to_string(&sanitized).unwrap_or_else(|_| "未知 GraphQL 错误".to_owned())
 }
 
 fn response_preview(body: &[u8]) -> String {
-    let text = String::from_utf8_lossy(body);
-    let preview: String = text.chars().take(240).collect();
-    let preview = preview.replace(['\n', '\r', '\t'], " ");
-    if text.chars().count() > 240 {
+    if body.is_empty() {
+        return "<empty body, 0 bytes>".to_owned();
+    }
+
+    let Ok(mut value) = serde_json::from_slice::<Value>(body) else {
+        return format!("<non-JSON response omitted, {} bytes>", body.len());
+    };
+    redact_sensitive_fields(&mut value);
+    let text =
+        serde_json::to_string(&value).unwrap_or_else(|_| "<JSON response omitted>".to_owned());
+    let mut chars = text.chars();
+    let preview: String = chars.by_ref().take(240).collect();
+    if chars.next().is_some() {
         format!("{preview}…")
-    } else if preview.is_empty() {
-        format!("<empty body, {} bytes>", body.len())
     } else {
         preview
+    }
+}
+
+fn redact_sensitive_fields(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            for (key, value) in object.iter_mut() {
+                let normalized: String = key
+                    .chars()
+                    .filter(|character| character.is_ascii_alphanumeric())
+                    .map(|character| character.to_ascii_lowercase())
+                    .collect();
+                let sensitive = normalized.contains("token")
+                    || normalized.contains("authorization")
+                    || normalized.contains("cookie")
+                    || normalized.contains("password")
+                    || normalized.contains("secret")
+                    || normalized.contains("verifier")
+                    || normalized == "f";
+                if sensitive {
+                    *value = Value::String("[REDACTED]".to_owned());
+                } else {
+                    redact_sensitive_fields(value);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                redact_sensitive_fields(value);
+            }
+        }
+        Value::String(text) => {
+            let normalized = text.to_ascii_lowercase();
+            let credential_marker = [
+                "token=",
+                "token:",
+                "session_token",
+                "authorization",
+                "bearer ",
+                "cookie:",
+                "password=",
+                "secret=",
+                "verifier=",
+                "f=",
+            ]
+            .iter()
+            .any(|marker| normalized.contains(marker));
+            let looks_like_opaque_credential = text.len() > 32
+                && !text.chars().any(char::is_whitespace)
+                && text.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || "-_.+/=".contains(character)
+                });
+            if credential_marker || looks_like_opaque_credential {
+                *text = "[REDACTED]".to_owned();
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1208,6 +1296,77 @@ mod tests {
         ];
 
         assert_eq!(new_ids(ids, &known), vec!["battle-2"]);
+    }
+
+    #[test]
+    fn error_diagnostics_redact_credentials_and_omit_unstructured_bodies() {
+        let body = serde_json::to_vec(&json!({
+            "error": "unauthorized",
+            "extensions": {
+                "session_token_code": "session-secret",
+                "bulletToken": "bullet-secret",
+                "authorization": "Bearer access-secret",
+                "f": "f-secret",
+                "message": "provider echoed session_token_code=private"
+            }
+        }))
+        .unwrap();
+
+        let preview = response_preview(&body);
+        assert!(preview.contains("unauthorized"));
+        assert!(!preview.contains("session-secret"));
+        assert!(!preview.contains("bullet-secret"));
+        assert!(!preview.contains("access-secret"));
+        assert!(!preview.contains("f-secret"));
+        assert!(!preview.contains("private"));
+
+        let plain_text = response_preview(b"provider echoed session-secret");
+        assert!(plain_text.contains("non-JSON response omitted"));
+        assert!(!plain_text.contains("session-secret"));
+    }
+
+    #[test]
+    fn graphql_response_parser_classifies_fixture_responses_without_network() {
+        let ok = parse_graphql_response(
+            reqwest::StatusCode::OK,
+            "application/json",
+            "req-1",
+            br#"{"data":{"history":{"records":[]}}}"#,
+            0,
+        )
+        .unwrap();
+        assert!(ok.pointer("/data/history/records").is_some());
+
+        let expired = parse_graphql_response(
+            reqwest::StatusCode::UNAUTHORIZED,
+            "application/json",
+            "req-2",
+            br#"{"message":"unauthorized"}"#,
+            0,
+        )
+        .unwrap_err();
+        assert_eq!(expired.kind(), HistoryErrorKind::TokenExpired);
+
+        let unauthorized = parse_graphql_response(
+            reqwest::StatusCode::OK,
+            "application/json",
+            "req-3",
+            br#"{"errors":[{"message":"expired","extensions":{"code":"UNAUTHENTICATED"}}]}"#,
+            0,
+        )
+        .unwrap_err();
+        assert_eq!(unauthorized.kind(), HistoryErrorKind::TokenExpired);
+
+        let throttled = parse_graphql_response(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            "application/json",
+            "req-4",
+            br#"{"token":"must-not-appear"}"#,
+            3,
+        )
+        .unwrap_err();
+        assert!(throttled.to_string().contains("HTTP 429"));
+        assert!(!throttled.to_string().contains("must-not-appear"));
     }
 
     #[test]

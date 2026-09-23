@@ -39,6 +39,8 @@ pub struct AccountSecret {
 struct RegistryFile {
     active_account_id: Option<String>,
     accounts: Vec<AccountMetadata>,
+    #[serde(default)]
+    pending_account_deletions: Vec<String>,
 }
 
 pub trait SecretStore {
@@ -154,11 +156,52 @@ impl<S: SecretStore> AccountRegistry<S> {
         self.secret_store.get(account_id)
     }
 
+    pub fn pending_account_deletions(&self) -> &[String] {
+        &self.file.pending_account_deletions
+    }
+
+    pub fn is_account_deletion_pending(&self, account_id: &str) -> bool {
+        self.file
+            .pending_account_deletions
+            .iter()
+            .any(|pending| pending == account_id)
+    }
+
+    pub fn mark_account_deletion_pending(&mut self, account_id: &str) -> Result<(), String> {
+        if !self.is_account_deletion_pending(account_id) {
+            self.file
+                .pending_account_deletions
+                .push(account_id.to_owned());
+            if let Err(error) = self.persist() {
+                self.file
+                    .pending_account_deletions
+                    .retain(|pending| pending != account_id);
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn clear_account_deletion_pending(&mut self, account_id: &str) -> Result<(), String> {
+        let previous = self.file.pending_account_deletions.clone();
+        self.file
+            .pending_account_deletions
+            .retain(|pending| pending != account_id);
+        if let Err(error) = self.persist() {
+            self.file.pending_account_deletions = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub fn upsert(
         &mut self,
         metadata: AccountMetadata,
         secret: AccountSecret,
     ) -> Result<(), String> {
+        if self.is_account_deletion_pending(&metadata.account_id) {
+            return Err("该账号正在完成删除，无法更新登录信息".to_owned());
+        }
         self.secret_store.put(&metadata.account_id, &secret)?;
 
         if let Some(existing) = self
@@ -181,6 +224,9 @@ impl<S: SecretStore> AccountRegistry<S> {
     }
 
     pub fn set_active(&mut self, account_id: &str, used_at_ms: i64) -> Result<(), String> {
+        if self.is_account_deletion_pending(account_id) {
+            return Err("该账号正在完成删除，无法切换使用".to_owned());
+        }
         let account = self
             .file
             .accounts
@@ -337,5 +383,34 @@ mod tests {
         assert!(registry.accounts().is_empty());
         assert_eq!(registry.active_account_id(), None);
         assert_eq!(registry.get_secret("a").unwrap(), None);
+    }
+
+    #[test]
+    fn pending_account_deletion_survives_restart_until_explicitly_cleared() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("accounts.json");
+        let mut registry = AccountRegistry::load(&path, MemorySecretStore::default()).unwrap();
+        registry.mark_account_deletion_pending("a").unwrap();
+
+        let mut reopened = AccountRegistry::load(&path, MemorySecretStore::default()).unwrap();
+        assert!(reopened.is_account_deletion_pending("a"));
+        assert_eq!(reopened.pending_account_deletions(), &["a"]);
+
+        reopened.clear_account_deletion_pending("a").unwrap();
+        assert!(!reopened.is_account_deletion_pending("a"));
+    }
+
+    #[test]
+    fn pending_account_deletion_cannot_be_resurrected_by_token_refresh() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("accounts.json");
+        let mut registry = AccountRegistry::load(&path, MemorySecretStore::default()).unwrap();
+        registry.mark_account_deletion_pending("a").unwrap();
+
+        assert!(registry
+            .upsert(metadata("a", "Alice"), secret("a"))
+            .is_err());
+        assert_eq!(registry.get_secret("a").unwrap(), None);
+        assert!(!path.exists() || !fs::read_to_string(path).unwrap().contains("Alice"));
     }
 }

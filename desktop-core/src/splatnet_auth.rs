@@ -639,9 +639,7 @@ fn nested_string(value: &Value, path: &[&str], error: &str) -> Result<String, St
 }
 
 fn provider_error(service: &str, status: u16, value: &Value) -> String {
-    let detail = ["error", "reason", "message", "error_description"]
-        .into_iter()
-        .find_map(|key| value.get(key).and_then(Value::as_str))
+    let detail = safe_provider_detail(value, &["error", "reason", "message", "error_description"])
         .unwrap_or("服务返回错误");
     format!("{service}失败（HTTP {status}）：{detail}")
 }
@@ -650,16 +648,10 @@ fn parse_f_generation_response(value: &Value) -> Result<FGeneration, String> {
     if value.get("error").and_then(Value::as_bool) == Some(true)
         || value.get("error").and_then(Value::as_str).is_some()
     {
-        let detail = ["reason", "message", "error_description", "error"]
-            .into_iter()
-            .find_map(|key| {
-                value.get(key).and_then(|value| match value {
-                    Value::String(text) => Some(text.clone()),
-                    Value::Bool(value) => Some(value.to_string()),
-                    _ => None,
-                })
-            })
-            .unwrap_or_else(|| "服务返回错误".to_owned());
+        let detail =
+            safe_provider_detail(value, &["reason", "message", "error_description", "error"])
+                .map(str::to_owned)
+                .unwrap_or_else(|| "服务返回错误".to_owned());
         return Err(format!("f 参数服务返回错误：{detail}"));
     }
 
@@ -679,6 +671,41 @@ fn parse_f_generation_response(value: &Value) -> Result<FGeneration, String> {
         request_id,
         timestamp,
         encrypted_body,
+    })
+}
+
+fn safe_provider_detail<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter().find_map(|key| {
+        let text = value.get(*key)?.as_str()?.trim();
+        let normalized = text.to_ascii_lowercase();
+        let contains_credential_hint = [
+            "token",
+            "cookie",
+            "password",
+            "secret",
+            "authorization",
+            "bearer ",
+            "session",
+            "verifier",
+            "f=",
+        ]
+        .iter()
+        .any(|hint| normalized.contains(hint));
+        let looks_like_opaque_credential = text.len() > 32
+            && !text.chars().any(char::is_whitespace)
+            && text
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "-_.+/=".contains(character));
+        if text.is_empty()
+            || text.len() > 160
+            || text.chars().any(char::is_control)
+            || contains_credential_hint
+            || looks_like_opaque_credential
+        {
+            None
+        } else {
+            Some(text)
+        }
     })
 }
 
@@ -756,5 +783,24 @@ mod tests {
         let error = parse_f_generation_response(&response).unwrap_err();
         assert!(error.contains("Something went wrong."));
         assert!(!error.contains("缺少 f"));
+    }
+
+    #[test]
+    fn omits_credentials_echoed_by_auth_providers() {
+        let token = "eyJhbGciOiJIUzI1NiJ9.very-long-private-token-value";
+        let error = provider_error(
+            "nxapi",
+            500,
+            &json!({ "message": format!("provider echoed {token}") }),
+        );
+        assert!(!error.contains(token));
+        assert!(error.contains("服务返回错误"));
+
+        let error = parse_f_generation_response(&json!({
+            "error": true,
+            "reason": format!("token={token}")
+        }))
+        .unwrap_err();
+        assert!(!error.contains(token));
     }
 }

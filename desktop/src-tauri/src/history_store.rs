@@ -9,6 +9,7 @@ use splat3_widget_core::history::{
     HistorySyncSummary,
 };
 use splat3_widget_core::overlay::{OverlayState, RecentSummary};
+use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -163,6 +164,7 @@ pub(crate) fn load_cache(
     history_dir: &Path,
     account_id: &str,
 ) -> Result<Option<HistoryCache>, String> {
+    migrate_legacy_if_needed(history_dir, account_id)?;
     let connection = open_database(history_dir)?;
     let record_count: i64 = connection
         .query_row(
@@ -173,12 +175,6 @@ pub(crate) fn load_cache(
         .map_err(|error| format!("读取历史数据库失败：{error}"))?;
 
     if record_count == 0 {
-        drop(connection);
-        if let Some(legacy) = load_legacy_cache(history_dir, account_id)? {
-            save_cache(history_dir, account_id, &legacy)?;
-            archive_legacy_file(history_dir, account_id);
-            return Ok(Some(legacy));
-        }
         return Ok(None);
     }
 
@@ -236,6 +232,56 @@ pub(crate) fn load_cache(
         battles,
         coop,
     }))
+}
+
+pub(crate) fn migrate_legacy_if_needed(history_dir: &Path, account_id: &str) -> Result<(), String> {
+    let connection = open_database(history_dir)?;
+    let record_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM history_records WHERE account_id = ?1",
+            [account_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("检查旧历史数据失败：{error}"))?;
+    drop(connection);
+
+    if record_count == 0 {
+        if let Some(legacy) = load_legacy_cache(history_dir, account_id)? {
+            save_cache(history_dir, account_id, &legacy)?;
+            archive_legacy_file(history_dir, account_id);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn load_known_record_ids(
+    history_dir: &Path,
+    account_id: &str,
+) -> Result<(HashSet<String>, HashSet<String>), String> {
+    let connection = open_database(history_dir)?;
+    let mut statement = connection
+        .prepare("SELECT record_type, record_id FROM history_records WHERE account_id = ?1")
+        .map_err(|error| format!("准备历史去重查询失败：{error}"))?;
+    let rows = statement
+        .query_map([account_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| format!("读取历史去重信息失败：{error}"))?;
+    let (mut battle_ids, mut coop_ids) = (HashSet::new(), HashSet::new());
+    for row in rows {
+        let (record_type, record_id) =
+            row.map_err(|error| format!("读取历史去重行失败：{error}"))?;
+        match record_type.as_str() {
+            "battle" => {
+                battle_ids.insert(record_id);
+            }
+            "coop" => {
+                coop_ids.insert(record_id);
+            }
+            other => return Err(format!("历史数据库包含未知记录类型：{other}")),
+        }
+    }
+    Ok((battle_ids, coop_ids))
 }
 
 pub(crate) fn load_summary(
@@ -451,49 +497,61 @@ pub(crate) fn save_cache(
     save_overlay_state(history_dir, account_id, &OverlayState::from_history(cache))
 }
 
-pub(crate) fn save_record(
-    history_dir: &Path,
-    account_id: &str,
-    fetched_at_ms: i64,
-    record: HistoryFetchedRecord,
-) -> Result<(), String> {
-    let mut connection = open_database(history_dir)?;
-    let transaction = connection
-        .transaction()
-        .map_err(|error| format!("开启历史断点事务失败：{error}"))?;
-    match record {
-        HistoryFetchedRecord::Battle(record) => upsert_record(
-            &transaction,
-            account_id,
-            "battle",
-            &record.record.id,
-            record.record.played_time.as_deref(),
-            &record.record,
-            &record.raw,
-        )?,
-        HistoryFetchedRecord::Coop(record) => upsert_record(
-            &transaction,
-            account_id,
-            "coop",
-            &record.record.id,
-            record.record.played_time.as_deref(),
-            &record.record,
-            &record.raw,
-        )?,
+pub(crate) struct HistoryRecordWriter {
+    connection: Connection,
+}
+
+impl HistoryRecordWriter {
+    pub(crate) fn open(history_dir: &Path) -> Result<Self, String> {
+        Ok(Self {
+            connection: open_database(history_dir)?,
+        })
     }
-    transaction
-        .execute(
-            "INSERT INTO history_meta(account_id, schema_version, fetched_at_ms, sync_complete)
-             VALUES (?1, ?2, ?3, 0)
-             ON CONFLICT(account_id) DO UPDATE SET
-                 fetched_at_ms = excluded.fetched_at_ms,
-                 sync_complete = 0",
-            params![account_id, DATABASE_SCHEMA_VERSION, fetched_at_ms],
-        )
-        .map_err(|error| format!("保存历史断点状态失败：{error}"))?;
-    transaction
-        .commit()
-        .map_err(|error| format!("提交历史断点事务失败：{error}"))
+
+    pub(crate) fn save(
+        &mut self,
+        account_id: &str,
+        fetched_at_ms: i64,
+        record: HistoryFetchedRecord,
+    ) -> Result<(), String> {
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| format!("开启历史断点事务失败：{error}"))?;
+        match record {
+            HistoryFetchedRecord::Battle(record) => upsert_record(
+                &transaction,
+                account_id,
+                "battle",
+                &record.record.id,
+                record.record.played_time.as_deref(),
+                &record.record,
+                &record.raw,
+            )?,
+            HistoryFetchedRecord::Coop(record) => upsert_record(
+                &transaction,
+                account_id,
+                "coop",
+                &record.record.id,
+                record.record.played_time.as_deref(),
+                &record.record,
+                &record.raw,
+            )?,
+        }
+        transaction
+            .execute(
+                "INSERT INTO history_meta(account_id, schema_version, fetched_at_ms, sync_complete)
+                 VALUES (?1, ?2, ?3, 0)
+                 ON CONFLICT(account_id) DO UPDATE SET
+                     fetched_at_ms = excluded.fetched_at_ms,
+                     sync_complete = 0",
+                params![account_id, DATABASE_SCHEMA_VERSION, fetched_at_ms],
+            )
+            .map_err(|error| format!("保存历史断点状态失败：{error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("提交历史断点事务失败：{error}"))
+    }
 }
 
 fn upsert_record<T: Serialize>(
@@ -551,6 +609,13 @@ pub(crate) fn export(history_dir: &Path, account_id: &str) -> Result<PathBuf, St
 }
 
 pub(crate) fn delete_account(history_dir: &Path, account_id: &str) -> Result<(), String> {
+    if account_id.is_empty()
+        || !account_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return Err("账号 ID 格式无效，已停止删除以保护其他数据".to_owned());
+    }
     let mut connection = open_database(history_dir)?;
     let transaction = connection
         .transaction()
@@ -839,6 +904,15 @@ mod tests {
     }
 
     #[test]
+    fn refuses_unsafe_account_ids_before_deleting_any_files() {
+        let directory = tempdir().unwrap();
+        save_cache(directory.path(), "account", &sample_cache()).unwrap();
+
+        assert!(delete_account(directory.path(), "../account").is_err());
+        assert!(load_cache(directory.path(), "account").unwrap().is_some());
+    }
+
+    #[test]
     fn checkpoint_state_survives_an_interrupted_sync() {
         let directory = tempdir().unwrap();
         let cache = sample_cache();
@@ -847,13 +921,14 @@ mod tests {
         mark_sync_started(directory.path(), "account", 456).unwrap();
         assert!(needs_full_sync(directory.path(), "account").unwrap());
 
-        save_record(
-            directory.path(),
-            "account",
-            456,
-            HistoryFetchedRecord::Battle(cache.battles[0].clone()),
-        )
-        .unwrap();
+        HistoryRecordWriter::open(directory.path())
+            .unwrap()
+            .save(
+                "account",
+                456,
+                HistoryFetchedRecord::Battle(cache.battles[0].clone()),
+            )
+            .unwrap();
         let loaded = load_cache(directory.path(), "account").unwrap().unwrap();
         assert_eq!(loaded.battles.len(), 1);
         assert_eq!(loaded.fetched_at_ms, 456);
@@ -862,6 +937,42 @@ mod tests {
         mark_sync_complete(directory.path(), "account", 456).unwrap();
         assert!(!needs_full_sync(directory.path(), "account").unwrap());
         check_integrity(directory.path()).unwrap();
+    }
+
+    #[test]
+    fn record_writer_reuses_database_and_id_lookup_does_not_decode_raw_json() {
+        let directory = tempdir().unwrap();
+        let cache = sample_cache();
+        let mut writer = HistoryRecordWriter::open(directory.path()).unwrap();
+        writer
+            .save(
+                "account",
+                456,
+                HistoryFetchedRecord::Battle(cache.battles[0].clone()),
+            )
+            .unwrap();
+        let mut second = cache.battles[0].clone();
+        second.record.id = "battle-2".to_owned();
+        second.raw["id"] = Value::String("battle-2".to_owned());
+        writer
+            .save("account", 456, HistoryFetchedRecord::Battle(second))
+            .unwrap();
+        drop(writer);
+
+        let connection = open_database(directory.path()).unwrap();
+        connection
+            .execute(
+                "UPDATE history_records SET raw_json = X'00' WHERE account_id = ?1",
+                ["account"],
+            )
+            .unwrap();
+        drop(connection);
+
+        let (battles, coop) = load_known_record_ids(directory.path(), "account").unwrap();
+        assert_eq!(battles.len(), 2);
+        assert!(battles.contains("battle-1"));
+        assert!(battles.contains("battle-2"));
+        assert!(coop.is_empty());
     }
 
     #[test]

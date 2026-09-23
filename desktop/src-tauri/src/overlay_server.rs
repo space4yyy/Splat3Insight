@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use splat3_widget_core::overlay::{OverlayState, RecentSummary};
+use splat3_widget_core::overlay::OverlayState;
 
 pub const OVERLAY_HOST: &str = "127.0.0.1";
 pub const OVERLAY_PORT: u16 = 17_353;
@@ -105,6 +105,8 @@ pub fn new_status() -> OverlayServiceStatusHandle {
 #[derive(Debug, Deserialize)]
 struct RegistrySnapshot {
     active_account_id: Option<String>,
+    #[serde(default)]
+    pending_account_deletions: Vec<String>,
 }
 
 impl OverlayServiceController {
@@ -509,18 +511,17 @@ fn load_overlay_state(config: &OverlayServerConfig) -> Result<OverlayState, Stri
     let snapshot: RegistrySnapshot =
         serde_json::from_str(&registry).map_err(|error| format!("读取账号配置失败: {error}"))?;
     let Some(account_id) = snapshot.active_account_id else {
-        return Ok(OverlayState {
-            selected: None,
-            recent_summary: RecentSummary {
-                sample_size: 0,
-                win: 0,
-                lose: 0,
-                win_rate: 0.0,
-            },
-        });
+        return Ok(crate::empty_overlay_state());
     };
     if !is_safe_account_id(&account_id) {
         return Err("活动账号标识无效".to_owned());
+    }
+    if snapshot
+        .pending_account_deletions
+        .iter()
+        .any(|pending| pending == &account_id)
+    {
+        return Ok(crate::empty_overlay_state());
     }
 
     crate::history_store::load_overlay_state(&config.history_dir, &account_id)
@@ -618,6 +619,33 @@ mod tests {
         assert!(String::from_utf8(response.body)
             .unwrap()
             .contains("\"selected\""));
+    }
+
+    #[test]
+    fn overlay_is_cleared_while_account_deletion_is_pending() {
+        let directory = tempdir().unwrap();
+        let accounts_path = directory.path().join("accounts.json");
+        let history_dir = directory.path().join("history");
+        crate::history_store::save_cache(&history_dir, "account", &sample_cache()).unwrap();
+        std::fs::write(
+            &accounts_path,
+            r#"{"active_account_id":"account","pending_account_deletions":["account"]}"#,
+        )
+        .unwrap();
+
+        let response = route_request(
+            "GET",
+            "/api/overlay",
+            &OverlayServerConfig {
+                accounts_path,
+                history_dir,
+            },
+        )
+        .unwrap();
+        let body = String::from_utf8(response.body).unwrap();
+        assert_eq!(response.status, "200 OK");
+        assert!(body.contains("\"selected\":null"));
+        assert!(body.contains("\"sample_size\":0"));
     }
 
     #[test]
