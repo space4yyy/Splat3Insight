@@ -20,13 +20,14 @@
       .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
       .overlay-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
       .overlay-primary-action { min-height: 30px; padding: 7px 13px; font-size: 12px; line-height: 1; }
-      .account { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 14px 0; border-bottom: 1px solid #35343e; }
+      .account { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: clamp(8px, calc(6.25vw - 12px), 18px); padding: 14px 0; border-bottom: 1px solid #35343e; }
       .account:last-child { border-bottom: 0; }
-      .account-main { display: flex; align-items: baseline; min-width: 0; gap: 10px; }
-      .account-name { font-size: 17px; }
-      .account-history { white-space: nowrap; }
-      .account-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: nowrap; min-width: max-content; }
-      .account-actions button { padding: 8px 14px; font-size: 13px; }
+      .account-main { display: flex; align-items: baseline; min-width: 0; gap: clamp(6px, calc(2px + 1.67vw), 10px); }
+      .account-name { min-width: 0; overflow: hidden; font-size: clamp(14px, calc(11px + 1.25vw), 17px); text-overflow: ellipsis; white-space: nowrap; }
+      .account-history { min-width: 0; overflow: hidden; font-size: clamp(11px, calc(7.6px + 1.2vw), 13.33px); text-overflow: ellipsis; white-space: nowrap; }
+      .account-actions { display: flex; align-items: center; justify-content: flex-end; gap: clamp(4px, calc(1.5px + 1.35vw), 8px); flex-wrap: nowrap; min-width: max-content; }
+      .account-actions button, .account-actions .badge { padding: clamp(6px, calc(2px + 1.25vw), 8px) clamp(8px, calc(2px + 2.5vw), 14px); font-size: clamp(11px, calc(9px + .8333vw), 13px); }
+      .account-actions .badge { min-height: clamp(26px, calc(2px + 6.667vw), 34px); }
       .account small, .status { color: #9d9aa8; }
       .badge { display: inline-flex; align-items: center; min-height: 34px; color: #111; background: #ecff20; border-radius: 999px; padding: 8px 14px; font-size: 13px; line-height: 1; font-weight: 700; }
       .badge-secondary { color: #f5f5f2; background: #4b4857; }
@@ -46,8 +47,8 @@
       .auth-actions button { padding: 10px 14px; font-size: 13px; }
       textarea { width: 100%; min-height: 92px; resize: vertical; border: 1px solid #4b4857; border-radius: 12px; padding: 10px; color: #f5f5f2; background: #111117; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
       .paste-help { margin: 8px 0 10px; font-size: 13px; color: #9d9aa8; }
-      .overlay-url-row { display: flex; align-items: center; gap: 10px; min-height: 20px; }
-      .overlay-url-row code { min-width: 0; flex: 1; color: #aaa8b5; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+      .overlay-url-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 10px; min-height: 20px; }
+      .overlay-url-row code { min-width: 0; flex: 1; overflow: hidden; color: #aaa8b5; font-size: 13px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
       .overlay-url-row button { flex: 0 0 auto; min-height: 26px; padding: 5px 10px; font-size: 12px; line-height: 1; }
       .obs-help { min-height: 20px; margin: 0; color: #aaa8b5; font-size: 13px; line-height: 20px; }
       .overlay-preview { margin-top: 14px; padding: 8px 0 2px; overflow: hidden; }
@@ -56,6 +57,8 @@
       .overlay-empty { padding: 24px 0; color: #9d9aa8; text-align: center; }
       .weapon-source-preview { display: flex; justify-content: center; padding-top: 12px; }
       .weapon-source-preview iframe { display: block; width: 164px; height: 356px; border: 0; background: transparent; }
+      .weapon-rules-preview { display: flex; justify-content: center; padding-top: 12px; }
+      .weapon-rules-preview iframe { display: block; width: 230px; height: 100px; border: 0; background: transparent; }
       #background-close-prompt { width: min(420px, calc(100% - 32px)); border: 1px solid #4b4857; border-radius: 18px; padding: 22px; color: #f5f5f2; background: #1b1a23; box-shadow: 0 24px 80px #0009; }
       #background-close-prompt::backdrop { background: #09090dbb; }
       #background-close-prompt h2 { margin: 0; font-size: 20px; }
@@ -66,11 +69,6 @@
         main { width: calc(100% - 20px); padding-top: 20px; }
         .panel { padding: 16px; }
         .overlay-preview { margin-top: 14px; }
-      }
-      @media (max-width: 480px) {
-        .account { grid-template-columns: 1fr; gap: 10px; }
-        .account-actions { justify-content: flex-start; }
-        .overlay-url-row { align-items: stretch; flex-direction: column; }
       }
     </style>
   </head>
@@ -129,6 +127,21 @@
           <div class="obs-help">OBS 推荐尺寸：164 x 356。A、B 分列显示，每队 4 把；新私人赛同步、手动刷新或重载页面时重新抽取。</div>
           <div class="weapon-source-preview">
             <iframe src="http://127.0.0.1:17353/random-weapons?preview=1" title="私房随武预览" scrolling="no"></iframe>
+          </div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="row">
+          <strong>私房随武规则</strong>
+        </div>
+        <div class="overlay-details">
+          <div class="overlay-url-row">
+            <code>http://127.0.0.1:17353/random-weapons-rules</code>
+            <button id="copy-random-weapons-rules-url" class="secondary" type="button">复制</button>
+          </div>
+          <div class="obs-help">OBS 推荐尺寸：230 x 100</div>
+          <div class="weapon-rules-preview">
+            <iframe src="http://127.0.0.1:17353/random-weapons-rules" title="私房随武规则预览" scrolling="no"></iframe>
           </div>
         </div>
       </section>

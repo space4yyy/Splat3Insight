@@ -28,6 +28,10 @@ const RANDOM_WEAPONS_HTML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/random-weapons.html"
 ));
+const RANDOM_WEAPONS_RULES_HTML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/random-weapons-rules.html"
+));
 const DISPLAY_FONT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/fonts/DFP_GBZY7.ttf"
@@ -481,6 +485,11 @@ fn route_request(
             content_type: "text/html; charset=utf-8",
             body: RANDOM_WEAPONS_HTML.as_bytes().to_vec(),
         }),
+        "/random-weapons-rules" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "text/html; charset=utf-8",
+            body: RANDOM_WEAPONS_RULES_HTML.as_bytes().to_vec(),
+        }),
         "/api/random-weapons" => match load_private_weapon_set(config) {
             Ok(state) => Ok(HttpResponse {
                 status: "200 OK",
@@ -811,6 +820,24 @@ mod tests {
         assert_eq!(image.status, "200 OK");
         assert_eq!(image.content_type, "image/png");
         assert_eq!(&image.body[..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    #[test]
+    fn serves_private_weapon_rules_card() {
+        let directory = tempdir().unwrap();
+        let config = OverlayServerConfig {
+            accounts_path: directory.path().join("accounts.json"),
+            history_dir: directory.path().join("history"),
+        };
+
+        let response = route_request("GET", "/random-weapons-rules", &config).unwrap();
+        assert_eq!(response.status, "200 OK");
+        assert_eq!(response.content_type, "text/html; charset=utf-8");
+        let page = String::from_utf8(response.body).unwrap();
+        assert!(page.contains("私房随武规则"));
+        assert!(page.contains("按顺序依次更换武器"));
+        assert!(page.contains("没有同款时，选择同类型武器"));
+        assert!(page.contains("优先尝试不熟悉的武器"));
     }
 
     #[test]
