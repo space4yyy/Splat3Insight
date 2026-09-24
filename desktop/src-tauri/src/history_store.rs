@@ -68,6 +68,21 @@ fn open_database(history_dir: &Path) -> Result<Connection, String> {
                  account_id TEXT PRIMARY KEY,
                  state_json TEXT NOT NULL,
                  updated_at_ms INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS private_weapon_sets (
+                 account_id TEXT PRIMARY KEY,
+                 match_id TEXT NOT NULL,
+                 set_json TEXT NOT NULL,
+                 updated_at_ms INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS x_battle_measurement_snapshots (
+                 account_id TEXT NOT NULL,
+                 record_id TEXT NOT NULL,
+                 payload_hash TEXT NOT NULL,
+                 fetched_at_ms INTEGER NOT NULL,
+                 raw_json BLOB NOT NULL,
+                 raw_encoding TEXT NOT NULL DEFAULT 'gzip',
+                 PRIMARY KEY (account_id, record_id, payload_hash)
              );",
         )
         .map_err(|error| format!("初始化历史数据库失败：{error}"))?;
@@ -425,6 +440,66 @@ pub(crate) fn save_overlay_state(
     Ok(())
 }
 
+pub(crate) fn load_latest_private_battle(
+    history_dir: &Path,
+    account_id: &str,
+) -> Result<Option<BattleRecord>, String> {
+    let connection = open_database(history_dir)?;
+    connection
+        .query_row(
+            "SELECT record_json FROM history_records
+             WHERE account_id = ?1 AND record_type = 'battle'
+               AND record_json LIKE '%\"mode\":\"PRIVATE_BATTLE\"%'
+             ORDER BY played_time IS NULL, played_time DESC, rowid DESC
+             LIMIT 1",
+            [account_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取最近私人比赛记录失败：{error}"))?
+        .map(|record| {
+            serde_json::from_str::<BattleRecord>(&record)
+                .map_err(|error| format!("解析最近私人比赛记录失败：{error}"))
+        })
+        .transpose()
+}
+
+pub(crate) fn load_private_weapon_set(
+    history_dir: &Path,
+    account_id: &str,
+) -> Result<Option<String>, String> {
+    let connection = open_database(history_dir)?;
+    connection
+        .query_row(
+            "SELECT set_json FROM private_weapon_sets WHERE account_id = ?1",
+            [account_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取私人比赛随机武器失败：{error}"))
+}
+
+pub(crate) fn save_private_weapon_set(
+    history_dir: &Path,
+    account_id: &str,
+    match_id: &str,
+    serialized_set: &str,
+) -> Result<(), String> {
+    let connection = open_database(history_dir)?;
+    connection
+        .execute(
+            "INSERT INTO private_weapon_sets(account_id, match_id, set_json, updated_at_ms)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(account_id) DO UPDATE SET
+                 match_id = excluded.match_id,
+                 set_json = excluded.set_json,
+                 updated_at_ms = excluded.updated_at_ms",
+            params![account_id, match_id, serialized_set, now_ms()],
+        )
+        .map_err(|error| format!("保存私人比赛随机武器失败：{error}"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn save_cache(
     history_dir: &Path,
@@ -491,31 +566,51 @@ impl HistoryRecordWriter {
         account_id: &str,
         fetched_at_ms: i64,
         record: HistoryFetchedRecord,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let transaction = self
             .connection
             .transaction()
             .map_err(|error| format!("开启历史断点事务失败：{error}"))?;
-        match record {
-            HistoryFetchedRecord::Battle(record) => upsert_record(
+        let overlay_changed = match record {
+            HistoryFetchedRecord::Battle(record) => {
+                upsert_record(
+                    &transaction,
+                    account_id,
+                    "battle",
+                    &record.record.id,
+                    record.record.played_time.as_deref(),
+                    &record.record,
+                    &record.raw,
+                )?;
+                false
+            }
+            HistoryFetchedRecord::Coop(record) => {
+                upsert_record(
+                    &transaction,
+                    account_id,
+                    "coop",
+                    &record.record.id,
+                    record.record.played_time.as_deref(),
+                    &record.record,
+                    &record.raw,
+                )?;
+                false
+            }
+            HistoryFetchedRecord::XBattleSettlement {
+                record_id,
+                power_after,
+                payload_hash,
+                raw_group,
+            } => save_x_battle_settlement(
                 &transaction,
                 account_id,
-                "battle",
-                &record.record.id,
-                record.record.played_time.as_deref(),
-                &record.record,
-                &record.raw,
+                fetched_at_ms,
+                &record_id,
+                power_after,
+                &payload_hash,
+                &raw_group,
             )?,
-            HistoryFetchedRecord::Coop(record) => upsert_record(
-                &transaction,
-                account_id,
-                "coop",
-                &record.record.id,
-                record.record.played_time.as_deref(),
-                &record.record,
-                &record.raw,
-            )?,
-        }
+        };
         transaction
             .execute(
                 "INSERT INTO history_meta(account_id, schema_version, fetched_at_ms, sync_complete)
@@ -528,8 +623,61 @@ impl HistoryRecordWriter {
             .map_err(|error| format!("保存历史断点状态失败：{error}"))?;
         transaction
             .commit()
-            .map_err(|error| format!("提交历史断点事务失败：{error}"))
+            .map_err(|error| format!("提交历史断点事务失败：{error}"))?;
+        Ok(overlay_changed)
     }
+}
+
+fn save_x_battle_settlement(
+    transaction: &rusqlite::Transaction<'_>,
+    account_id: &str,
+    fetched_at_ms: i64,
+    record_id: &str,
+    power_after: f64,
+    payload_hash: &str,
+    raw_group: &Value,
+) -> Result<bool, String> {
+    let raw_json = encode_raw_json(raw_group)?;
+    transaction
+        .execute(
+            "INSERT OR IGNORE INTO x_battle_measurement_snapshots(
+                 account_id, record_id, payload_hash, fetched_at_ms, raw_json, raw_encoding
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 'gzip')",
+            params![account_id, record_id, payload_hash, fetched_at_ms, raw_json],
+        )
+        .map_err(|error| format!("归档 X 赛测定组原始数据失败：{error}"))?;
+
+    let record_json = transaction
+        .query_row(
+            "SELECT record_json FROM history_records
+             WHERE account_id = ?1 AND record_type = 'battle' AND record_id = ?2",
+            params![account_id, record_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取待更新的 X 赛战绩失败：{error}"))?;
+    let Some(record_json) = record_json else {
+        return Ok(false);
+    };
+    let mut record = serde_json::from_str::<BattleRecord>(&record_json)
+        .map_err(|error| format!("解析待更新的 X 赛战绩失败：{error}"))?;
+    if record.mode != "X_MATCH" || record.power_kind.as_deref() != Some("x") {
+        return Ok(false);
+    }
+    if record.power == Some(power_after) {
+        return Ok(false);
+    }
+    record.power = Some(power_after);
+    let updated_json = serde_json::to_string(&record)
+        .map_err(|error| format!("序列化已结算的 X 赛战绩失败：{error}"))?;
+    transaction
+        .execute(
+            "UPDATE history_records SET record_json = ?3
+             WHERE account_id = ?1 AND record_type = 'battle' AND record_id = ?2",
+            params![account_id, record_id, updated_json],
+        )
+        .map_err(|error| format!("更新 X 赛结算分数失败：{error}"))?;
+    Ok(true)
 }
 
 fn upsert_record<T: Serialize>(
@@ -616,6 +764,18 @@ pub(crate) fn delete_account(history_dir: &Path, account_id: &str) -> Result<(),
             [account_id],
         )
         .map_err(|error| format!("删除账号卡片缓存失败：{error}"))?;
+    transaction
+        .execute(
+            "DELETE FROM private_weapon_sets WHERE account_id = ?1",
+            [account_id],
+        )
+        .map_err(|error| format!("删除账号随机武器数据失败：{error}"))?;
+    transaction
+        .execute(
+            "DELETE FROM x_battle_measurement_snapshots WHERE account_id = ?1",
+            [account_id],
+        )
+        .map_err(|error| format!("删除账号 X 赛测定数据失败：{error}"))?;
     transaction
         .commit()
         .map_err(|error| format!("提交账号历史删除事务失败：{error}"))?;
@@ -825,6 +985,26 @@ mod tests {
     fn deletes_account_records_and_export_files() {
         let directory = tempdir().unwrap();
         save_cache(directory.path(), "account", &sample_cache()).unwrap();
+        HistoryRecordWriter::open(directory.path())
+            .unwrap()
+            .save(
+                "account",
+                456,
+                HistoryFetchedRecord::XBattleSettlement {
+                    record_id: "battle-1".to_owned(),
+                    power_after: 2110.0,
+                    payload_hash: "a".repeat(64),
+                    raw_group: serde_json::json!({ "xMatchMeasurement": { "state": "COMPLETED" } }),
+                },
+            )
+            .unwrap();
+        save_private_weapon_set(
+            directory.path(),
+            "account",
+            "match-1",
+            "{\"set_id\":\"set-1\"}",
+        )
+        .unwrap();
         let export_path = export(directory.path(), "account").unwrap();
         load_overlay_state(directory.path(), "account").unwrap();
         fs::write(
@@ -851,9 +1031,48 @@ mod tests {
             )
             .unwrap();
         assert_eq!(snapshot_count, 0);
+        let measurement_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM x_battle_measurement_snapshots WHERE account_id = 'account'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(measurement_count, 0);
+        assert!(load_private_weapon_set(directory.path(), "account")
+            .unwrap()
+            .is_none());
         assert!(!export_path.exists());
         assert!(!legacy_path(directory.path(), "account").exists());
         assert!(!legacy_archive.exists());
+    }
+
+    #[test]
+    fn finds_latest_private_battle_without_decoding_archived_raw_json() {
+        let directory = tempdir().unwrap();
+        let mut cache = sample_cache();
+        cache.battles[0].record.mode = "PRIVATE_BATTLE".to_owned();
+        cache.battles[0].record.id = "private-1".to_owned();
+        cache.battles[0].record.played_time = Some("2026-09-20T00:00:00Z".to_owned());
+        let mut newer = cache.battles[0].clone();
+        newer.record.id = "private-2".to_owned();
+        newer.record.played_time = Some("2026-09-22T00:00:00Z".to_owned());
+        cache.battles.push(newer);
+        save_cache(directory.path(), "account", &cache).unwrap();
+
+        let connection = open_database(directory.path()).unwrap();
+        connection
+            .execute(
+                "UPDATE history_records SET raw_json = X'00' WHERE account_id = ?1",
+                ["account"],
+            )
+            .unwrap();
+        drop(connection);
+
+        let latest = load_latest_private_battle(directory.path(), "account")
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest.id, "private-2");
     }
 
     #[test]
@@ -890,6 +1109,68 @@ mod tests {
         mark_sync_complete(directory.path(), "account", 456).unwrap();
         assert!(!needs_full_sync(directory.path(), "account").unwrap());
         check_integrity(directory.path()).unwrap();
+    }
+
+    #[test]
+    fn x_battle_settlement_updates_score_and_archives_unique_compressed_group() {
+        let directory = tempdir().unwrap();
+        let mut cache = sample_cache();
+        cache.battles[0].record.power = Some(2019.7911754988568);
+        save_cache(directory.path(), "account", &cache).unwrap();
+        let group = serde_json::json!({
+            "historyDetails": { "nodes": [{ "id": "battle-1" }] },
+            "xMatchMeasurement": {
+                "state": "COMPLETED",
+                "winCount": 3,
+                "loseCount": 0,
+                "xPowerAfter": 2057.026
+            }
+        });
+        let mut writer = HistoryRecordWriter::open(directory.path()).unwrap();
+        let settlement = || HistoryFetchedRecord::XBattleSettlement {
+            record_id: "battle-1".to_owned(),
+            power_after: 2057.026,
+            payload_hash: "b".repeat(64),
+            raw_group: group.clone(),
+        };
+
+        assert!(writer.save("account", 789, settlement()).unwrap());
+        assert!(!writer.save("account", 790, settlement()).unwrap());
+        drop(writer);
+
+        let updated = load_cache(directory.path(), "account").unwrap().unwrap();
+        assert_eq!(updated.battles[0].record.power, Some(2057.026));
+        save_overlay_state(
+            directory.path(),
+            "account",
+            &OverlayState::from_history(&updated),
+        )
+        .unwrap();
+        let state = load_overlay_state(directory.path(), "account").unwrap();
+        assert_eq!(
+            state.selected.as_ref().and_then(|battle| battle.power),
+            Some(2057.026)
+        );
+
+        let connection = open_database(directory.path()).unwrap();
+        let (raw, encoding): (Vec<u8>, String) = connection
+            .query_row(
+                "SELECT raw_json, raw_encoding FROM x_battle_measurement_snapshots
+                 WHERE account_id = 'account' AND record_id = 'battle-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(encoding, "gzip");
+        assert_eq!(decode_raw_json(&raw, &encoding).unwrap(), group);
+        let snapshot_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM x_battle_measurement_snapshots WHERE account_id = 'account'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(snapshot_count, 1);
     }
 
     #[test]

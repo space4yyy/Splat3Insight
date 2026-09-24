@@ -3852,6 +3852,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "flate2",
+ "getrandom 0.4.3",
  "plist",
  "rusqlite",
  "serde",

@@ -14,12 +14,15 @@ const overlayServiceStatusElement = document.querySelector('#overlay-service-sta
 const startOverlayServiceButton = document.querySelector('#start-overlay-service');
 const stopOverlayServiceButton = document.querySelector('#stop-overlay-service');
 const copyOverlayUrlButton = document.querySelector('#copy-overlay-url');
+const copyRandomWeaponsUrlButton = document.querySelector('#copy-random-weapons-url');
+const refreshPrivateWeaponsButton = document.querySelector('#refresh-private-weapons');
 const backgroundClosePrompt = document.querySelector('#background-close-prompt');
 const cancelCloseButton = document.querySelector('#cancel-close');
 const exitFromCloseButton = document.querySelector('#exit-from-close');
 const hideToTrayButton = document.querySelector('#hide-to-tray');
 
 const OBS_OVERLAY_URL = 'http://127.0.0.1:17353/overlay';
+const OBS_RANDOM_WEAPONS_URL = 'http://127.0.0.1:17353/random-weapons';
 
 let currentSyncStatus = null;
 let lastCompletedSyncAt = null;
@@ -201,7 +204,7 @@ function renderAccountList(items) {
           ${account.active ? '<span class="badge">当前</span>' : `<button class="secondary" data-account="${escapeHtml(account.account_id)}">使用</button>`}
           <button class="secondary" data-export-account="${escapeHtml(account.account_id)}">导出</button>
           <button class="danger" data-delete-account="${escapeHtml(account.account_id)}" data-account-name="${escapeHtml(account.display_name)}">删除</button>
-          ${account.splatnet_ready ? '' : `<button class="secondary" data-refresh-account="${escapeHtml(account.account_id)}">获取权限</button>`}
+          ${account.splatnet_ready === false || (account.active && account.splatnet_ready === null) ? `<button class="secondary" data-refresh-account="${escapeHtml(account.account_id)}">获取权限</button>` : ''}
         </div>
       </div>`).join('')
     : '<p class="status">点击“添加 Nintendo Account”开始。</p>';
@@ -350,6 +353,39 @@ copyOverlayUrlButton.addEventListener('click', async () => {
     setMessage('OBS 地址已复制。');
   } catch (error) {
     setMessage(`复制 OBS 地址失败：${String(error)}`, true);
+  }
+});
+
+copyRandomWeaponsUrlButton.addEventListener('click', async () => {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(OBS_RANDOM_WEAPONS_URL);
+    } else {
+      const input = document.createElement('textarea');
+      input.value = OBS_RANDOM_WEAPONS_URL;
+      input.style.position = 'fixed';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+      input.focus();
+      input.select();
+      document.execCommand('copy');
+      input.remove();
+    }
+    setMessage('随机武器 OBS 地址已复制。');
+  } catch (error) {
+    setMessage(`复制随机武器 OBS 地址失败：${String(error)}`, true);
+  }
+});
+
+refreshPrivateWeaponsButton.addEventListener('click', async () => {
+  refreshPrivateWeaponsButton.disabled = true;
+  try {
+    await invoke('refresh_private_weapons');
+    setMessage('随机武器已重新抽取。');
+  } catch (error) {
+    setMessage(String(error), true);
+  } finally {
+    refreshPrivateWeaponsButton.disabled = false;
   }
 });
 

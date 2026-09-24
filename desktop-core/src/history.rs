@@ -4,8 +4,11 @@
 //! stable SplatNet detail id together with a compact parsed record, so old data
 //! can be re-parsed later without storing duplicate responses on every sync.
 
+use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -15,6 +18,8 @@ use crate::splatnet_auth::{fetch_web_view_version, SPLATNET_URL};
 
 const LATEST_BATTLE_QUERY: &str =
     "b24d22fd6cb251c515c2b90044039698aa27bc1fab15801d83014d919cd45780";
+const X_BATTLE_HISTORIES_QUERY: &str =
+    "eb5996a12705c2e94813a62e05c0dc419aad2811b8d49d53e5732290105559cb";
 const BATTLE_DETAIL_QUERY: &str =
     "94faa2ff992222d11ced55e0f349920a82ac50f414ae33c83d1d1c9d8161c5dd";
 const COOP_QUERY: &str = "e11a8cf2c3de7348495dea5cdcaa25e0c153541c4ed63f044b6c174bc5b703df";
@@ -99,10 +104,16 @@ pub type HistoryProgressCallback = Arc<dyn Fn(HistoryFetchProgress) + Send + Syn
 pub enum HistoryFetchedRecord {
     Battle(ArchivedBattle),
     Coop(ArchivedCoop),
+    XBattleSettlement {
+        record_id: String,
+        power_after: f64,
+        payload_hash: String,
+        raw_group: Value,
+    },
 }
 
 pub type HistoryRecordCallback =
-    Arc<dyn Fn(HistoryFetchedRecord) -> Result<(), String> + Send + Sync>;
+    Arc<dyn Fn(HistoryFetchedRecord) -> Result<bool, String> + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SplatNetDataConfig {
@@ -526,7 +537,7 @@ impl SplatNetDataClient {
         on_record: Option<&HistoryRecordCallback>,
     ) -> Result<HistoryCache, HistoryError> {
         notify_progress(progress, "battle-list", 0, 0, 0);
-        let battle_ids = self
+        let listed_battle_ids = self
             .fetch_ids(
                 LATEST_BATTLE_QUERY,
                 "latestBattleHistories",
@@ -537,7 +548,8 @@ impl SplatNetDataClient {
             )
             .await
             .map_err(|error| error.with_context("对战列表查询失败："))?;
-        let battle_ids = new_ids(battle_ids, known_battle_ids);
+        let battle_ids = new_ids(listed_battle_ids, known_battle_ids);
+
         notify_progress(progress, "coop-list", 0, 0, 0);
         let coop_ids = self
             .fetch_ids(
@@ -584,6 +596,36 @@ impl SplatNetDataClient {
                 }
             }
             notify_progress(progress, "battle-details", index + 1, battle_total, 0);
+        }
+
+        notify_progress(progress, "x-measurements", 0, 1, 0);
+        let x_battle_response = self
+            .graphql(
+                X_BATTLE_HISTORIES_QUERY,
+                json!({}),
+                None,
+                progress,
+                "x-measurements",
+            )
+            .await
+            .map_err(|error| error.with_context("X 赛结算查询失败："))?;
+        let mut available_battle_ids = known_battle_ids.clone();
+        available_battle_ids.extend(battles.iter().map(|battle| battle.record.id.clone()));
+        let x_settlements =
+            completed_x_power_settlements(&x_battle_response, &available_battle_ids)
+                .map_err(HistoryError::other)?;
+        notify_progress(progress, "x-measurements", 1, 1, 0);
+
+        if let Some(on_record) = on_record {
+            for settlement in x_settlements {
+                on_record(HistoryFetchedRecord::XBattleSettlement {
+                    record_id: settlement.record_id,
+                    power_after: settlement.power_after,
+                    payload_hash: settlement.payload_hash,
+                    raw_group: settlement.raw_group,
+                })
+                .map_err(|error| format!("保存 X 赛结算数据失败：{error}"))?;
+            }
         }
 
         let mut coop = Vec::with_capacity(coop_ids.len());
@@ -959,6 +1001,83 @@ fn new_ids(ids: Vec<String>, known_ids: &HashSet<String>) -> Vec<String> {
         .collect()
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct XPowerSettlement {
+    record_id: String,
+    power_after: f64,
+    payload_hash: String,
+    raw_group: Value,
+}
+
+fn completed_x_power_settlements(
+    response: &Value,
+    record_ids: &HashSet<String>,
+) -> Result<Vec<XPowerSettlement>, String> {
+    let groups = response
+        .pointer("/data/xBattleHistories/historyGroups/nodes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "SplatNet 返回中缺少 X 赛测定组".to_owned())?;
+    let mut available_ids = HashMap::new();
+    for id in record_ids {
+        available_ids
+            .entry(normalize_x_battle_id(id))
+            .or_insert_with(|| id.clone());
+    }
+
+    let mut settlements = Vec::new();
+    let mut seen_ids = HashSet::new();
+    for group in groups {
+        let Some(measurement) = group.get("xMatchMeasurement") else {
+            continue;
+        };
+        if measurement.get("state").and_then(Value::as_str) != Some("COMPLETED") {
+            continue;
+        }
+        let Some(power_after) = measurement.get("xPowerAfter").and_then(Value::as_f64) else {
+            continue;
+        };
+        let Some(leader_id) = group
+            .pointer("/historyDetails/nodes/0/id")
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let Some(record_id) = available_ids.get(&normalize_x_battle_id(leader_id)) else {
+            continue;
+        };
+        if !seen_ids.insert(record_id.clone()) {
+            continue;
+        }
+        let serialized_group =
+            serde_json::to_vec(group).map_err(|error| format!("序列化 X 赛测定组失败：{error}"))?;
+        let payload_hash = Sha256::digest(serialized_group)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        settlements.push(XPowerSettlement {
+            record_id: record_id.clone(),
+            power_after,
+            payload_hash,
+            raw_group: group.clone(),
+        });
+    }
+    Ok(settlements)
+}
+
+fn normalize_x_battle_id(id: &str) -> String {
+    let decoded = [
+        STANDARD.decode(id),
+        STANDARD_NO_PAD.decode(id),
+        URL_SAFE.decode(id),
+        URL_SAFE_NO_PAD.decode(id),
+    ]
+    .into_iter()
+    .find_map(Result::ok)
+    .and_then(|bytes| String::from_utf8(bytes).ok())
+    .unwrap_or_else(|| id.to_owned());
+    decoded.replace("XMATCH", "RECENT")
+}
+
 fn parse_battle(detail: &Value, fallback_id: &str) -> Option<BattleRecord> {
     let id = string_at(detail, &["id"]).unwrap_or_else(|| fallback_id.to_owned());
     let raw_mode = string_at(detail, &["vsMode", "mode"]).unwrap_or_else(|| "BATTLE".to_owned());
@@ -1206,6 +1325,8 @@ fn redact_sensitive_fields(value: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
 
     #[test]
     fn token_expiration_remains_typed_through_error_context() {
@@ -1252,6 +1373,47 @@ mod tests {
         assert_eq!(record.power, Some(2100.1039));
         assert_eq!(record.assists, Some(4));
         assert_eq!(record.power_kind.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn completed_x_measurement_replaces_immutable_battle_power_for_matching_record() {
+        let recent_id = STANDARD.encode("VsHistoryDetail-RECENT-123");
+        let x_match_id = STANDARD.encode("VsHistoryDetail-XMATCH-123");
+        let known_ids = HashSet::from([recent_id.clone()]);
+        let response = json!({
+            "data": { "xBattleHistories": { "historyGroups": { "nodes": [
+                {
+                    "historyDetails": { "nodes": [
+                        { "id": x_match_id },
+                        { "id": STANDARD.encode("VsHistoryDetail-XMATCH-122") }
+                    ]},
+                    "xMatchMeasurement": {
+                        "state": "COMPLETED",
+                        "winCount": 3,
+                        "loseCount": 0,
+                        "xPowerAfter": 2057.026
+                    }
+                },
+                {
+                    "historyDetails": { "nodes": [{ "id": STANDARD.encode("VsHistoryDetail-XMATCH-100") }] },
+                    "xMatchMeasurement": {
+                        "state": "IN_PROGRESS",
+                        "xPowerAfter": 9999.0
+                    }
+                }
+            ]}}}
+        });
+
+        let settlements = completed_x_power_settlements(&response, &known_ids).unwrap();
+
+        assert_eq!(settlements.len(), 1);
+        assert_eq!(settlements[0].record_id, recent_id);
+        assert_eq!(settlements[0].power_after, 2057.026);
+        assert_eq!(settlements[0].payload_hash.len(), 64);
+        assert_eq!(
+            settlements[0].raw_group["xMatchMeasurement"]["state"],
+            "COMPLETED"
+        );
     }
 
     #[test]
@@ -1358,6 +1520,10 @@ mod tests {
 
     #[test]
     fn uses_current_persisted_query_ids_for_history_details() {
+        assert_eq!(
+            X_BATTLE_HISTORIES_QUERY,
+            "eb5996a12705c2e94813a62e05c0dc419aad2811b8d49d53e5732290105559cb"
+        );
         assert_eq!(
             BATTLE_DETAIL_QUERY,
             "94faa2ff992222d11ced55e0f349920a82ac50f414ae33c83d1d1c9d8161c5dd"

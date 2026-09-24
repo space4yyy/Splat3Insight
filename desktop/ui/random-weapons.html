@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Private Match Weapons</title>
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <style>
+      * { box-sizing: border-box; }
+      html, body { width: 164px; height: 332px; margin: 0; overflow: hidden; background: transparent; }
+      #weapons { width: 164px; height: 332px; display: grid; grid-template-columns: repeat(2, 80px); grid-template-rows: repeat(4, 80px); gap: 4px; }
+      img { display: block; width: 80px; height: 80px; object-fit: contain; }
+    </style>
+  </head>
+  <body>
+    <main id="weapons" aria-label="私人比赛随机武器图片"></main>
+    <script>
+      const root = document.querySelector('#weapons');
+      const isPreview = new URLSearchParams(location.search).has('preview');
+      let currentSetId = null;
+
+      function render(state) {
+        if (!state?.set_id || state.set_id === currentSetId) return;
+        const images = Array.from({ length: 4 }, (_, index) => [
+          state.team_a?.[index],
+          state.team_b?.[index],
+        ]).flat();
+        if (images.length !== 8) return;
+        const fragment = document.createDocumentFragment();
+        for (const weapon of images) {
+          const image = document.createElement('img');
+          image.src = `/weapons/${encodeURIComponent(weapon.row_id)}.png`;
+          image.alt = '';
+          image.draggable = false;
+          fragment.append(image);
+        }
+        root.replaceChildren(fragment);
+        currentSetId = state.set_id;
+      }
+
+      async function refresh() {
+        try {
+          const response = await fetch('/api/random-weapons', { cache: 'no-store' });
+          if (!response.ok) return;
+          render(await response.json());
+        } catch (_) {
+          // Keep the last assignment visible while the local service recovers.
+        }
+      }
+
+      async function randomizeOnPageLoad() {
+        if (!isPreview) {
+          try {
+            await fetch('/api/random-weapons/refresh', { method: 'POST', cache: 'no-store' });
+          } catch (_) {
+            // The saved assignment remains available if refreshing fails.
+          }
+        }
+        await refresh();
+      }
+
+      randomizeOnPageLoad();
+      window.setInterval(refresh, 5000);
+    </script>
+  </body>
+</html>

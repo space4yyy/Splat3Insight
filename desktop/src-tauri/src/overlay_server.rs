@@ -24,6 +24,10 @@ const OVERLAY_CARD_RENDERER: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/overlay-card-renderer.js"
 ));
+const RANDOM_WEAPONS_HTML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/random-weapons.html"
+));
 const DISPLAY_FONT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/fonts/DFP_GBZY7.ttf"
@@ -107,7 +111,15 @@ pub fn new_status() -> OverlayServiceStatusHandle {
 struct RegistrySnapshot {
     active_account_id: Option<String>,
     #[serde(default)]
+    accounts: Vec<RegistryAccountSnapshot>,
+    #[serde(default)]
     pending_account_deletions: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RegistryAccountSnapshot {
+    account_id: String,
+    display_name: String,
 }
 
 impl OverlayServiceController {
@@ -430,7 +442,7 @@ fn route_request(
     path: &str,
     config: &OverlayServerConfig,
 ) -> Result<HttpResponse, String> {
-    if method != "GET" {
+    if method != "GET" && !(method == "POST" && path == "/api/random-weapons/refresh") {
         return Ok(HttpResponse {
             status: "405 Method Not Allowed",
             content_type: "text/plain; charset=utf-8",
@@ -464,6 +476,42 @@ fn route_request(
             content_type: "text/javascript; charset=utf-8",
             body: OVERLAY_CARD_RENDERER.as_bytes().to_vec(),
         }),
+        "/random-weapons" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "text/html; charset=utf-8",
+            body: RANDOM_WEAPONS_HTML.as_bytes().to_vec(),
+        }),
+        "/api/random-weapons" => match load_private_weapon_set(config) {
+            Ok(state) => Ok(HttpResponse {
+                status: "200 OK",
+                content_type: "application/json; charset=utf-8",
+                body: serde_json::to_vec(&state).map_err(|error| error.to_string())?,
+            }),
+            Err(error) => {
+                let message = format!("私人比赛随机武器请求失败：{error}");
+                write_log(config, &message);
+                crate::log_console_error("private-weapons", &message);
+                Ok(HttpResponse {
+                    status: "500 Internal Server Error",
+                    content_type: "application/json; charset=utf-8",
+                    body: serde_json::to_vec(&json!({ "error": error }))
+                        .map_err(|error| error.to_string())?,
+                })
+            }
+        },
+        "/api/random-weapons/refresh" => match refresh_private_weapon_set(config) {
+            Ok(state) => Ok(HttpResponse {
+                status: "200 OK",
+                content_type: "application/json; charset=utf-8",
+                body: serde_json::to_vec(&state).map_err(|error| error.to_string())?,
+            }),
+            Err(error) => Ok(HttpResponse {
+                status: "409 Conflict",
+                content_type: "application/json; charset=utf-8",
+                body: serde_json::to_vec(&json!({ "error": error }))
+                    .map_err(|error| error.to_string())?,
+            }),
+        },
         "/api/overlay" => match load_overlay_state(config) {
             Ok(state) => Ok(HttpResponse {
                 status: "200 OK",
@@ -482,6 +530,26 @@ fn route_request(
                 })
             }
         },
+        _ if path.starts_with("/weapons/") && path.ends_with(".png") => {
+            let row_id = path
+                .strip_prefix("/weapons/")
+                .and_then(|name| name.strip_suffix(".png"))
+                .unwrap_or_default();
+            if !row_id
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_')
+            {
+                return Ok(not_found());
+            }
+            match crate::private_weapons::weapon_image(row_id) {
+                Some(image) => Ok(HttpResponse {
+                    status: "200 OK",
+                    content_type: "image/png",
+                    body: image.to_vec(),
+                }),
+                None => Ok(not_found()),
+            }
+        }
         "/healthz" => Ok(HttpResponse {
             status: "200 OK",
             content_type: "application/json; charset=utf-8",
@@ -493,6 +561,96 @@ fn route_request(
             body: b"not found".to_vec(),
         }),
     }
+}
+
+fn not_found() -> HttpResponse {
+    HttpResponse {
+        status: "404 Not Found",
+        content_type: "text/plain; charset=utf-8",
+        body: Vec::new(),
+    }
+}
+
+fn load_private_weapon_set(config: &OverlayServerConfig) -> Result<serde_json::Value, String> {
+    let registry = match fs::read_to_string(&config.accounts_path) {
+        Ok(registry) => registry,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(empty_private_weapon_state());
+        }
+        Err(error) => return Err(format!("读取账号配置失败：{error}")),
+    };
+    let snapshot: RegistrySnapshot =
+        serde_json::from_str(&registry).map_err(|error| format!("读取账号配置失败：{error}"))?;
+    let Some(account_id) = snapshot.active_account_id else {
+        return Ok(empty_private_weapon_state());
+    };
+    if !is_safe_account_id(&account_id) {
+        return Err("活动账号标识无效".to_owned());
+    }
+    if snapshot
+        .pending_account_deletions
+        .iter()
+        .any(|pending| pending == &account_id)
+    {
+        return Ok(empty_private_weapon_state());
+    }
+    let Some(serialized) =
+        crate::history_store::load_private_weapon_set(&config.history_dir, &account_id)?
+    else {
+        return Ok(empty_private_weapon_state());
+    };
+    serde_json::from_str(&serialized).map_err(|error| format!("解析私人比赛随机武器失败：{error}"))
+}
+
+fn empty_private_weapon_state() -> serde_json::Value {
+    json!({ "set_id": null, "match_id": null, "played_time": null, "team_a": [], "team_b": [] })
+}
+
+fn refresh_private_weapon_set(config: &OverlayServerConfig) -> Result<serde_json::Value, String> {
+    let registry = fs::read_to_string(&config.accounts_path)
+        .map_err(|error| format!("读取账号配置失败：{error}"))?;
+    let snapshot: RegistrySnapshot =
+        serde_json::from_str(&registry).map_err(|error| format!("读取账号配置失败：{error}"))?;
+    let account_id = snapshot
+        .active_account_id
+        .ok_or_else(|| "还没有选择活动账号".to_owned())?;
+    if !is_safe_account_id(&account_id) {
+        return Err("活动账号标识无效".to_owned());
+    }
+    if snapshot
+        .pending_account_deletions
+        .iter()
+        .any(|pending| pending == &account_id)
+    {
+        return Err("账号正在删除".to_owned());
+    }
+    let battle =
+        crate::history_store::load_latest_private_battle(&config.history_dir, &account_id)?;
+    let set = crate::private_weapons::create_set(
+        battle.as_ref().map(|battle| battle.id.as_str()),
+        battle
+            .as_ref()
+            .and_then(|battle| battle.played_time.clone()),
+    )?;
+    let serialized =
+        serde_json::to_string(&set).map_err(|error| format!("序列化随机武器结果失败：{error}"))?;
+    crate::history_store::save_private_weapon_set(
+        &config.history_dir,
+        &account_id,
+        set.match_id.as_deref().unwrap_or_default(),
+        &serialized,
+    )?;
+    let display_name = snapshot
+        .accounts
+        .iter()
+        .find(|account| account.account_id == account_id)
+        .map(|account| account.display_name.as_str())
+        .unwrap_or("未知账号");
+    write_log(
+        &config,
+        &format!("账号“{display_name}”手动刷新私人比赛随机武器"),
+    );
+    serde_json::to_value(set).map_err(|error| format!("生成随机武器响应失败：{error}"))
 }
 
 fn write_response(
@@ -630,6 +788,81 @@ mod tests {
         assert!(String::from_utf8(response.body)
             .unwrap()
             .contains("\"selected\""));
+    }
+
+    #[test]
+    fn serves_image_only_random_weapon_page_and_bundled_weapon_images() {
+        let directory = tempdir().unwrap();
+        let config = OverlayServerConfig {
+            accounts_path: directory.path().join("accounts.json"),
+            history_dir: directory.path().join("history"),
+        };
+
+        let page = route_request("GET", "/random-weapons", &config).unwrap();
+        assert_eq!(page.status, "200 OK");
+        let page = String::from_utf8(page.body).unwrap();
+        assert!(page.contains("/api/random-weapons/refresh"));
+        assert!(page.contains("team_a?.[index]"));
+        assert!(!page.contains("A 队"));
+
+        let image = route_request("GET", "/weapons/Shooter_Short_00.png", &config).unwrap();
+        assert_eq!(image.status, "200 OK");
+        assert_eq!(image.content_type, "image/png");
+        assert_eq!(&image.body[..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    #[test]
+    fn random_weapon_page_reload_refreshes_and_persists_assignment() {
+        let directory = tempdir().unwrap();
+        let accounts_path = directory.path().join("accounts.json");
+        let history_dir = directory.path().join("history");
+        std::fs::write(&accounts_path, r#"{"active_account_id":"account"}"#).unwrap();
+        let mut cache = sample_cache();
+        cache.battles[0].record.mode = "PRIVATE_BATTLE".to_owned();
+        cache.battles[0].record.id = "private-match".to_owned();
+        crate::history_store::save_cache(&history_dir, "account", &cache).unwrap();
+        let config = OverlayServerConfig {
+            accounts_path,
+            history_dir,
+        };
+
+        let refreshed = route_request("POST", "/api/random-weapons/refresh", &config).unwrap();
+        assert_eq!(refreshed.status, "200 OK");
+        let refreshed: serde_json::Value = serde_json::from_slice(&refreshed.body).unwrap();
+        assert_eq!(refreshed["match_id"], "private-match");
+        assert_eq!(refreshed["team_a"].as_array().unwrap().len(), 4);
+        assert_eq!(refreshed["team_b"].as_array().unwrap().len(), 4);
+
+        let current = route_request("GET", "/api/random-weapons", &config).unwrap();
+        let current: serde_json::Value = serde_json::from_slice(&current.body).unwrap();
+        assert_eq!(current["set_id"], refreshed["set_id"]);
+
+        let rerolled = route_request("POST", "/api/random-weapons/refresh", &config).unwrap();
+        let rerolled: serde_json::Value = serde_json::from_slice(&rerolled.body).unwrap();
+        assert_eq!(rerolled["match_id"], refreshed["match_id"]);
+        assert_ne!(rerolled["set_id"], refreshed["set_id"]);
+    }
+
+    #[test]
+    fn random_weapon_refresh_works_before_any_private_battle_is_synced() {
+        let directory = tempdir().unwrap();
+        let accounts_path = directory.path().join("accounts.json");
+        std::fs::write(&accounts_path, r#"{"active_account_id":"account"}"#).unwrap();
+        let config = OverlayServerConfig {
+            accounts_path,
+            history_dir: directory.path().join("history"),
+        };
+
+        let refreshed = route_request("POST", "/api/random-weapons/refresh", &config).unwrap();
+        assert_eq!(refreshed.status, "200 OK");
+        let refreshed: serde_json::Value = serde_json::from_slice(&refreshed.body).unwrap();
+        assert!(refreshed["match_id"].is_null());
+        assert_eq!(refreshed["team_a"].as_array().unwrap().len(), 4);
+        assert_eq!(refreshed["team_b"].as_array().unwrap().len(), 4);
+
+        let current = route_request("GET", "/api/random-weapons", &config).unwrap();
+        let current: serde_json::Value = serde_json::from_slice(&current.body).unwrap();
+        assert_eq!(current["set_id"], refreshed["set_id"]);
     }
 
     #[test]

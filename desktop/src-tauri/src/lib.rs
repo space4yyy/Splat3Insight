@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -16,7 +17,8 @@ use splat3_widget_core::{
     nintendo_auth::{begin_login, exchange_session_token, refresh_identity, LoginAttempt},
     overlay::OverlayState,
     splatnet_auth::{exchange_splatnet_tokens, SplatNetAuthConfig, NXAPI_F_GENERATION_URL},
-    AccountMetadata, AccountRegistry, AccountSecret, KeyringSecretStore,
+    AccountMetadata, AccountRegistry, AccountSecret, CachedSecretStore, KeyringSecretStore,
+    SecretStore,
 };
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
@@ -28,8 +30,9 @@ use tokio::sync::watch;
 
 pub(crate) mod history_store;
 mod overlay_server;
+mod private_weapons;
 
-type Registry = AccountRegistry<KeyringSecretStore>;
+type Registry = AccountRegistry<CachedSecretStore<KeyringSecretStore>>;
 
 struct AppState {
     registry: Arc<Mutex<Registry>>,
@@ -252,7 +255,7 @@ struct AccountView {
     language: Option<String>,
     country: Option<String>,
     active: bool,
-    splatnet_ready: bool,
+    splatnet_ready: Option<bool>,
     history_battle_count: usize,
     history_coop_count: usize,
     history_fetched_at_ms: Option<i64>,
@@ -391,20 +394,47 @@ fn update_sync_status(
     runtime.update(account_id, update);
 }
 
-fn active_account_sync_state(
-    registry: &Arc<Mutex<Registry>>,
+fn active_account_sync_state<S: SecretStore>(
+    registry: &Arc<Mutex<AccountRegistry<S>>>,
 ) -> Result<Option<(String, bool)>, String> {
-    let registry = registry.lock().map_err(|_| "account registry is locked")?;
-    let Some(account_id) = registry.active_account_id().map(ToOwned::to_owned) else {
+    let mut registry = registry.lock().map_err(|_| "account registry is locked")?;
+    let Some(account) = registry.active_account().cloned() else {
         return Ok(None);
     };
+    let account_id = account.account_id;
     if registry.is_account_deletion_pending(&account_id) {
         return Ok(None);
     }
-    let ready = registry
-        .get_secret(&account_id)?
-        .is_some_and(|secret| secret.game_web_token.is_some() && secret.bullet_token.is_some());
+    let ready = ensure_account_readiness(&mut registry, &account_id)?;
     Ok(Some((account_id, ready)))
+}
+
+fn ensure_account_readiness<S: SecretStore>(
+    registry: &mut AccountRegistry<S>,
+    account_id: &str,
+) -> Result<bool, String> {
+    if let Some(ready) = registry
+        .accounts()
+        .iter()
+        .find(|account| account.account_id == account_id)
+        .and_then(|account| account.splatnet_ready)
+    {
+        return Ok(ready);
+    }
+
+    let secret = match registry.get_secret(account_id) {
+        Ok(secret) => secret,
+        Err(error) => {
+            // Don't retry a denied/locked Keychain lookup on every poll. The
+            // account can retry explicitly through its permission action.
+            registry.set_splatnet_ready(account_id, false)?;
+            return Err(error);
+        }
+    };
+    let ready = secret
+        .is_some_and(|secret| secret.game_web_token.is_some() && secret.bullet_token.is_some());
+    registry.set_splatnet_ready(account_id, ready)?;
+    Ok(ready)
 }
 
 async fn sync_account(
@@ -536,7 +566,7 @@ async fn sync_account_inner(
     sync_runtime: &Arc<SyncRuntime>,
 ) -> Result<HistorySyncSummary, SyncError> {
     let (metadata, secret) = {
-        let registry = registry.lock().map_err(|_| "account registry is locked")?;
+        let mut registry = registry.lock().map_err(|_| "account registry is locked")?;
         let metadata = registry
             .accounts()
             .iter()
@@ -548,9 +578,21 @@ async fn sync_account_inner(
                 "该账号正在完成删除，请稍后重试".to_owned(),
             ));
         }
-        let secret = registry
-            .get_secret(account_id)?
-            .ok_or_else(|| "该账号没有保存登录信息".to_owned())?;
+        let secret = match registry.get_secret(account_id) {
+            Ok(Some(secret)) => secret,
+            Ok(None) => {
+                registry
+                    .set_splatnet_ready(account_id, false)
+                    .map_err(SyncError::Other)?;
+                return Err(SyncError::Other("该账号没有保存登录信息".to_owned()));
+            }
+            Err(error) => {
+                registry
+                    .set_splatnet_ready(account_id, false)
+                    .map_err(SyncError::Other)?;
+                return Err(SyncError::Other(error));
+            }
+        };
         (metadata, secret)
     };
     let game_web_token = secret
@@ -674,6 +716,7 @@ async fn sync_account_inner(
             status.retry_attempt = progress.retry_attempt;
             status.message = match progress.phase.as_str() {
                 "battle-list" => "正在获取最近对战列表…".to_owned(),
+                "x-measurements" => "正在检查 X 赛结算分数…".to_owned(),
                 "coop-list" => "正在获取最近打工列表…".to_owned(),
                 "battle-details" => "正在获取对战详情…".to_owned(),
                 "coop-details" => "正在获取打工详情…".to_owned(),
@@ -695,11 +738,18 @@ async fn sync_account_inner(
     ));
     let record_writer_for_callback = Arc::clone(&record_writer);
     let record_account_id = account_id.to_owned();
+    let x_settlement_updates = Arc::new(AtomicUsize::new(0));
+    let x_settlement_updates_for_callback = Arc::clone(&x_settlement_updates);
     let on_record: HistoryRecordCallback = Arc::new(move |record: HistoryFetchedRecord| {
-        record_writer_for_callback
+        let is_x_settlement = matches!(&record, HistoryFetchedRecord::XBattleSettlement { .. });
+        let changed = record_writer_for_callback
             .lock()
             .map_err(|_| "历史记录写入器已锁定".to_owned())?
-            .save(&record_account_id, fetched_at_ms, record)
+            .save(&record_account_id, fetched_at_ms, record)?;
+        if is_x_settlement && changed {
+            x_settlement_updates_for_callback.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(changed)
     });
     let cache = if initial_sync {
         client
@@ -750,7 +800,87 @@ async fn sync_account_inner(
     drop(record_writer);
     let added_battle_count = cache.battles.len();
     let added_coop_count = cache.coop.len();
-    if initial_sync || added_battle_count > 0 {
+    let x_settlement_update_count = x_settlement_updates.load(Ordering::Relaxed);
+    if x_settlement_update_count > 0 {
+        write_account_log(
+            auth_log_path,
+            "history-sync",
+            &metadata.display_name,
+            account_id,
+            &format!(
+                "X 赛测定已结算，更新卡片分数 {} 条",
+                x_settlement_update_count
+            ),
+        );
+    }
+    if let Some(latest_private_battle) =
+        history_store::load_latest_private_battle(history_dir, account_id).map_err(|error| {
+            account_auth_error(
+                auth_log_path,
+                "private-weapons",
+                &metadata.display_name,
+                account_id,
+                error,
+            )
+        })?
+    {
+        let current_set =
+            history_store::load_private_weapon_set(history_dir, account_id).map_err(|error| {
+                account_auth_error(
+                    auth_log_path,
+                    "private-weapons",
+                    &metadata.display_name,
+                    account_id,
+                    error,
+                )
+            })?;
+        let current_match_id = current_set
+            .as_deref()
+            .and_then(|serialized| {
+                serde_json::from_str::<private_weapons::PrivateWeaponSet>(serialized).ok()
+            })
+            .and_then(|set| set.match_id);
+        if current_match_id.as_deref() != Some(latest_private_battle.id.as_str()) {
+            let weapon_set = private_weapons::create_set(
+                Some(&latest_private_battle.id),
+                latest_private_battle.played_time.clone(),
+            )
+            .map_err(|error| {
+                account_auth_error(
+                    auth_log_path,
+                    "private-weapons",
+                    &metadata.display_name,
+                    account_id,
+                    error,
+                )
+            })?;
+            let serialized = serde_json::to_string(&weapon_set)
+                .map_err(|error| format!("序列化随机武器结果失败：{error}"))?;
+            history_store::save_private_weapon_set(
+                history_dir,
+                account_id,
+                &latest_private_battle.id,
+                &serialized,
+            )
+            .map_err(|error| {
+                account_auth_error(
+                    auth_log_path,
+                    "private-weapons",
+                    &metadata.display_name,
+                    account_id,
+                    error,
+                )
+            })?;
+            write_account_log(
+                auth_log_path,
+                "private-weapons",
+                &metadata.display_name,
+                account_id,
+                "检测到新的私人比赛，已生成并保存随机武器组合",
+            );
+        }
+    }
+    if initial_sync || added_battle_count > 0 || x_settlement_update_count > 0 {
         if let Some(overlay_cache) = history_store::load_overlay_cache(history_dir, account_id)
             .map_err(|error| {
                 account_auth_error(
@@ -825,6 +955,8 @@ fn start_background_sync(
 ) {
     tauri::async_runtime::spawn(async move {
         loop {
+            let next_sync_at = tokio::time::Instant::now()
+                + std::time::Duration::from_secs(BACKGROUND_SYNC_INTERVAL_SECS);
             match active_account_sync_state(&registry) {
                 Ok(Some((account_id, true))) => {
                     let _ = sync_account(
@@ -867,7 +999,7 @@ fn start_background_sync(
                 }
             }
             let _ = tokio::time::timeout(
-                std::time::Duration::from_secs(BACKGROUND_SYNC_INTERVAL_SECS),
+                next_sync_at.saturating_duration_since(tokio::time::Instant::now()),
                 sync_trigger.notified(),
             )
             .await;
@@ -875,34 +1007,44 @@ fn start_background_sync(
     });
 }
 
-#[tauri::command]
-fn list_accounts(state: State<'_, AppState>) -> Result<Vec<AccountView>, String> {
-    let registry = state
-        .registry
-        .lock()
-        .map_err(|_| "account registry is locked")?;
+fn build_account_views<S: SecretStore>(
+    registry: &mut AccountRegistry<S>,
+    history_dir: &Path,
+) -> Result<Vec<AccountView>, String> {
+    if let Some(active_id) = registry.active_account_id().map(ToOwned::to_owned) {
+        if !registry.is_account_deletion_pending(&active_id) {
+            // Only inspect the active account. Other credentials stay untouched until selected.
+            let _ = ensure_account_readiness(registry, &active_id);
+        }
+    }
     let active_id = registry.active_account_id();
     registry
         .accounts()
         .iter()
         .map(|account| {
-            let secret = registry.get_secret(&account.account_id)?;
-            let history = load_history_summary(&state.history_dir, &account.account_id)?;
+            let history = load_history_summary(history_dir, &account.account_id)?;
             Ok(AccountView {
                 account_id: account.account_id.clone(),
                 display_name: account.display_name.clone(),
                 language: account.language.clone(),
                 country: account.country.clone(),
                 active: active_id == Some(account.account_id.as_str()),
-                splatnet_ready: secret.as_ref().is_some_and(|value| {
-                    value.game_web_token.is_some() && value.bullet_token.is_some()
-                }),
+                splatnet_ready: account.splatnet_ready,
                 history_battle_count: history.as_ref().map_or(0, |value| value.battle_count),
                 history_coop_count: history.as_ref().map_or(0, |value| value.coop_count),
                 history_fetched_at_ms: history.map(|value| value.fetched_at_ms),
             })
         })
         .collect::<Result<Vec<_>, String>>()
+}
+
+#[tauri::command]
+fn list_accounts(state: State<'_, AppState>) -> Result<Vec<AccountView>, String> {
+    let mut registry = state
+        .registry
+        .lock()
+        .map_err(|_| "account registry is locked")?;
+    build_account_views(&mut registry, &state.history_dir)
 }
 
 #[tauri::command]
@@ -1056,6 +1198,35 @@ fn get_overlay_state(
 }
 
 #[tauri::command]
+fn refresh_private_weapons(state: State<'_, AppState>) -> Result<(), String> {
+    let account_id = resolve_account_id(&state.registry, None)?;
+    let display_name = account_display_name(&state.registry, &account_id);
+    let battle = history_store::load_latest_private_battle(&state.history_dir, &account_id)?;
+    let set = private_weapons::create_set(
+        battle.as_ref().map(|battle| battle.id.as_str()),
+        battle
+            .as_ref()
+            .and_then(|battle| battle.played_time.clone()),
+    )?;
+    let serialized =
+        serde_json::to_string(&set).map_err(|error| format!("序列化随机武器结果失败：{error}"))?;
+    history_store::save_private_weapon_set(
+        &state.history_dir,
+        &account_id,
+        set.match_id.as_deref().unwrap_or_default(),
+        &serialized,
+    )?;
+    write_account_log(
+        &state.auth_log_path,
+        "private-weapons",
+        &display_name,
+        &account_id,
+        "手动重新抽取私人比赛随机武器",
+    );
+    Ok(())
+}
+
+#[tauri::command]
 fn begin_nintendo_login(state: State<'_, AppState>) -> Result<String, String> {
     let attempt = begin_login()?;
     let authorize_url = attempt.authorize_url.clone();
@@ -1127,6 +1298,7 @@ async fn complete_nintendo_login(
         display_name: display_name.clone(),
         language: identity.language,
         country: identity.country,
+        splatnet_ready: Some(false),
         created_at_ms: timestamp,
         last_used_at_ms: timestamp,
     };
@@ -1224,6 +1396,7 @@ async fn refresh_splatnet_tokens_for_account(
     metadata.display_name = identity.display_name;
     metadata.language = identity.language;
     metadata.country = identity.country;
+    metadata.splatnet_ready = Some(true);
     let display_name = metadata.display_name.clone();
 
     let mut registry = registry.lock().map_err(|_| "account registry is locked")?;
@@ -1463,8 +1636,11 @@ pub fn run() {
             let config_dir = app.path().app_config_dir()?;
             let metadata_path = config_dir.join("accounts.json");
             let history_dir = config_dir.join("history");
-            let mut registry = AccountRegistry::load(&metadata_path, KeyringSecretStore::default())
-                .map_err(std::io::Error::other)?;
+            let mut registry = AccountRegistry::load(
+                &metadata_path,
+                CachedSecretStore::new(KeyringSecretStore::default()),
+            )
+            .map_err(std::io::Error::other)?;
             for account_id in registry.pending_account_deletions().to_vec() {
                 let display_name = registry
                     .accounts()
@@ -1549,6 +1725,7 @@ pub fn run() {
             start_overlay_service,
             stop_overlay_service,
             get_overlay_state,
+            refresh_private_weapons,
             begin_nintendo_login,
             cancel_nintendo_login,
             complete_nintendo_login,
@@ -1565,13 +1742,199 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_timestamped_log, local_log_timestamp, HistoryErrorKind, HistorySyncSummary,
-        SyncClaim, SyncError, SyncRuntime, LOG_BACKUP_COUNT, MAX_LOG_BYTES,
+        active_account_sync_state, append_timestamped_log, build_account_views,
+        local_log_timestamp, HistoryErrorKind, HistorySyncSummary, SyncClaim, SyncError,
+        SyncRuntime, LOG_BACKUP_COUNT, MAX_LOG_BYTES,
+    };
+    use splat3_widget_core::{
+        AccountMetadata, AccountRegistry, AccountSecret, CachedSecretStore, SecretStore,
     };
     use std::fs;
     #[cfg(target_os = "macos")]
     use std::path::Path;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use tempfile::tempdir;
+
+    #[derive(Clone)]
+    struct ReadCountingStore {
+        get_count: Arc<AtomicUsize>,
+        secret: Option<AccountSecret>,
+        error: Option<String>,
+    }
+
+    impl SecretStore for ReadCountingStore {
+        fn put(&self, _account_id: &str, _secret: &AccountSecret) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn get(&self, _account_id: &str) -> Result<Option<AccountSecret>, String> {
+            self.get_count.fetch_add(1, Ordering::Relaxed);
+            match &self.error {
+                Some(error) => Err(error.clone()),
+                None => Ok(self.secret.clone()),
+            }
+        }
+
+        fn delete(&self, _account_id: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn listing_accounts_does_not_read_any_credentials() {
+        let directory = tempdir().unwrap();
+        let read_count = Arc::new(AtomicUsize::new(0));
+        let store = CachedSecretStore::new(ReadCountingStore {
+            get_count: Arc::clone(&read_count),
+            secret: None,
+            error: None,
+        });
+        let mut registry =
+            AccountRegistry::load(directory.path().join("accounts.json"), store).unwrap();
+        for (id, name) in [("a", "Alice"), ("b", "Bob")] {
+            registry
+                .upsert(
+                    AccountMetadata {
+                        account_id: id.to_owned(),
+                        display_name: name.to_owned(),
+                        language: None,
+                        country: None,
+                        splatnet_ready: Some(true),
+                        created_at_ms: 1,
+                        last_used_at_ms: 1,
+                    },
+                    AccountSecret {
+                        session_token: "test-session".to_owned(),
+                        game_web_token: Some("test-web".to_owned()),
+                        bullet_token: Some("test-bullet".to_owned()),
+                    },
+                )
+                .unwrap();
+        }
+        registry.set_active("a", 1).unwrap();
+
+        let views = build_account_views(&mut registry, directory.path()).unwrap();
+
+        assert_eq!(views.len(), 2);
+        assert!(views
+            .iter()
+            .all(|account| account.splatnet_ready == Some(true)));
+        assert_eq!(read_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn listing_legacy_accounts_reads_only_the_active_credential() {
+        let directory = tempdir().unwrap();
+        let read_count = Arc::new(AtomicUsize::new(0));
+        let store = ReadCountingStore {
+            get_count: Arc::clone(&read_count),
+            secret: Some(AccountSecret {
+                session_token: "test-session".to_owned(),
+                game_web_token: Some("test-web".to_owned()),
+                bullet_token: Some("test-bullet".to_owned()),
+            }),
+            error: None,
+        };
+        let metadata_path = directory.path().join("accounts.json");
+        fs::write(
+            &metadata_path,
+            r#"{
+                "active_account_id":"a",
+                "accounts":[
+                    {"account_id":"a","display_name":"Alice","created_at_ms":1,"last_used_at_ms":1},
+                    {"account_id":"b","display_name":"Bob","created_at_ms":1,"last_used_at_ms":1}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let mut registry = AccountRegistry::load(&metadata_path, store).unwrap();
+
+        let views = build_account_views(&mut registry, directory.path()).unwrap();
+
+        assert_eq!(read_count.load(Ordering::Relaxed), 1);
+        assert_eq!(views[0].splatnet_ready, Some(true));
+        assert_eq!(views[1].splatnet_ready, None);
+    }
+
+    #[test]
+    fn active_account_migrates_legacy_readiness_once() {
+        let directory = tempdir().unwrap();
+        let read_count = Arc::new(AtomicUsize::new(0));
+        let store = CachedSecretStore::new(ReadCountingStore {
+            get_count: Arc::clone(&read_count),
+            secret: Some(AccountSecret {
+                session_token: "test-session".to_owned(),
+                game_web_token: Some("test-web".to_owned()),
+                bullet_token: Some("test-bullet".to_owned()),
+            }),
+            error: None,
+        });
+        let metadata_path = directory.path().join("accounts.json");
+        fs::write(
+            &metadata_path,
+            r#"{
+                "active_account_id":"a",
+                "accounts":[{
+                    "account_id":"a",
+                    "display_name":"Alice",
+                    "language":null,
+                    "country":null,
+                    "created_at_ms":1,
+                    "last_used_at_ms":1
+                }]
+            }"#,
+        )
+        .unwrap();
+        let registry = AccountRegistry::load(&metadata_path, store).unwrap();
+        let registry = Arc::new(std::sync::Mutex::new(registry));
+
+        assert_eq!(
+            active_account_sync_state(&registry).unwrap(),
+            Some(("a".to_owned(), true))
+        );
+        assert_eq!(
+            active_account_sync_state(&registry).unwrap(),
+            Some(("a".to_owned(), true))
+        );
+        assert_eq!(read_count.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            registry.lock().unwrap().accounts()[0].splatnet_ready,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn denied_legacy_keychain_lookup_is_not_retried_on_each_poll() {
+        let directory = tempdir().unwrap();
+        let read_count = Arc::new(AtomicUsize::new(0));
+        let store = ReadCountingStore {
+            get_count: Arc::clone(&read_count),
+            secret: None,
+            error: Some("keychain access denied".to_owned()),
+        };
+        let metadata_path = directory.path().join("accounts.json");
+        fs::write(
+            &metadata_path,
+            r#"{
+                "active_account_id":"a",
+                "accounts":[{"account_id":"a","display_name":"Alice","created_at_ms":1,"last_used_at_ms":1}]
+            }"#,
+        )
+        .unwrap();
+        let registry = AccountRegistry::load(&metadata_path, store).unwrap();
+        let registry = Arc::new(std::sync::Mutex::new(registry));
+
+        assert_eq!(
+            active_account_sync_state(&registry).unwrap_err(),
+            "keychain access denied"
+        );
+        assert_eq!(
+            active_account_sync_state(&registry).unwrap(),
+            Some(("a".to_owned(), false))
+        );
+        assert_eq!(read_count.load(Ordering::Relaxed), 1);
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

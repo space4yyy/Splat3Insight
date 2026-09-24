@@ -21,6 +21,8 @@ pub struct AccountMetadata {
     pub display_name: String,
     pub language: Option<String>,
     pub country: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub splatnet_ready: Option<bool>,
     pub created_at_ms: i64,
     pub last_used_at_ms: i64,
 }
@@ -44,6 +46,60 @@ pub trait SecretStore {
     fn put(&self, account_id: &str, secret: &AccountSecret) -> Result<(), String>;
     fn get(&self, account_id: &str) -> Result<Option<AccountSecret>, String>;
     fn delete(&self, account_id: &str) -> Result<(), String>;
+}
+
+/// Keeps secrets in process memory after the first access, avoiding repeated
+/// calls into the platform credential store during background sync polling.
+pub struct CachedSecretStore<S> {
+    inner: S,
+    cache: std::sync::Mutex<HashMap<String, Option<AccountSecret>>>,
+}
+
+impl<S> CachedSecretStore<S> {
+    pub fn new(inner: S) -> Self {
+        Self {
+            inner,
+            cache: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl<S: SecretStore> SecretStore for CachedSecretStore<S> {
+    fn put(&self, account_id: &str, secret: &AccountSecret) -> Result<(), String> {
+        self.inner.put(account_id, secret)?;
+        self.cache
+            .lock()
+            .map_err(|_| "credential cache is locked".to_owned())?
+            .insert(account_id.to_owned(), Some(secret.clone()));
+        Ok(())
+    }
+
+    fn get(&self, account_id: &str) -> Result<Option<AccountSecret>, String> {
+        if let Some(secret) = self
+            .cache
+            .lock()
+            .map_err(|_| "credential cache is locked".to_owned())?
+            .get(account_id)
+        {
+            return Ok(secret.clone());
+        }
+
+        let secret = self.inner.get(account_id)?;
+        self.cache
+            .lock()
+            .map_err(|_| "credential cache is locked".to_owned())?
+            .insert(account_id.to_owned(), secret.clone());
+        Ok(secret)
+    }
+
+    fn delete(&self, account_id: &str) -> Result<(), String> {
+        self.inner.delete(account_id)?;
+        self.cache
+            .lock()
+            .map_err(|_| "credential cache is locked".to_owned())?
+            .insert(account_id.to_owned(), None);
+        Ok(())
+    }
 }
 
 /// Native OS credential storage.
@@ -147,6 +203,34 @@ impl<S: SecretStore> AccountRegistry<S> {
             .accounts
             .iter()
             .find(|account| account.account_id == active_id)
+    }
+
+    pub fn set_splatnet_ready(&mut self, account_id: &str, ready: bool) -> Result<(), String> {
+        let Some(account) = self
+            .file
+            .accounts
+            .iter_mut()
+            .find(|account| account.account_id == account_id)
+        else {
+            return Err(format!("unknown account: {account_id}"));
+        };
+        let previous = account.splatnet_ready;
+        if previous == Some(ready) {
+            return Ok(());
+        }
+        account.splatnet_ready = Some(ready);
+        if let Err(error) = self.persist() {
+            if let Some(account) = self
+                .file
+                .accounts
+                .iter_mut()
+                .find(|account| account.account_id == account_id)
+            {
+                account.splatnet_ready = previous;
+            }
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn get_secret(&self, account_id: &str) -> Result<Option<AccountSecret>, String> {
@@ -305,6 +389,7 @@ mod tests {
             display_name: name.to_owned(),
             language: Some("zh-CN".to_owned()),
             country: Some("JP".to_owned()),
+            splatnet_ready: None,
             created_at_ms: 1,
             last_used_at_ms: 1,
         }
@@ -349,6 +434,102 @@ mod tests {
         assert!(contents.contains("Alice"));
         assert!(!contents.contains("sensitive"));
         assert!(!contents.contains("session-a"));
+    }
+
+    #[test]
+    fn persists_non_secret_splatnet_readiness_in_account_metadata() {
+        let encoded = r#"{
+            "account_id":"a",
+            "display_name":"Alice",
+            "language":"zh-CN",
+            "country":"JP",
+            "created_at_ms":1,
+            "last_used_at_ms":1,
+            "splatnet_ready":true
+        }"#;
+
+        let account: AccountMetadata = serde_json::from_str(encoded).unwrap();
+        let persisted = serde_json::to_value(account).unwrap();
+
+        assert_eq!(
+            persisted
+                .get("splatnet_ready")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn legacy_account_metadata_has_unknown_splatnet_readiness() {
+        let encoded = r#"{
+            "account_id":"a",
+            "display_name":"Alice",
+            "language":"zh-CN",
+            "country":"JP",
+            "created_at_ms":1,
+            "last_used_at_ms":1
+        }"#;
+
+        let account: AccountMetadata = serde_json::from_str(encoded).unwrap();
+
+        assert_eq!(account.splatnet_ready, None);
+    }
+
+    #[test]
+    fn cached_secret_store_reads_underlying_store_only_when_uncached() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        #[derive(Default)]
+        struct CountingStore {
+            get_count: std::sync::Arc<AtomicUsize>,
+            secrets: std::sync::Mutex<HashMap<String, AccountSecret>>,
+        }
+
+        impl SecretStore for CountingStore {
+            fn put(&self, account_id: &str, secret: &AccountSecret) -> Result<(), String> {
+                self.secrets
+                    .lock()
+                    .map_err(|_| "counting store is locked".to_owned())?
+                    .insert(account_id.to_owned(), secret.clone());
+                Ok(())
+            }
+
+            fn get(&self, account_id: &str) -> Result<Option<AccountSecret>, String> {
+                self.get_count.fetch_add(1, Ordering::Relaxed);
+                Ok(self
+                    .secrets
+                    .lock()
+                    .map_err(|_| "counting store is locked".to_owned())?
+                    .get(account_id)
+                    .cloned())
+            }
+
+            fn delete(&self, account_id: &str) -> Result<(), String> {
+                self.secrets
+                    .lock()
+                    .map_err(|_| "counting store is locked".to_owned())?
+                    .remove(account_id);
+                Ok(())
+            }
+        }
+
+        let get_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let store = CachedSecretStore::new(CountingStore {
+            get_count: std::sync::Arc::clone(&get_count),
+            ..CountingStore::default()
+        });
+
+        assert_eq!(store.get("a").unwrap(), None);
+        assert_eq!(store.get("a").unwrap(), None);
+        assert_eq!(get_count.load(Ordering::Relaxed), 1);
+
+        store.put("a", &secret("a")).unwrap();
+        assert_eq!(store.get("a").unwrap(), Some(secret("a")));
+        assert_eq!(get_count.load(Ordering::Relaxed), 1);
+
+        store.delete("a").unwrap();
+        assert_eq!(store.get("a").unwrap(), None);
+        assert_eq!(get_count.load(Ordering::Relaxed), 1);
     }
 
     #[test]

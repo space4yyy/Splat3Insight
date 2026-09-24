@@ -54,6 +54,8 @@
       .overlay-preview__viewport { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; width: 100%; }
       .overlay-preview__scale { width: max-content; transform-origin: top center; }
       .overlay-empty { padding: 24px 0; color: #9d9aa8; text-align: center; }
+      .weapon-source-preview { display: flex; justify-content: center; padding-top: 12px; }
+      .weapon-source-preview iframe { display: block; width: 164px; height: 332px; border: 0; background: transparent; }
       #background-close-prompt { width: min(420px, calc(100% - 32px)); border: 1px solid #4b4857; border-radius: 18px; padding: 22px; color: #f5f5f2; background: #1b1a23; box-shadow: 0 24px 80px #0009; }
       #background-close-prompt::backdrop { background: #09090dbb; }
       #background-close-prompt h2 { margin: 0; font-size: 20px; }
@@ -112,6 +114,22 @@
         </div>
         <div id="overlay-preview" class="overlay-preview">
           <div class="overlay-empty">登录并同步历史后显示真实对战数据。</div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="row">
+          <strong>私人比赛随机武器</strong>
+          <button id="refresh-private-weapons" class="secondary" type="button">手动刷新</button>
+        </div>
+        <div class="overlay-details">
+          <div class="overlay-url-row">
+            <code>http://127.0.0.1:17353/random-weapons</code>
+            <button id="copy-random-weapons-url" class="secondary" type="button">复制 OBS 地址</button>
+          </div>
+          <div class="obs-help">OBS 推荐尺寸：164 x 332。左列 A、右列 B，从上往下依序更换；没有同款时选同类别，优先试不熟悉的武器。新私人赛同步、手动刷新或重载页面时重新抽取。</div>
+          <div class="weapon-source-preview">
+            <iframe src="http://127.0.0.1:17353/random-weapons?preview=1" title="私人比赛随机武器预览" scrolling="no"></iframe>
+          </div>
         </div>
       </section>
     </main>
