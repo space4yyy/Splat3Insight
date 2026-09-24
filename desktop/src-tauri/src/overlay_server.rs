@@ -32,6 +32,7 @@ const RANDOM_WEAPONS_RULES_HTML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/random-weapons-rules.html"
 ));
+const CLOCK_HTML: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/clock.html"));
 const DISPLAY_FONT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/fonts/DFP_GBZY7.ttf"
@@ -490,6 +491,11 @@ fn route_request(
             content_type: "text/html; charset=utf-8",
             body: RANDOM_WEAPONS_RULES_HTML.as_bytes().to_vec(),
         }),
+        "/clock" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "text/html; charset=utf-8",
+            body: CLOCK_HTML.as_bytes().to_vec(),
+        }),
         "/api/random-weapons" => match load_private_weapon_set(config) {
             Ok(state) => Ok(HttpResponse {
                 status: "200 OK",
@@ -838,6 +844,24 @@ mod tests {
         assert!(page.contains("按顺序依次更换武器"));
         assert!(page.contains("没有同款时，选择同类型武器"));
         assert!(page.contains("优先尝试不熟悉的武器"));
+    }
+
+    #[test]
+    fn serves_clock_card_with_game_font_and_local_time() {
+        let directory = tempdir().unwrap();
+        let config = OverlayServerConfig {
+            accounts_path: directory.path().join("accounts.json"),
+            history_dir: directory.path().join("history"),
+        };
+
+        let response = route_request("GET", "/clock", &config).unwrap();
+        assert_eq!(response.status, "200 OK");
+        assert_eq!(response.content_type, "text/html; charset=utf-8");
+        let page = String::from_utf8(response.body).unwrap();
+        assert!(page.contains("/fonts/DFP_GBZY7.ttf"));
+        assert!(page.contains("now.getHours()"));
+        assert!(page.contains("now.getMinutes()"));
+        assert!(page.contains("now.getSeconds()"));
     }
 
     #[test]

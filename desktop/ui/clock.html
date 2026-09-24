@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>时钟</title>
+    <style>
+      @font-face {
+        font-family: "DFP GBZY7";
+        src: url("/fonts/DFP_GBZY7.ttf") format("truetype");
+        font-display: block;
+      }
+      * { box-sizing: border-box; }
+      html, body { width: 260px; height: 72px; margin: 0; overflow: hidden; background: transparent; }
+      #clock { display: grid; place-items: center; width: 260px; height: 72px; padding: 0 10px; border-radius: 6px; color: #f5f5f2; background: transparent; font: 48px/1 "DFP GBZY7", Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    </style>
+  </head>
+  <body>
+    <time id="clock" aria-label="当前当地时间"></time>
+    <script>
+      const clock = document.querySelector('#clock');
+      const pad = (value) => String(value).padStart(2, '0');
+
+      function updateClock() {
+        const now = new Date();
+        clock.dateTime = now.toISOString();
+        clock.textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+        window.setTimeout(updateClock, 1000 - (Date.now() % 1000));
+      }
+
+      document.fonts.load('48px "DFP GBZY7"').catch(() => {});
+      updateClock();
+    </script>
+  </body>
+</html>

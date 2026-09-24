@@ -54,11 +54,14 @@
       .overlay-preview { margin-top: 14px; padding: 8px 0 2px; overflow: hidden; }
       .overlay-preview__viewport { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; width: 100%; }
       .overlay-preview__scale { width: max-content; transform-origin: top center; }
+      .overlay-preview__scale > .overlay-card { border-radius: 6px; }
       .overlay-empty { padding: 24px 0; color: #9d9aa8; text-align: center; }
       .weapon-source-preview { display: flex; justify-content: center; padding-top: 12px; }
-      .weapon-source-preview iframe { display: block; width: 164px; height: 356px; border: 0; background: transparent; }
+      .weapon-source-preview iframe { display: block; width: 164px; height: 356px; overflow: hidden; border: 0; border-radius: 6px; background: transparent; }
       .weapon-rules-preview { display: flex; justify-content: center; padding-top: 12px; }
-      .weapon-rules-preview iframe { display: block; width: 230px; height: 100px; border: 0; background: transparent; }
+      .weapon-rules-preview iframe { display: block; width: 230px; height: 100px; overflow: hidden; border: 0; border-radius: 8px; background: transparent; }
+      .clock-preview { display: flex; justify-content: center; padding-top: 12px; }
+      .clock-preview iframe { display: block; width: 260px; height: 72px; overflow: hidden; border: 0; border-radius: 6px; background: transparent; }
       #background-close-prompt { width: min(420px, calc(100% - 32px)); border: 1px solid #4b4857; border-radius: 18px; padding: 22px; color: #f5f5f2; background: #1b1a23; box-shadow: 0 24px 80px #0009; }
       #background-close-prompt::backdrop { background: #09090dbb; }
       #background-close-prompt h2 { margin: 0; font-size: 20px; }
@@ -142,6 +145,21 @@
           <div class="obs-help">OBS 推荐尺寸：230 x 100</div>
           <div class="weapon-rules-preview">
             <iframe src="http://127.0.0.1:17353/random-weapons-rules" title="私房随武规则预览" scrolling="no"></iframe>
+          </div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="row">
+          <strong>时钟</strong>
+        </div>
+        <div class="overlay-details">
+          <div class="overlay-url-row">
+            <code>http://127.0.0.1:17353/clock</code>
+            <button id="copy-clock-url" class="secondary" type="button">复制</button>
+          </div>
+          <div class="obs-help">本地时间（24 小时制，每秒更新）· OBS 推荐尺寸：260 x 72</div>
+          <div class="clock-preview">
+            <iframe src="http://127.0.0.1:17353/clock" title="时钟预览" scrolling="no"></iframe>
           </div>
         </div>
       </section>

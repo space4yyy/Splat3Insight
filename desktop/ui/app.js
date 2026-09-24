@@ -16,6 +16,7 @@ const stopOverlayServiceButton = document.querySelector('#stop-overlay-service')
 const copyOverlayUrlButton = document.querySelector('#copy-overlay-url');
 const copyRandomWeaponsUrlButton = document.querySelector('#copy-random-weapons-url');
 const copyRandomWeaponsRulesUrlButton = document.querySelector('#copy-random-weapons-rules-url');
+const copyClockUrlButton = document.querySelector('#copy-clock-url');
 const refreshPrivateWeaponsButton = document.querySelector('#refresh-private-weapons');
 const randomWeaponsPreviewFrame = document.querySelector('.weapon-source-preview iframe');
 const backgroundClosePrompt = document.querySelector('#background-close-prompt');
@@ -26,6 +27,7 @@ const hideToTrayButton = document.querySelector('#hide-to-tray');
 const OBS_OVERLAY_URL = 'http://127.0.0.1:17353/overlay';
 const OBS_RANDOM_WEAPONS_URL = 'http://127.0.0.1:17353/random-weapons';
 const OBS_RANDOM_WEAPONS_RULES_URL = 'http://127.0.0.1:17353/random-weapons-rules';
+const OBS_CLOCK_URL = 'http://127.0.0.1:17353/clock';
 
 let currentSyncStatus = null;
 let lastCompletedSyncAt = null;
@@ -398,6 +400,27 @@ copyRandomWeaponsRulesUrlButton.addEventListener('click', async () => {
     setMessage('私房随武规则 OBS 地址已复制。');
   } catch (error) {
     setMessage(`复制私房随武规则 OBS 地址失败：${String(error)}`, true);
+  }
+});
+
+copyClockUrlButton.addEventListener('click', async () => {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(OBS_CLOCK_URL);
+    } else {
+      const input = document.createElement('textarea');
+      input.value = OBS_CLOCK_URL;
+      input.style.position = 'fixed';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+      input.focus();
+      input.select();
+      document.execCommand('copy');
+      input.remove();
+    }
+    setMessage('时钟 OBS 地址已复制。');
+  } catch (error) {
+    setMessage(`复制时钟 OBS 地址失败：${String(error)}`, true);
   }
 });
 
