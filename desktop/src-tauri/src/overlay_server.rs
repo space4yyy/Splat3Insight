@@ -791,7 +791,7 @@ mod tests {
     }
 
     #[test]
-    fn serves_image_only_random_weapon_page_and_bundled_weapon_images() {
+    fn serves_random_weapon_page_with_team_labels_and_bundled_weapon_images() {
         let directory = tempdir().unwrap();
         let config = OverlayServerConfig {
             accounts_path: directory.path().join("accounts.json"),
@@ -802,8 +802,10 @@ mod tests {
         assert_eq!(page.status, "200 OK");
         let page = String::from_utf8(page.body).unwrap();
         assert!(page.contains("/api/random-weapons/refresh"));
-        assert!(page.contains("team_a?.[index]"));
-        assert!(!page.contains("A 队"));
+        assert!(page.contains("label.textContent = team"));
+        assert!(page.contains("[state.team_a, state.team_b]"));
+        assert!(page.contains("event.source !== window.parent"));
+        assert!(page.contains("setInterval(refresh, 1000)"));
 
         let image = route_request("GET", "/weapons/Shooter_Short_00.png", &config).unwrap();
         assert_eq!(image.status, "200 OK");

@@ -3,17 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Private Match Weapons</title>
+    <title>私房随武</title>
     <link rel="icon" type="image/png" href="/favicon.png" />
     <style>
       * { box-sizing: border-box; }
-      html, body { width: 164px; height: 332px; margin: 0; overflow: hidden; background: transparent; }
-      #weapons { width: 164px; height: 332px; display: grid; grid-template-columns: repeat(2, 80px); grid-template-rows: repeat(4, 80px); gap: 4px; }
+      html, body { width: 164px; height: 356px; margin: 0; overflow: hidden; background: transparent; }
+      #weapons { width: 164px; height: 356px; display: grid; grid-template-columns: repeat(2, 80px); grid-template-rows: 20px repeat(4, 80px); gap: 4px; border-radius: 6px; background: rgb(0 0 0 / 22%); }
+      .team-label { display: grid; place-items: center; color: #000; font: 900 20px/20px system-ui, sans-serif; text-shadow: 0 0 2px rgb(255 255 255 / 75%); }
       img { display: block; width: 80px; height: 80px; object-fit: contain; }
     </style>
   </head>
   <body>
-    <main id="weapons" aria-label="私人比赛随机武器图片"></main>
+    <main id="weapons" aria-label="私房随武图片，A、B 两队"></main>
     <script>
       const root = document.querySelector('#weapons');
       const isPreview = new URLSearchParams(location.search).has('preview');
@@ -21,18 +22,23 @@
 
       function render(state) {
         if (!state?.set_id || state.set_id === currentSetId) return;
-        const images = Array.from({ length: 4 }, (_, index) => [
-          state.team_a?.[index],
-          state.team_b?.[index],
-        ]).flat();
-        if (images.length !== 8) return;
+        if (state.team_a?.length !== 4 || state.team_b?.length !== 4) return;
         const fragment = document.createDocumentFragment();
-        for (const weapon of images) {
-          const image = document.createElement('img');
-          image.src = `/weapons/${encodeURIComponent(weapon.row_id)}.png`;
-          image.alt = '';
-          image.draggable = false;
-          fragment.append(image);
+        for (const team of ['A', 'B']) {
+          const label = document.createElement('span');
+          label.className = 'team-label';
+          label.textContent = team;
+          fragment.append(label);
+        }
+        for (let index = 0; index < 4; index += 1) {
+          for (const team of [state.team_a, state.team_b]) {
+            const weapon = team[index];
+            const image = document.createElement('img');
+            image.src = `/weapons/${encodeURIComponent(weapon.row_id)}.png`;
+            image.alt = '';
+            image.draggable = false;
+            fragment.append(image);
+          }
         }
         root.replaceChildren(fragment);
         currentSetId = state.set_id;
@@ -59,8 +65,13 @@
         await refresh();
       }
 
+      window.addEventListener('message', (event) => {
+        if (event.source !== window.parent || event.data?.type !== 'refresh-random-weapons') return;
+        void refresh();
+      });
+
       randomizeOnPageLoad();
-      window.setInterval(refresh, 5000);
+      window.setInterval(refresh, 1000);
     </script>
   </body>
 </html>

@@ -16,6 +16,7 @@ const stopOverlayServiceButton = document.querySelector('#stop-overlay-service')
 const copyOverlayUrlButton = document.querySelector('#copy-overlay-url');
 const copyRandomWeaponsUrlButton = document.querySelector('#copy-random-weapons-url');
 const refreshPrivateWeaponsButton = document.querySelector('#refresh-private-weapons');
+const randomWeaponsPreviewFrame = document.querySelector('.weapon-source-preview iframe');
 const backgroundClosePrompt = document.querySelector('#background-close-prompt');
 const cancelCloseButton = document.querySelector('#cancel-close');
 const exitFromCloseButton = document.querySelector('#exit-from-close');
@@ -381,6 +382,10 @@ refreshPrivateWeaponsButton.addEventListener('click', async () => {
   refreshPrivateWeaponsButton.disabled = true;
   try {
     await invoke('refresh_private_weapons');
+    randomWeaponsPreviewFrame?.contentWindow?.postMessage(
+      { type: 'refresh-random-weapons' },
+      new URL(OBS_RANDOM_WEAPONS_URL).origin,
+    );
     setMessage('随机武器已重新抽取。');
   } catch (error) {
     setMessage(String(error), true);
