@@ -31,6 +31,8 @@ tauri-plugin-opener = "2"
 tokio = { version = "1", features = ["sync", "time"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWindow"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSGeometry", "objc2-core-foundation"] }
 plist = "1"
 
 [dev-dependencies]

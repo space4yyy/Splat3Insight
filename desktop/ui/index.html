@@ -19,7 +19,7 @@
       button:disabled { opacity: .55; cursor: wait; }
       .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
       .overlay-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
-      .overlay-actions button { padding: 8px 12px; font-size: 12px; }
+      .overlay-primary-action { min-height: 30px; padding: 7px 13px; font-size: 12px; line-height: 1; }
       .account { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 14px 0; border-bottom: 1px solid #35343e; }
       .account:last-child { border-bottom: 0; }
       .account-main { display: flex; align-items: baseline; min-width: 0; gap: 10px; }
@@ -48,7 +48,7 @@
       .paste-help { margin: 8px 0 10px; font-size: 13px; color: #9d9aa8; }
       .overlay-url-row { display: flex; align-items: center; gap: 10px; min-height: 20px; }
       .overlay-url-row code { min-width: 0; flex: 1; color: #aaa8b5; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
-      .overlay-url-row button { flex: 0 0 auto; height: 20px; min-height: 20px; padding: 3px 9px; font-size: 11px; line-height: 1; }
+      .overlay-url-row button { flex: 0 0 auto; min-height: 26px; padding: 5px 10px; font-size: 12px; line-height: 1; }
       .obs-help { min-height: 20px; margin: 0; color: #aaa8b5; font-size: 13px; line-height: 20px; }
       .overlay-preview { margin-top: 14px; padding: 8px 0 2px; overflow: hidden; }
       .overlay-preview__viewport { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; width: 100%; }
@@ -98,14 +98,14 @@
         <div class="row">
           <strong>卡片预览</strong>
           <div class="overlay-actions">
-            <button id="start-overlay-service" class="secondary" hidden>启动服务</button>
-            <button id="stop-overlay-service" class="secondary" hidden>停止服务</button>
+            <button id="start-overlay-service" class="overlay-primary-action" hidden>启动服务</button>
+            <button id="stop-overlay-service" class="overlay-primary-action" hidden>停止服务</button>
           </div>
         </div>
         <div class="overlay-details">
           <div class="overlay-url-row">
             <code>http://127.0.0.1:17353/overlay</code>
-            <button id="copy-overlay-url" class="secondary">复制 OBS 地址</button>
+            <button id="copy-overlay-url" class="secondary">复制</button>
           </div>
           <div class="obs-help">
             OBS 尺寸推荐：560 x 100
@@ -119,12 +119,12 @@
       <section class="panel">
         <div class="row">
           <strong>私人比赛随机武器</strong>
-          <button id="refresh-private-weapons" class="secondary" type="button">手动刷新</button>
+          <button id="refresh-private-weapons" class="overlay-primary-action" type="button">手动刷新</button>
         </div>
         <div class="overlay-details">
           <div class="overlay-url-row">
             <code>http://127.0.0.1:17353/random-weapons</code>
-            <button id="copy-random-weapons-url" class="secondary" type="button">复制 OBS 地址</button>
+            <button id="copy-random-weapons-url" class="secondary" type="button">复制</button>
           </div>
           <div class="obs-help">OBS 推荐尺寸：164 x 332。左列 A、右列 B，从上往下依序更换；没有同款时选同类别，优先试不熟悉的武器。新私人赛同步、手动刷新或重载页面时重新抽取。</div>
           <div class="weapon-source-preview">

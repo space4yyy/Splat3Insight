@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use splat3_widget_core::{
     history::{
         HistoryError, HistoryErrorKind, HistoryFetchProgress, HistoryFetchedRecord,
@@ -20,10 +20,14 @@ use splat3_widget_core::{
     AccountMetadata, AccountRegistry, AccountSecret, CachedSecretStore, KeyringSecretStore,
     SecretStore,
 };
+#[cfg(not(target_os = "macos"))]
+use tauri::PhysicalSize;
+#[cfg(target_os = "macos")]
+use tauri::RunEvent;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, Manager, State, WebviewWindow,
+    AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalPosition, State, WebviewWindow,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 use tokio::sync::watch;
@@ -39,9 +43,274 @@ struct AppState {
     login_attempt: Mutex<Option<LoginAttempt>>,
     auth_log_path: PathBuf,
     history_dir: PathBuf,
+    preferences_path: PathBuf,
+    last_window_size: Mutex<(u32, u32)>,
     sync_runtime: Arc<SyncRuntime>,
     sync_trigger: Arc<tokio::sync::Notify>,
     overlay_service: overlay_server::OverlayServiceController,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct AppPreferences {
+    keep_dock_icon: bool,
+    window_placement: Option<SavedWindowPlacement>,
+}
+
+impl Default for AppPreferences {
+    fn default() -> Self {
+        Self {
+            keep_dock_icon: true,
+            window_placement: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct SavedDisplay {
+    name: Option<String>,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct SavedWindowPlacement {
+    display: Option<SavedDisplay>,
+    offset_x: f64,
+    offset_y: f64,
+    width: f64,
+    height: f64,
+}
+
+fn load_app_preferences(path: &Path) -> Result<AppPreferences, String> {
+    match fs::read(path) {
+        Ok(bytes) => {
+            serde_json::from_slice(&bytes).map_err(|error| format!("读取应用设置失败：{error}"))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(AppPreferences::default()),
+        Err(error) => Err(format!("读取应用设置失败：{error}")),
+    }
+}
+
+fn store_app_preferences(path: &Path, preferences: &AppPreferences) -> Result<(), String> {
+    let parent = path.parent().ok_or_else(|| "应用设置路径无效".to_owned())?;
+    fs::create_dir_all(parent).map_err(|error| format!("创建应用设置目录失败：{error}"))?;
+
+    let temporary_path = path.with_extension(format!("json.{}.tmp", std::process::id()));
+    let bytes = serde_json::to_vec_pretty(preferences)
+        .map_err(|error| format!("序列化应用设置失败：{error}"))?;
+    fs::write(&temporary_path, bytes).map_err(|error| format!("写入应用设置失败：{error}"))?;
+    if let Err(error) = fs::rename(&temporary_path, path) {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(format!("保存应用设置失败：{error}"));
+    }
+
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn should_show_main_window_on_reopen(has_visible_windows: bool) -> bool {
+    !has_visible_windows
+}
+
+const DEFAULT_WINDOW_WIDTH: f64 = 560.0;
+const DEFAULT_WINDOW_HEIGHT: f64 = 680.0;
+const WINDOW_ASPECT_RATIO: f64 = DEFAULT_WINDOW_WIDTH / DEFAULT_WINDOW_HEIGHT;
+
+fn saved_display_from_monitor(monitor: &Monitor) -> SavedDisplay {
+    SavedDisplay {
+        name: monitor.name().cloned(),
+        x: monitor.position().x,
+        y: monitor.position().y,
+        width: monitor.size().width,
+        height: monitor.size().height,
+    }
+}
+
+fn display_match_score(saved: &SavedDisplay, candidate: &SavedDisplay) -> Option<(i64, u64)> {
+    if saved.name.is_some() && saved.name != candidate.name {
+        return None;
+    }
+
+    let position_distance = (i64::from(saved.x) - i64::from(candidate.x)).abs()
+        + (i64::from(saved.y) - i64::from(candidate.y)).abs();
+    let resolution_distance = u64::from(saved.width.abs_diff(candidate.width))
+        + u64::from(saved.height.abs_diff(candidate.height));
+    Some((position_distance, resolution_distance))
+}
+
+fn choose_saved_display(saved: &SavedDisplay, candidates: &[SavedDisplay]) -> Option<usize> {
+    candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(index, candidate)| {
+            display_match_score(saved, candidate).map(|score| (index, score))
+        })
+        .min_by_key(|(_, score)| *score)
+        .map(|(index, _)| index)
+}
+
+fn capture_window_placement(window: &WebviewWindow) -> Result<SavedWindowPlacement, String> {
+    let position = window
+        .outer_position()
+        .map_err(|error| format!("读取窗口位置失败：{error}"))?;
+    let size = window
+        .inner_size()
+        .map_err(|error| format!("读取窗口尺寸失败：{error}"))?;
+    let monitor = window
+        .current_monitor()
+        .map_err(|error| format!("读取当前显示器失败：{error}"))?;
+    let scale_factor = monitor
+        .as_ref()
+        .map(Monitor::scale_factor)
+        .unwrap_or_else(|| window.scale_factor().unwrap_or(1.0))
+        .max(0.1);
+    let (origin_x, origin_y, display) = monitor
+        .as_ref()
+        .map(|monitor| {
+            (
+                monitor.position().x,
+                monitor.position().y,
+                Some(saved_display_from_monitor(monitor)),
+            )
+        })
+        .unwrap_or((0, 0, None));
+
+    Ok(SavedWindowPlacement {
+        display,
+        offset_x: f64::from(position.x - origin_x) / scale_factor,
+        offset_y: f64::from(position.y - origin_y) / scale_factor,
+        width: f64::from(size.width) / scale_factor,
+        height: f64::from(size.height) / scale_factor,
+    })
+}
+
+fn persist_window_placement(window: &WebviewWindow, path: &Path) -> Result<(), String> {
+    let placement = capture_window_placement(window)?;
+    let mut preferences = load_app_preferences(path)?;
+    preferences.window_placement = Some(placement);
+    store_app_preferences(path, &preferences)
+}
+
+fn restore_window_placement(
+    window: &WebviewWindow,
+    placement: Option<&SavedWindowPlacement>,
+) -> Result<(), String> {
+    let Some(placement) = placement else {
+        return Ok(());
+    };
+    let monitors = window
+        .available_monitors()
+        .map_err(|error| format!("读取显示器列表失败：{error}"))?;
+    if monitors.is_empty() {
+        return Ok(());
+    }
+
+    let target_monitor = placement
+        .display
+        .as_ref()
+        .and_then(|saved| {
+            let candidates: Vec<_> = monitors.iter().map(saved_display_from_monitor).collect();
+            choose_saved_display(saved, &candidates).map(|index| monitors[index].clone())
+        })
+        .or(window
+            .primary_monitor()
+            .map_err(|error| format!("读取主显示器失败：{error}"))?)
+        .or_else(|| monitors.first().cloned());
+    let Some(monitor) = target_monitor else {
+        return Ok(());
+    };
+
+    let scale_factor = monitor.scale_factor().max(0.1);
+    let work_area = monitor.work_area();
+    let work_width = f64::from(work_area.size.width) / scale_factor;
+    let work_height = f64::from(work_area.size.height) / scale_factor;
+    let width = placement
+        .width
+        .min(work_width)
+        .min(work_height * WINDOW_ASPECT_RATIO);
+    let height = width / WINDOW_ASPECT_RATIO;
+
+    let old_scale_factor = window.scale_factor().unwrap_or(scale_factor).max(0.1);
+    let old_inner_size = window
+        .inner_size()
+        .map_err(|error| format!("读取窗口尺寸失败：{error}"))?;
+    let old_outer_size = window
+        .outer_size()
+        .map_err(|error| format!("读取窗口边框尺寸失败：{error}"))?;
+    let frame_width =
+        f64::from(old_outer_size.width.saturating_sub(old_inner_size.width)) / old_scale_factor;
+    let frame_height =
+        f64::from(old_outer_size.height.saturating_sub(old_inner_size.height)) / old_scale_factor;
+    let outer_width = (width + frame_width) * scale_factor;
+    let outer_height = (height + frame_height) * scale_factor;
+
+    window
+        .set_size(LogicalSize::new(width, height))
+        .map_err(|error| format!("恢复窗口尺寸失败：{error}"))?;
+
+    let monitor_position = monitor.position();
+    let area_position = work_area.position;
+    let x = clamp_window_axis(
+        f64::from(monitor_position.x) + placement.offset_x * scale_factor,
+        f64::from(area_position.x),
+        f64::from(work_area.size.width),
+        outer_width,
+    );
+    let y = clamp_window_axis(
+        f64::from(monitor_position.y) + placement.offset_y * scale_factor,
+        f64::from(area_position.y),
+        f64::from(work_area.size.height),
+        outer_height,
+    );
+    window
+        .set_position(PhysicalPosition::new(x, y))
+        .map_err(|error| format!("恢复窗口位置失败：{error}"))
+}
+
+fn clamp_window_axis(position: f64, area_start: f64, area_size: f64, window_size: f64) -> i32 {
+    let max_position = (area_start + area_size - window_size).max(area_start);
+    position.clamp(area_start, max_position).round() as i32
+}
+
+#[cfg(target_os = "macos")]
+fn set_window_content_aspect_ratio(window: &WebviewWindow) -> Result<(), String> {
+    let pointer = window
+        .ns_window()
+        .map_err(|error| format!("读取 macOS 窗口句柄失败：{error}"))?;
+    let native_window = unsafe { &*pointer.cast::<objc2_app_kit::NSWindow>() };
+    native_window.setContentAspectRatio(objc2_foundation::NSSize::new(
+        DEFAULT_WINDOW_WIDTH,
+        DEFAULT_WINDOW_HEIGHT,
+    ));
+    Ok(())
+}
+
+#[cfg(any(not(target_os = "macos"), test))]
+fn aspect_corrected_size(previous: (u32, u32), requested: (u32, u32)) -> (u32, u32) {
+    let (width, height) = requested;
+    if width == 0 || height == 0 {
+        return previous;
+    }
+    if (f64::from(width) / f64::from(height) - WINDOW_ASPECT_RATIO).abs() < 0.002 {
+        return requested;
+    }
+
+    let width_change = width.abs_diff(previous.0) as f64;
+    let height_change_as_width = height.abs_diff(previous.1) as f64 * WINDOW_ASPECT_RATIO;
+    if width_change >= height_change_as_width {
+        (
+            width,
+            (f64::from(width) / WINDOW_ASPECT_RATIO).round().max(1.0) as u32,
+        )
+    } else {
+        (
+            (f64::from(height) * WINDOW_ASPECT_RATIO).round().max(1.0) as u32,
+            height,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1474,12 +1743,24 @@ fn set_active_account(account_id: String, state: State<'_, AppState>) -> Result<
 
 #[tauri::command]
 fn hide_main_window(window: WebviewWindow) -> Result<(), String> {
+    save_main_window_placement(window.app_handle());
     window.hide().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn exit_app(app: AppHandle) {
+    save_main_window_placement(&app);
     app.exit(0);
+}
+
+fn save_main_window_placement(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let path = app.state::<AppState>().preferences_path.clone();
+    if let Err(error) = persist_window_placement(&window, &path) {
+        log_console_error("app-window", &error);
+    }
 }
 
 fn show_main_window(app: &AppHandle) {
@@ -1581,7 +1862,56 @@ fn toggle_autostart(app: &AppHandle, menu_item: &CheckMenuItem<tauri::Wry>) {
     }
 }
 
-fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
+#[cfg(target_os = "macos")]
+fn toggle_keep_dock_icon(
+    app: &AppHandle,
+    menu_item: &CheckMenuItem<tauri::Wry>,
+    preferences_path: &Path,
+) {
+    // Check menu items are toggled by the native menu before the event arrives.
+    let enabled = menu_item.is_checked().unwrap_or(true);
+    let previous_value = !enabled;
+    if let Err(error) = app.set_dock_visibility(enabled) {
+        let _ = menu_item.set_checked(previous_value);
+        log_console_error("app-lifecycle", &format!("设置程序坞图标失败：{error}"));
+        return;
+    }
+
+    let mut preferences = match load_app_preferences(preferences_path) {
+        Ok(preferences) => preferences,
+        Err(error) => {
+            let _ = app.set_dock_visibility(previous_value);
+            let _ = menu_item.set_checked(previous_value);
+            log_console_error("app-lifecycle", &error);
+            return;
+        }
+    };
+    preferences.keep_dock_icon = enabled;
+    if let Err(error) = store_app_preferences(preferences_path, &preferences) {
+        let _ = app.set_dock_visibility(previous_value);
+        let _ = menu_item.set_checked(previous_value);
+        log_console_error("app-lifecycle", &error);
+        return;
+    }
+
+    log_console(
+        "app-lifecycle",
+        if enabled {
+            "已保留程序坞图标"
+        } else {
+            "已隐藏程序坞图标；可从菜单栏图标重新打开主界面"
+        },
+    );
+}
+
+fn build_tray(
+    app: &mut tauri::App,
+    preferences_path: PathBuf,
+    preferences: &AppPreferences,
+) -> tauri::Result<()> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = (&preferences_path, preferences);
+
     let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
     let open_item = MenuItem::with_id(app, "open-main", "打开主界面", true, None::<&str>)?;
     let autostart_item = CheckMenuItem::with_id(
@@ -1594,8 +1924,36 @@ fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
     )?;
     let separator = PredefinedMenuItem::separator(app)?;
     let exit_item = MenuItem::with_id(app, "exit-app", "退出", true, None::<&str>)?;
+
+    #[cfg(target_os = "macos")]
+    let (menu, dock_icon_item) = {
+        let dock_icon_item = CheckMenuItem::with_id(
+            app,
+            "toggle-dock-icon",
+            "保留程序坞图标",
+            true,
+            preferences.keep_dock_icon,
+            None::<&str>,
+        )?;
+        let menu = Menu::with_items(
+            app,
+            &[
+                &open_item,
+                &autostart_item,
+                &dock_icon_item,
+                &separator,
+                &exit_item,
+            ],
+        )?;
+        (menu, dock_icon_item)
+    };
+
+    #[cfg(not(target_os = "macos"))]
     let menu = Menu::with_items(app, &[&open_item, &autostart_item, &separator, &exit_item])?;
+
     let autostart_item_for_events = autostart_item.clone();
+    #[cfg(target_os = "macos")]
+    let dock_icon_item_for_events = dock_icon_item.clone();
 
     TrayIconBuilder::with_id("main-tray")
         .icon(tauri::include_image!("./icons/44x44.png"))
@@ -1606,6 +1964,10 @@ fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "open-main" => show_main_window(app),
             "toggle-autostart" => toggle_autostart(app, &autostart_item_for_events),
+            #[cfg(target_os = "macos")]
+            "toggle-dock-icon" => {
+                toggle_keep_dock_icon(app, &dock_icon_item_for_events, &preferences_path)
+            }
             "exit-app" => app.exit(0),
             _ => {}
         })
@@ -1634,6 +1996,31 @@ pub fn run() {
                 }
             }
             let config_dir = app.path().app_config_dir()?;
+            let preferences_path = config_dir.join("preferences.json");
+            let preferences = match load_app_preferences(&preferences_path) {
+                Ok(preferences) => preferences,
+                Err(error) => {
+                    log_console_error("app-lifecycle", &error);
+                    AppPreferences::default()
+                }
+            };
+            #[cfg(target_os = "macos")]
+            if let Err(error) = app.handle().set_dock_visibility(preferences.keep_dock_icon) {
+                log_console_error("app-lifecycle", &format!("设置程序坞图标失败：{error}"));
+            }
+
+            let main_window = app
+                .get_webview_window("main")
+                .ok_or_else(|| std::io::Error::other("主窗口未创建"))?;
+            #[cfg(target_os = "macos")]
+            if let Err(error) = set_window_content_aspect_ratio(&main_window) {
+                log_console_error("app-window", &error);
+            }
+            let initial_window_size = main_window
+                .inner_size()
+                .map(|size| (size.width, size.height))
+                .unwrap_or((DEFAULT_WINDOW_WIDTH as u32, DEFAULT_WINDOW_HEIGHT as u32));
+
             let metadata_path = config_dir.join("accounts.json");
             let history_dir = config_dir.join("history");
             let mut registry = AccountRegistry::load(
@@ -1680,10 +2067,23 @@ pub fn run() {
                 login_attempt: Mutex::new(None),
                 auth_log_path: config_dir.join("auth.log"),
                 history_dir: history_dir.clone(),
+                preferences_path: preferences_path.clone(),
+                last_window_size: Mutex::new(initial_window_size),
                 sync_runtime: Arc::clone(&sync_runtime),
                 sync_trigger: Arc::clone(&sync_trigger),
                 overlay_service: overlay_service.clone(),
             });
+            if let Err(error) =
+                restore_window_placement(&main_window, preferences.window_placement.as_ref())
+            {
+                log_console_error("app-window", &error);
+            }
+            if let Ok(size) = main_window.inner_size() {
+                *app.state::<AppState>()
+                    .last_window_size
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = (size.width, size.height);
+            }
 
             start_background_sync(
                 registry,
@@ -1695,18 +2095,44 @@ pub fn run() {
 
             overlay_service.start().map_err(std::io::Error::other)?;
 
-            build_tray(app)?;
+            build_tray(app, preferences_path, &preferences)?;
             if !launch_in_background {
-                let window = app
-                    .get_webview_window("main")
-                    .ok_or_else(|| std::io::Error::other("主窗口未创建"))?;
-                window.show()?;
+                main_window.show()?;
             }
 
             Ok(())
         })
         .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Resized(size) = event {
+                let app_state = window.app_handle().state::<AppState>();
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let requested = (size.width, size.height);
+                    let mut last_size = app_state
+                        .last_window_size
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let corrected = aspect_corrected_size(*last_size, requested);
+                    *last_size = corrected;
+                    if corrected != requested {
+                        if let Err(error) =
+                            window.set_size(PhysicalSize::new(corrected.0, corrected.1))
+                        {
+                            log_console_error("app-window", &format!("保持窗口比例失败：{error}"));
+                        }
+                    }
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    *app_state
+                        .last_window_size
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                        (size.width, size.height);
+                }
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                save_main_window_placement(window.app_handle());
                 api.prevent_close();
                 if let Err(error) = window.emit("main-close-requested", ()) {
                     log_console_error(
@@ -1735,16 +2161,29 @@ pub fn run() {
             hide_main_window,
             exit_app,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Splat 3 Streaming Widget");
+        .build(tauri::generate_context!())
+        .expect("error while building Splat 3 Streaming Widget")
+        .run(|app, event| match event {
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } if should_show_main_window_on_reopen(has_visible_windows) => {
+                show_main_window(app);
+            }
+            RunEvent::ExitRequested { .. } => save_main_window_placement(app),
+            _ => {}
+        });
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        active_account_sync_state, append_timestamped_log, build_account_views,
-        local_log_timestamp, HistoryErrorKind, HistorySyncSummary, SyncClaim, SyncError,
-        SyncRuntime, LOG_BACKUP_COUNT, MAX_LOG_BYTES,
+        active_account_sync_state, append_timestamped_log, aspect_corrected_size,
+        build_account_views, choose_saved_display, load_app_preferences, local_log_timestamp,
+        should_show_main_window_on_reopen, store_app_preferences, AppPreferences, HistoryErrorKind,
+        HistorySyncSummary, SavedDisplay, SavedWindowPlacement, SyncClaim, SyncError, SyncRuntime,
+        LOG_BACKUP_COUNT, MAX_LOG_BYTES,
     };
     use splat3_widget_core::{
         AccountMetadata, AccountRegistry, AccountSecret, CachedSecretStore, SecretStore,
@@ -1755,6 +2194,80 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use tempfile::tempdir;
+
+    #[test]
+    fn dock_reopen_shows_hidden_main_window() {
+        assert!(should_show_main_window_on_reopen(false));
+        assert!(!should_show_main_window_on_reopen(true));
+    }
+
+    #[test]
+    fn dock_icon_preference_defaults_to_visible_and_persists_changes() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("preferences.json");
+        let placement = SavedWindowPlacement {
+            display: Some(SavedDisplay {
+                name: Some("Display A".to_owned()),
+                x: -1920,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            }),
+            offset_x: 120.0,
+            offset_y: 80.0,
+            width: 560.0,
+            height: 680.0,
+        };
+
+        assert!(load_app_preferences(&path).unwrap().keep_dock_icon);
+        store_app_preferences(
+            &path,
+            &AppPreferences {
+                keep_dock_icon: false,
+                window_placement: Some(placement.clone()),
+            },
+        )
+        .unwrap();
+        let saved = load_app_preferences(&path).unwrap();
+        assert!(!saved.keep_dock_icon);
+        assert_eq!(saved.window_placement, Some(placement));
+    }
+
+    #[test]
+    fn saved_window_restores_to_the_matching_display() {
+        let saved = SavedDisplay {
+            name: Some("External Display".to_owned()),
+            x: -1920,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        let displays = vec![
+            SavedDisplay {
+                name: Some("Built-in Display".to_owned()),
+                x: 0,
+                y: 0,
+                width: 3024,
+                height: 1964,
+            },
+            saved.clone(),
+            SavedDisplay {
+                name: Some("External Display".to_owned()),
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
+        ];
+
+        assert_eq!(choose_saved_display(&saved, &displays), Some(1));
+    }
+
+    #[test]
+    fn proportional_resize_tracks_horizontal_or_vertical_drag() {
+        assert_eq!(aspect_corrected_size((560, 680), (700, 680)), (700, 850));
+        assert_eq!(aspect_corrected_size((560, 680), (560, 800)), (659, 800));
+    }
 
     #[derive(Clone)]
     struct ReadCountingStore {
