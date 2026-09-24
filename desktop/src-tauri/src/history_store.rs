@@ -5,10 +5,11 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::{json, Value};
 use splat3_widget_core::history::{
-    ArchivedBattle, ArchivedCoop, BattleRecord, CoopRecord, HistoryCache, HistoryFetchedRecord,
-    HistorySyncSummary,
+    ArchivedBattle, BattleRecord, HistoryCache, HistoryFetchedRecord, HistorySyncSummary,
 };
-use splat3_widget_core::overlay::{OverlayState, RecentSummary};
+#[cfg(test)]
+use splat3_widget_core::history::{ArchivedCoop, CoopRecord};
+use splat3_widget_core::overlay::{archived_battle_power_track_key, OverlayState, RecentSummary};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
@@ -18,7 +19,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const DATABASE_FILE: &str = "history.sqlite3";
 const LEGACY_DIRECTORY: &str = "legacy-json";
 const EXPORT_DIRECTORY: &str = "exports";
-const DATABASE_SCHEMA_VERSION: i64 = 1;
+const DATABASE_SCHEMA_VERSION: i64 = 2;
+const NO_OVERLAY_TRACK: &str = "none";
+const CACHED_POWER_TRACK_KEY: &str = "__s3w_overlay_power_track_v1";
 
 fn database_path(history_dir: &Path) -> PathBuf {
     history_dir.join(DATABASE_FILE)
@@ -54,6 +57,7 @@ fn open_database(history_dir: &Path) -> Result<Connection, String> {
                  record_json TEXT NOT NULL,
                  raw_json BLOB NOT NULL,
                  raw_encoding TEXT NOT NULL DEFAULT 'gzip',
+                 overlay_track_key TEXT,
                  PRIMARY KEY (account_id, record_type, record_id)
              );
              CREATE INDEX IF NOT EXISTS idx_history_records_time
@@ -102,6 +106,25 @@ fn open_database(history_dir: &Path) -> Result<Connection, String> {
             )
             .map_err(|error| format!("升级历史数据库失败：{error}"))?;
     }
+    let has_overlay_track_key: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('history_records')
+             WHERE name = 'overlay_track_key'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("检查卡片历史索引版本失败：{error}"))?;
+    if has_overlay_track_key == 0 {
+        connection
+            .execute_batch("ALTER TABLE history_records ADD COLUMN overlay_track_key TEXT;")
+            .map_err(|error| format!("升级卡片历史索引失败：{error}"))?;
+    }
+    connection
+        .execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_history_records_overlay_track
+                 ON history_records(account_id, overlay_track_key, played_time DESC);",
+        )
+        .map_err(|error| format!("创建卡片历史索引失败：{error}"))?;
     Ok(connection)
 }
 
@@ -175,6 +198,7 @@ pub(crate) fn mark_sync_complete(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn load_cache(
     history_dir: &Path,
     account_id: &str,
@@ -251,31 +275,43 @@ pub(crate) fn load_cache(
 pub(crate) fn load_known_record_ids(
     history_dir: &Path,
     account_id: &str,
+    limit_per_type: Option<usize>,
 ) -> Result<(HashSet<String>, HashSet<String>), String> {
     let connection = open_database(history_dir)?;
-    let mut statement = connection
-        .prepare("SELECT record_type, record_id FROM history_records WHERE account_id = ?1")
-        .map_err(|error| format!("准备历史去重查询失败：{error}"))?;
-    let rows = statement
-        .query_map([account_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(|error| format!("读取历史去重信息失败：{error}"))?;
-    let (mut battle_ids, mut coop_ids) = (HashSet::new(), HashSet::new());
-    for row in rows {
-        let (record_type, record_id) =
-            row.map_err(|error| format!("读取历史去重行失败：{error}"))?;
-        match record_type.as_str() {
-            "battle" => {
-                battle_ids.insert(record_id);
+    let load_ids = |record_type: &str| -> Result<HashSet<String>, String> {
+        let sql = if limit_per_type.is_some() {
+            "SELECT record_id FROM history_records
+             WHERE account_id = ?1 AND record_type = ?2
+             ORDER BY played_time IS NULL, played_time DESC, rowid DESC LIMIT ?3"
+        } else {
+            "SELECT record_id FROM history_records
+             WHERE account_id = ?1 AND record_type = ?2"
+        };
+        let mut statement = connection
+            .prepare(sql)
+            .map_err(|error| format!("准备历史去重查询失败：{error}"))?;
+        match limit_per_type {
+            Some(limit) => {
+                let rows = statement
+                    .query_map(params![account_id, record_type, limit as i64], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .map_err(|error| format!("读取历史去重信息失败：{error}"))?;
+                rows.collect::<Result<HashSet<_>, _>>()
+                    .map_err(|error| format!("读取历史去重行失败：{error}"))
             }
-            "coop" => {
-                coop_ids.insert(record_id);
+            None => {
+                let rows = statement
+                    .query_map(params![account_id, record_type], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .map_err(|error| format!("读取历史去重信息失败：{error}"))?;
+                rows.collect::<Result<HashSet<_>, _>>()
+                    .map_err(|error| format!("读取历史去重行失败：{error}"))
             }
-            other => return Err(format!("历史数据库包含未知记录类型：{other}")),
         }
-    }
-    Ok((battle_ids, coop_ids))
+    };
+    Ok((load_ids("battle")?, load_ids("coop")?))
 }
 
 pub(crate) fn load_summary(
@@ -319,15 +355,27 @@ pub(crate) fn load_overlay_cache(
     account_id: &str,
 ) -> Result<Option<HistoryCache>, String> {
     let connection = open_database(history_dir)?;
-    let record_count: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM history_records
-             WHERE account_id = ?1 AND record_type = 'battle'",
-            [account_id],
-            |row| row.get(0),
-        )
-        .map_err(|error| format!("读取卡片历史统计失败：{error}"))?;
-    if record_count == 0 {
+    let records = {
+        let mut statement = connection
+            .prepare(
+                "SELECT record_id, record_json, overlay_track_key FROM history_records
+                 WHERE account_id = ?1 AND record_type = 'battle'
+                 ORDER BY played_time IS NULL, played_time DESC, rowid DESC",
+            )
+            .map_err(|error| format!("准备卡片历史查询失败：{error}"))?;
+        let rows = statement
+            .query_map([account_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })
+            .map_err(|error| format!("读取卡片历史失败：{error}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("读取卡片历史行失败：{error}"))?
+    };
+    if records.is_empty() {
         return Ok(None);
     }
     let fetched_at_ms = connection
@@ -339,32 +387,43 @@ pub(crate) fn load_overlay_cache(
         .optional()
         .map_err(|error| format!("读取卡片同步时间失败：{error}"))?
         .unwrap_or(0);
-    let mut statement = connection
-        .prepare(
-            "SELECT record_json, raw_json, raw_encoding FROM history_records
-             WHERE account_id = ?1 AND record_type = 'battle'
-             ORDER BY played_time IS NULL, played_time DESC, rowid DESC",
-        )
-        .map_err(|error| format!("准备卡片历史查询失败：{error}"))?;
-    let rows = statement
-        .query_map([account_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Vec<u8>>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })
-        .map_err(|error| format!("读取卡片历史失败：{error}"))?;
     let mut battles = Vec::new();
-    for row in rows {
-        let (record_json, raw_json, raw_encoding) =
-            row.map_err(|error| format!("读取卡片历史行失败：{error}"))?;
+    for (record_id, record_json, stored_track_key) in records {
         let record = serde_json::from_str::<BattleRecord>(&record_json)
             .map_err(|error| format!("解析卡片对战记录失败：{error}"))?;
-        let raw = decode_raw_json(&raw_json, &raw_encoding)?;
+        if !matches!(
+            record.mode.as_str(),
+            "X_MATCH" | "BANKARA" | "EVENT_MATCH" | "PRIVATE_BATTLE"
+        ) {
+            continue;
+        }
+        let track_key = match stored_track_key {
+            Some(track_key) => track_key,
+            None => {
+                let (raw_json, raw_encoding): (Vec<u8>, String) = connection
+                    .query_row(
+                        "SELECT raw_json, raw_encoding FROM history_records
+                         WHERE account_id = ?1 AND record_type = 'battle' AND record_id = ?2",
+                        params![account_id, record_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .map_err(|error| format!("读取旧版卡片原始记录失败：{error}"))?;
+                let raw = decode_raw_json(&raw_json, &raw_encoding)?;
+                let track_key = archived_battle_power_track_key(&record, &raw)
+                    .unwrap_or_else(|| NO_OVERLAY_TRACK.to_owned());
+                connection
+                    .execute(
+                        "UPDATE history_records SET overlay_track_key = ?3
+                         WHERE account_id = ?1 AND record_type = 'battle' AND record_id = ?2",
+                        params![account_id, record_id, track_key],
+                    )
+                    .map_err(|error| format!("保存卡片历史索引失败：{error}"))?;
+                track_key
+            }
+        };
         battles.push(ArchivedBattle {
             record,
-            raw: overlay_identity_raw(&raw),
+            raw: overlay_cache_raw(&track_key),
         });
     }
     Ok(Some(HistoryCache {
@@ -512,6 +571,7 @@ pub(crate) fn save_cache(
         .map_err(|error| format!("开启历史数据库事务失败：{error}"))?;
 
     for battle in &cache.battles {
+        let track_key = archived_battle_power_track_key(&battle.record, &battle.raw);
         upsert_record(
             &transaction,
             account_id,
@@ -520,6 +580,7 @@ pub(crate) fn save_cache(
             battle.record.played_time.as_deref(),
             &battle.record,
             &battle.raw,
+            track_key.as_deref().unwrap_or(NO_OVERLAY_TRACK),
         )?;
     }
     for item in &cache.coop {
@@ -531,6 +592,7 @@ pub(crate) fn save_cache(
             item.record.played_time.as_deref(),
             &item.record,
             &item.raw,
+            NO_OVERLAY_TRACK,
         )?;
     }
     transaction
@@ -573,6 +635,7 @@ impl HistoryRecordWriter {
             .map_err(|error| format!("开启历史断点事务失败：{error}"))?;
         let overlay_changed = match record {
             HistoryFetchedRecord::Battle(record) => {
+                let track_key = archived_battle_power_track_key(&record.record, &record.raw);
                 upsert_record(
                     &transaction,
                     account_id,
@@ -581,6 +644,7 @@ impl HistoryRecordWriter {
                     record.record.played_time.as_deref(),
                     &record.record,
                     &record.raw,
+                    track_key.as_deref().unwrap_or(NO_OVERLAY_TRACK),
                 )?;
                 false
             }
@@ -593,6 +657,7 @@ impl HistoryRecordWriter {
                     record.record.played_time.as_deref(),
                     &record.record,
                     &record.raw,
+                    NO_OVERLAY_TRACK,
                 )?;
                 false
             }
@@ -688,6 +753,7 @@ fn upsert_record<T: Serialize>(
     played_time: Option<&str>,
     record: &T,
     raw: &Value,
+    overlay_track_key: &str,
 ) -> Result<(), String> {
     let record_json =
         serde_json::to_string(record).map_err(|error| format!("序列化历史记录失败：{error}"))?;
@@ -696,18 +762,20 @@ fn upsert_record<T: Serialize>(
         .execute(
             "INSERT INTO history_records(
                  account_id, record_type, record_id, played_time,
-                 record_json, raw_json, raw_encoding
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'gzip')
+                 record_json, raw_json, raw_encoding, overlay_track_key
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'gzip', ?7)
              ON CONFLICT(account_id, record_type, record_id) DO UPDATE SET
                  played_time = excluded.played_time,
-                 record_json = excluded.record_json",
+                 record_json = excluded.record_json,
+                 overlay_track_key = excluded.overlay_track_key",
             params![
                 account_id,
                 record_type,
                 record_id,
                 played_time,
                 record_json,
-                raw_json
+                raw_json,
+                overlay_track_key
             ],
         )
         .map_err(|error| format!("保存历史记录失败：{error}"))?;
@@ -715,23 +783,187 @@ fn upsert_record<T: Serialize>(
 }
 
 pub(crate) fn export(history_dir: &Path, account_id: &str) -> Result<PathBuf, String> {
-    let cache = load_cache(history_dir, account_id)?
-        .ok_or_else(|| "当前账号还没有可导出的历史数据".to_owned())?;
     let export_dir = history_dir.join(EXPORT_DIRECTORY);
     fs::create_dir_all(&export_dir).map_err(|error| format!("创建导出目录失败：{error}"))?;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("读取导出时间失败：{error}"))?
         .as_millis();
-    let path = export_dir.join(format!("{account_id}-{timestamp}.json.gz"));
-    let file = fs::File::create(&path).map_err(|error| format!("创建导出文件失败：{error}"))?;
+    let file_stem = format!("{account_id}-{timestamp}");
+    let path = export_dir.join(format!("{file_stem}.json.gz"));
+    let partial_path = export_dir.join(format!("{file_stem}.json.gz.partial"));
+    if let Err(error) = write_complete_archive(history_dir, account_id, &partial_path) {
+        let _ = fs::remove_file(&partial_path);
+        return Err(error);
+    }
+    if let Err(error) = fs::rename(&partial_path, &path) {
+        let _ = fs::remove_file(&partial_path);
+        return Err(format!("完成历史数据导出失败：{error}"));
+    }
+    Ok(path)
+}
+
+fn write_complete_archive(
+    history_dir: &Path,
+    account_id: &str,
+    destination: &Path,
+) -> Result<(), String> {
+    let connection = open_database(history_dir)?;
+    let total_records: i64 = connection
+        .query_row(
+            "SELECT
+                 (SELECT COUNT(*) FROM history_records WHERE account_id = ?1) +
+                 (SELECT COUNT(*) FROM x_battle_measurement_snapshots WHERE account_id = ?1)",
+            [account_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("检查可导出的历史数据失败：{error}"))?;
+    if total_records == 0 {
+        return Err("当前账号还没有可导出的历史数据".to_owned());
+    }
+    let fetched_at_ms = connection
+        .query_row(
+            "SELECT fetched_at_ms FROM history_meta WHERE account_id = ?1",
+            [account_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取历史同步时间失败：{error}"))?
+        .unwrap_or(0);
+
+    let file =
+        fs::File::create(destination).map_err(|error| format!("创建导出文件失败：{error}"))?;
     let mut encoder = GzEncoder::new(file, Compression::default());
-    serde_json::to_writer_pretty(&mut encoder, &cache)
-        .map_err(|error| format!("生成导出数据失败：{error}"))?;
+    let account_id_json = serde_json::to_string(account_id)
+        .map_err(|error| format!("序列化导出账号信息失败：{error}"))?;
+    write!(
+        encoder,
+        "{{\"schema_version\":2,\"account_id\":{account_id_json},\"fetched_at_ms\":{fetched_at_ms},\"battles\":["
+    )
+    .map_err(|error| format!("写入导出文件失败：{error}"))?;
+
+    let mut first = true;
+    let mut battle_statement = connection
+        .prepare(
+            "SELECT record_json, raw_json, raw_encoding FROM history_records
+             WHERE account_id = ?1 AND record_type = 'battle'
+             ORDER BY played_time IS NULL, played_time DESC, rowid DESC",
+        )
+        .map_err(|error| format!("准备对战数据导出失败：{error}"))?;
+    let battle_rows = battle_statement
+        .query_map([account_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|error| format!("读取对战数据导出失败：{error}"))?;
+    for row in battle_rows {
+        let (record_json, raw_json, raw_encoding) =
+            row.map_err(|error| format!("读取对战导出记录失败：{error}"))?;
+        let record = serde_json::from_str::<Value>(&record_json)
+            .map_err(|error| format!("解析对战导出记录失败：{error}"))?;
+        let raw = decode_raw_json(&raw_json, &raw_encoding)?;
+        if !first {
+            encoder
+                .write_all(b",")
+                .map_err(|error| format!("写入导出文件失败：{error}"))?;
+        }
+        first = false;
+        serde_json::to_writer(&mut encoder, &json!({ "record": record, "raw": raw }))
+            .map_err(|error| format!("生成对战导出数据失败：{error}"))?;
+    }
+    drop(battle_statement);
+    encoder
+        .write_all(b"],\"coop\":[")
+        .map_err(|error| format!("写入导出文件失败：{error}"))?;
+
+    first = true;
+    let mut coop_statement = connection
+        .prepare(
+            "SELECT record_json, raw_json, raw_encoding FROM history_records
+             WHERE account_id = ?1 AND record_type = 'coop'
+             ORDER BY played_time IS NULL, played_time DESC, rowid DESC",
+        )
+        .map_err(|error| format!("准备打工数据导出失败：{error}"))?;
+    let coop_rows = coop_statement
+        .query_map([account_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|error| format!("读取打工数据导出失败：{error}"))?;
+    for row in coop_rows {
+        let (record_json, raw_json, raw_encoding) =
+            row.map_err(|error| format!("读取打工导出记录失败：{error}"))?;
+        let record = serde_json::from_str::<Value>(&record_json)
+            .map_err(|error| format!("解析打工导出记录失败：{error}"))?;
+        let raw = decode_raw_json(&raw_json, &raw_encoding)?;
+        if !first {
+            encoder
+                .write_all(b",")
+                .map_err(|error| format!("写入导出文件失败：{error}"))?;
+        }
+        first = false;
+        serde_json::to_writer(&mut encoder, &json!({ "record": record, "raw": raw }))
+            .map_err(|error| format!("生成打工导出数据失败：{error}"))?;
+    }
+    drop(coop_statement);
+    encoder
+        .write_all(b"],\"x_battle_measurements\":[")
+        .map_err(|error| format!("写入导出文件失败：{error}"))?;
+
+    first = true;
+    let mut measurement_statement = connection
+        .prepare(
+            "SELECT record_id, payload_hash, fetched_at_ms, raw_json, raw_encoding
+             FROM x_battle_measurement_snapshots WHERE account_id = ?1
+             ORDER BY fetched_at_ms, record_id, payload_hash",
+        )
+        .map_err(|error| format!("准备 X 赛结算数据导出失败：{error}"))?;
+    let measurement_rows = measurement_statement
+        .query_map([account_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(|error| format!("读取 X 赛结算数据导出失败：{error}"))?;
+    for row in measurement_rows {
+        let (record_id, payload_hash, fetched_at, raw_json, raw_encoding) =
+            row.map_err(|error| format!("读取 X 赛结算导出记录失败：{error}"))?;
+        let raw = decode_raw_json(&raw_json, &raw_encoding)?;
+        if !first {
+            encoder
+                .write_all(b",")
+                .map_err(|error| format!("写入导出文件失败：{error}"))?;
+        }
+        first = false;
+        serde_json::to_writer(
+            &mut encoder,
+            &json!({
+                "record_id": record_id,
+                "payload_hash": payload_hash,
+                "fetched_at_ms": fetched_at,
+                "raw": raw,
+            }),
+        )
+        .map_err(|error| format!("生成 X 赛结算导出数据失败：{error}"))?;
+    }
+    drop(measurement_statement);
+    encoder
+        .write_all(b"]}")
+        .map_err(|error| format!("写入导出文件失败：{error}"))?;
     encoder
         .finish()
-        .map_err(|error| format!("写入导出文件失败：{error}"))?;
-    Ok(path)
+        .map_err(|error| format!("完成历史数据导出失败：{error}"))?;
+    Ok(())
 }
 
 pub(crate) fn delete_account(history_dir: &Path, account_id: &str) -> Result<(), String> {
@@ -833,30 +1065,16 @@ fn encode_raw_json(raw: &Value) -> Result<Vec<u8>, String> {
         .map_err(|error| format!("完成原始记录压缩失败：{error}"))
 }
 
-fn overlay_identity_raw(raw: &Value) -> Value {
-    let rule = raw.pointer("/vsRule/rule").cloned().unwrap_or(Value::Null);
-    let players = raw
-        .pointer("/myTeam/players")
-        .and_then(Value::as_array)
-        .map(|players| {
-            players
-                .iter()
-                .map(|player| {
-                    json!({
-                        "isMyself": player.get("isMyself"),
-                        "id": player.get("id"),
-                        "nameId": player.get("nameId"),
-                        "weapon": { "id": player.pointer("/weapon/id") },
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-
-    json!({
-        "vsRule": { "rule": rule },
-        "myTeam": { "players": players },
-    })
+fn overlay_cache_raw(track_key: &str) -> Value {
+    if track_key == NO_OVERLAY_TRACK {
+        return json!({});
+    }
+    let mut raw = serde_json::Map::new();
+    raw.insert(
+        CACHED_POWER_TRACK_KEY.to_owned(),
+        Value::String(track_key.to_owned()),
+    );
+    Value::Object(raw)
 }
 
 fn decode_raw_json(bytes: &[u8], encoding: &str) -> Result<Value, String> {
@@ -907,6 +1125,28 @@ mod tests {
         }
     }
 
+    fn sample_coop(id: &str, played_time: String) -> ArchivedCoop {
+        ArchivedCoop {
+            record: CoopRecord {
+                id: id.to_owned(),
+                played_time: Some(played_time),
+                rule: None,
+                stage: None,
+                result_wave: None,
+                clear_waves: None,
+                job_point: None,
+                after_grade: None,
+                after_grade_point: None,
+                danger_rate: None,
+                golden_eggs: None,
+                power_eggs: None,
+                rescued: None,
+                rescued_by_others: None,
+            },
+            raw: json!({ "id": id, "raw": "complete-coop-response" }),
+        }
+    }
+
     #[test]
     fn stores_deduplicated_compressed_records_and_loads_them() {
         let directory = tempdir().unwrap();
@@ -926,6 +1166,80 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn upgrades_existing_history_database_without_losing_archived_json() {
+        let directory = tempdir().unwrap();
+        let old_database = Connection::open(database_path(directory.path())).unwrap();
+        old_database
+            .execute_batch(
+                "CREATE TABLE history_records (
+                     account_id TEXT NOT NULL,
+                     record_type TEXT NOT NULL,
+                     record_id TEXT NOT NULL,
+                     played_time TEXT,
+                     record_json TEXT NOT NULL,
+                     raw_json BLOB NOT NULL,
+                     raw_encoding TEXT NOT NULL DEFAULT 'gzip',
+                     PRIMARY KEY (account_id, record_type, record_id)
+                 );
+                 CREATE TABLE history_meta (
+                     account_id TEXT PRIMARY KEY,
+                     schema_version INTEGER NOT NULL,
+                     fetched_at_ms INTEGER NOT NULL
+                 );",
+            )
+            .unwrap();
+        let archived = sample_cache().battles.remove(0);
+        let record_json = serde_json::to_string(&archived.record).unwrap();
+        let raw_json = encode_raw_json(&archived.raw).unwrap();
+        old_database
+            .execute(
+                "INSERT INTO history_records(
+                     account_id, record_type, record_id, played_time, record_json, raw_json
+                 ) VALUES ('account', 'battle', ?1, ?2, ?3, ?4)",
+                params![
+                    archived.record.id,
+                    archived.record.played_time,
+                    record_json,
+                    raw_json
+                ],
+            )
+            .unwrap();
+        drop(old_database);
+
+        let upgraded = open_database(directory.path()).unwrap();
+        let upgraded_columns: i64 = upgraded
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('history_records')
+                 WHERE name = 'overlay_track_key'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let upgraded_meta: i64 = upgraded
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('history_meta')
+                 WHERE name = 'sync_complete'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(upgraded_columns, 1);
+        assert_eq!(upgraded_meta, 1);
+        let (raw_bytes, encoding): (Vec<u8>, String) = upgraded
+            .query_row(
+                "SELECT raw_json, raw_encoding FROM history_records
+                 WHERE account_id = 'account' AND record_id = 'battle-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            decode_raw_json(&raw_bytes, &encoding).unwrap(),
+            archived.raw
+        );
     }
 
     #[test]
@@ -1202,10 +1516,149 @@ mod tests {
             .unwrap();
         drop(connection);
 
-        let (battles, coop) = load_known_record_ids(directory.path(), "account").unwrap();
+        let (battles, coop) = load_known_record_ids(directory.path(), "account", None).unwrap();
         assert_eq!(battles.len(), 2);
         assert!(battles.contains("battle-1"));
         assert!(battles.contains("battle-2"));
         assert!(coop.is_empty());
+    }
+
+    #[test]
+    fn incremental_id_lookup_limits_each_record_type_independently() {
+        let directory = tempdir().unwrap();
+        let mut cache = sample_cache();
+        cache.battles.clear();
+        cache.coop.clear();
+        for index in 0..55 {
+            let mut battle = sample_cache().battles.remove(0);
+            battle.record.id = format!("battle-{index:02}");
+            battle.record.played_time = Some(format!("2026-09-22T00:{index:02}:00Z"));
+            battle.raw["id"] = Value::String(battle.record.id.clone());
+            cache.battles.push(battle);
+            cache.coop.push(sample_coop(
+                &format!("coop-{index:02}"),
+                format!("2026-09-22T00:{index:02}:00Z"),
+            ));
+        }
+        save_cache(directory.path(), "account", &cache).unwrap();
+
+        let (all_battles, all_coop) =
+            load_known_record_ids(directory.path(), "account", None).unwrap();
+        assert_eq!(all_battles.len(), 55);
+        assert_eq!(all_coop.len(), 55);
+
+        let (recent_battles, recent_coop) =
+            load_known_record_ids(directory.path(), "account", Some(50)).unwrap();
+        assert_eq!(recent_battles.len(), 50);
+        assert_eq!(recent_coop.len(), 50);
+        assert!(!recent_battles.contains("battle-04"));
+        assert!(recent_battles.contains("battle-54"));
+        assert!(!recent_coop.contains("coop-04"));
+        assert!(recent_coop.contains("coop-54"));
+    }
+
+    #[test]
+    fn overlay_track_index_backfills_legacy_rows_then_avoids_raw_json() {
+        let directory = tempdir().unwrap();
+        let mut cache = sample_cache();
+        cache.battles[0].record.rule = Some("CLAM".to_owned());
+        cache.battles[0].record.power = Some(2020.0);
+        cache.battles[0].record.played_time = Some("2026-09-22T03:00:00Z".to_owned());
+        let mut previous = cache.battles[0].clone();
+        previous.record.id = "battle-previous".to_owned();
+        previous.record.power = Some(2000.0);
+        previous.record.played_time = Some("2026-09-22T02:00:00Z".to_owned());
+        cache.battles.push(previous);
+        save_cache(directory.path(), "account", &cache).unwrap();
+
+        let connection = open_database(directory.path()).unwrap();
+        connection
+            .execute(
+                "UPDATE history_records SET overlay_track_key = NULL WHERE account_id = ?1",
+                ["account"],
+            )
+            .unwrap();
+        drop(connection);
+
+        let legacy_cache = load_overlay_cache(directory.path(), "account")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            OverlayState::from_history(&legacy_cache)
+                .selected
+                .unwrap()
+                .power_delta,
+            Some(20.0)
+        );
+
+        let connection = open_database(directory.path()).unwrap();
+        let indexed_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM history_records
+                 WHERE account_id = ?1 AND overlay_track_key IS NOT NULL",
+                ["account"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexed_rows, 2);
+        connection
+            .execute(
+                "UPDATE history_records SET raw_json = X'00' WHERE account_id = ?1",
+                ["account"],
+            )
+            .unwrap();
+        drop(connection);
+
+        let indexed_cache = load_overlay_cache(directory.path(), "account")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            OverlayState::from_history(&indexed_cache)
+                .selected
+                .unwrap()
+                .power_delta,
+            Some(20.0)
+        );
+    }
+
+    #[test]
+    fn export_streams_complete_battle_coop_and_settlement_raw_json() {
+        let directory = tempdir().unwrap();
+        let mut cache = sample_cache();
+        let battle_raw = json!({ "id": "battle-1", "full": [1, 2, 3] });
+        cache.battles[0].raw = battle_raw.clone();
+        let coop_raw = json!({ "id": "coop-1", "full": { "waves": [1, 2, 3] } });
+        cache
+            .coop
+            .push(sample_coop("coop-1", "2026-09-22T01:00:00Z".to_owned()));
+        cache.coop[0].raw = coop_raw.clone();
+        save_cache(directory.path(), "account", &cache).unwrap();
+
+        let settlement_raw =
+            json!({ "xMatchMeasurement": { "state": "COMPLETED", "detail": [4, 5] } });
+        HistoryRecordWriter::open(directory.path())
+            .unwrap()
+            .save(
+                "account",
+                456,
+                HistoryFetchedRecord::XBattleSettlement {
+                    record_id: "battle-1".to_owned(),
+                    power_after: 2110.0,
+                    payload_hash: "c".repeat(64),
+                    raw_group: settlement_raw.clone(),
+                },
+            )
+            .unwrap();
+
+        let archive_path = export(directory.path(), "account").unwrap();
+        let mut decoder = GzDecoder::new(fs::File::open(archive_path).unwrap());
+        let mut bytes = Vec::new();
+        decoder.read_to_end(&mut bytes).unwrap();
+        let archive: Value = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(archive["battles"][0]["raw"], battle_raw);
+        assert_eq!(archive["coop"][0]["raw"], coop_raw);
+        assert_eq!(archive["x_battle_measurements"][0]["raw"], settlement_raw);
+        assert_eq!(archive["schema_version"], 2);
     }
 }

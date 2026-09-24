@@ -7,8 +7,9 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="stylesheet" href="/overlay-card.css" />
     <style>
+      :root { --obs-card-width: __OBS_CARD_WIDTH__px; --obs-card-height: __OBS_CARD_HEIGHT__px; }
       html, body { margin: 0; background: transparent; overflow: hidden; }
-      #root { width: 560px; height: 100px; }
+      #root { width: var(--obs-card-width); height: var(--obs-card-height); }
     </style>
   </head>
   <body>
@@ -16,22 +17,21 @@
     <script src="/overlay-card-renderer.js"></script>
     <script>
       const root = document.querySelector('#root');
-      const BASE_WIDTH = 560;
-      const BASE_HEIGHT = 100;
       function fitOverlay() {
         const viewportWidth = window.innerWidth;
         const viewportHeight = window.innerHeight;
+        const card = root.querySelector('.overlay-card');
+        if (!card) return;
+        const cardWidth = card.offsetWidth;
+        const cardHeight = card.offsetHeight;
         const scale = viewportWidth > 0 && viewportHeight > 0
-          ? Math.min(1, viewportWidth / BASE_WIDTH, viewportHeight / BASE_HEIGHT)
+          ? Math.min(1, viewportWidth / cardWidth, viewportHeight / cardHeight)
           : 1;
         const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
-        const card = root.querySelector('.overlay-card');
-        if (card) {
-          card.style.transformOrigin = 'top left';
-          card.style.transform = `scale(${safeScale})`;
-        }
-        root.style.width = `${BASE_WIDTH * safeScale}px`;
-        root.style.height = `${BASE_HEIGHT * safeScale}px`;
+        card.style.transformOrigin = 'top left';
+        card.style.transform = `scale(${safeScale})`;
+        root.style.width = `${cardWidth * safeScale}px`;
+        root.style.height = `${cardHeight * safeScale}px`;
       }
 
       function render(state) {

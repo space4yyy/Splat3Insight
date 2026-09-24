@@ -13,10 +13,6 @@ const syncStatusElement = document.querySelector('#sync-status');
 const overlayServiceStatusElement = document.querySelector('#overlay-service-status');
 const startOverlayServiceButton = document.querySelector('#start-overlay-service');
 const stopOverlayServiceButton = document.querySelector('#stop-overlay-service');
-const copyOverlayUrlButton = document.querySelector('#copy-overlay-url');
-const copyRandomWeaponsUrlButton = document.querySelector('#copy-random-weapons-url');
-const copyRandomWeaponsRulesUrlButton = document.querySelector('#copy-random-weapons-rules-url');
-const copyClockUrlButton = document.querySelector('#copy-clock-url');
 const refreshPrivateWeaponsButton = document.querySelector('#refresh-private-weapons');
 const randomWeaponsPreviewFrame = document.querySelector('.weapon-source-preview iframe');
 const backgroundClosePrompt = document.querySelector('#background-close-prompt');
@@ -24,14 +20,11 @@ const cancelCloseButton = document.querySelector('#cancel-close');
 const exitFromCloseButton = document.querySelector('#exit-from-close');
 const hideToTrayButton = document.querySelector('#hide-to-tray');
 
-const OBS_OVERLAY_URL = 'http://127.0.0.1:17353/overlay';
-const OBS_RANDOM_WEAPONS_URL = 'http://127.0.0.1:17353/random-weapons';
-const OBS_RANDOM_WEAPONS_RULES_URL = 'http://127.0.0.1:17353/random-weapons-rules';
-const OBS_CLOCK_URL = 'http://127.0.0.1:17353/clock';
-
 let currentSyncStatus = null;
 let lastCompletedSyncAt = null;
 let closePromptAcknowledged = false;
+let obsCardCatalog = new Map();
+let overlayServiceUrl = null;
 
 try {
   closePromptAcknowledged = localStorage.getItem('splat3-close-prompt-acknowledged') === 'true';
@@ -137,6 +130,12 @@ function renderOverlayServiceStatus(status) {
   const running = status.state === 'running';
   const starting = status.state === 'starting';
   const stopped = status.state === 'stopped';
+  if (status.url) {
+    try {
+      overlayServiceUrl = new URL(status.url).origin;
+      renderObsCardLinks();
+    } catch {}
+  }
   overlayServiceStatusElement.textContent = running
     ? `● ${status.message}`
     : `${status.message}${status.error ? `：${status.error}` : ''}`;
@@ -145,6 +144,69 @@ function renderOverlayServiceStatus(status) {
   stopOverlayServiceButton.hidden = !running && !starting;
   startOverlayServiceButton.disabled = starting;
   stopOverlayServiceButton.disabled = starting;
+}
+
+async function loadObsCardCatalog() {
+  const response = await fetch('./obs-cards.json', { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`读取 OBS 卡片配置失败（HTTP ${response.status}）`);
+  }
+  const cards = await response.json();
+  if (!Array.isArray(cards) || cards.some((card) => !card.id || !card.route || !card.width || !card.height)) {
+    throw new Error('OBS 卡片配置无效');
+  }
+  obsCardCatalog = new Map(cards.map((card) => [card.id, card]));
+  const overlayCard = obsCardCatalog.get('overlay');
+  if (overlayCard) {
+    document.documentElement.style.setProperty('--obs-card-width', `${overlayCard.width}px`);
+    document.documentElement.style.setProperty('--obs-card-height', `${overlayCard.height}px`);
+  }
+  renderObsCardLinks();
+
+  document.querySelectorAll('[data-obs-card-copy]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const card = obsCardCatalog.get(button.dataset.obsCardCopy);
+      if (!card || !overlayServiceUrl) return;
+      const url = new URL(card.route, overlayServiceUrl).href;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(url);
+        } else {
+          const input = document.createElement('textarea');
+          input.value = url;
+          input.style.position = 'fixed';
+          input.style.opacity = '0';
+          document.body.appendChild(input);
+          input.focus();
+          input.select();
+          document.execCommand('copy');
+          input.remove();
+        }
+        setMessage(`${card.name} OBS 地址已复制。`);
+      } catch (error) {
+        setMessage(`复制${card.name} OBS 地址失败：${String(error)}`, true);
+      }
+    });
+  });
+}
+
+function renderObsCardLinks() {
+  if (!obsCardCatalog.size) return;
+  for (const [id, card] of obsCardCatalog) {
+    const url = overlayServiceUrl ? new URL(card.route, overlayServiceUrl).href : card.route;
+    document.querySelectorAll(`[data-obs-card-url="${id}"]`).forEach((element) => {
+      element.textContent = url;
+    });
+    document.querySelectorAll(`[data-obs-card-size="${id}"]`).forEach((element) => {
+      element.textContent = `OBS 推荐尺寸：${card.width} x ${card.height}`;
+    });
+    document.querySelectorAll(`[data-obs-card-preview="${id}"]`).forEach((frame) => {
+      frame.style.width = `${card.width}px`;
+      frame.style.height = `${card.height}px`;
+      const previewUrl = `${url}${card.previewQuery || ''}`;
+      if (frame.src !== previewUrl) frame.src = previewUrl;
+    });
+  }
 }
 
 function fitOverlayPreview() {
@@ -340,98 +402,16 @@ stopOverlayServiceButton.addEventListener('click', async () => {
   }
 });
 
-copyOverlayUrlButton.addEventListener('click', async () => {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(OBS_OVERLAY_URL);
-    } else {
-      const input = document.createElement('textarea');
-      input.value = OBS_OVERLAY_URL;
-      input.style.position = 'fixed';
-      input.style.opacity = '0';
-      document.body.appendChild(input);
-      input.focus();
-      input.select();
-      document.execCommand('copy');
-      input.remove();
-    }
-    setMessage('OBS 地址已复制。');
-  } catch (error) {
-    setMessage(`复制 OBS 地址失败：${String(error)}`, true);
-  }
-});
-
-copyRandomWeaponsUrlButton.addEventListener('click', async () => {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(OBS_RANDOM_WEAPONS_URL);
-    } else {
-      const input = document.createElement('textarea');
-      input.value = OBS_RANDOM_WEAPONS_URL;
-      input.style.position = 'fixed';
-      input.style.opacity = '0';
-      document.body.appendChild(input);
-      input.focus();
-      input.select();
-      document.execCommand('copy');
-      input.remove();
-    }
-    setMessage('随机武器 OBS 地址已复制。');
-  } catch (error) {
-    setMessage(`复制随机武器 OBS 地址失败：${String(error)}`, true);
-  }
-});
-
-copyRandomWeaponsRulesUrlButton.addEventListener('click', async () => {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(OBS_RANDOM_WEAPONS_RULES_URL);
-    } else {
-      const input = document.createElement('textarea');
-      input.value = OBS_RANDOM_WEAPONS_RULES_URL;
-      input.style.position = 'fixed';
-      input.style.opacity = '0';
-      document.body.appendChild(input);
-      input.focus();
-      input.select();
-      document.execCommand('copy');
-      input.remove();
-    }
-    setMessage('私房随武规则 OBS 地址已复制。');
-  } catch (error) {
-    setMessage(`复制私房随武规则 OBS 地址失败：${String(error)}`, true);
-  }
-});
-
-copyClockUrlButton.addEventListener('click', async () => {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(OBS_CLOCK_URL);
-    } else {
-      const input = document.createElement('textarea');
-      input.value = OBS_CLOCK_URL;
-      input.style.position = 'fixed';
-      input.style.opacity = '0';
-      document.body.appendChild(input);
-      input.focus();
-      input.select();
-      document.execCommand('copy');
-      input.remove();
-    }
-    setMessage('时钟 OBS 地址已复制。');
-  } catch (error) {
-    setMessage(`复制时钟 OBS 地址失败：${String(error)}`, true);
-  }
-});
-
 refreshPrivateWeaponsButton.addEventListener('click', async () => {
   refreshPrivateWeaponsButton.disabled = true;
   try {
     await invoke('refresh_private_weapons');
-    randomWeaponsPreviewFrame?.contentWindow?.postMessage(
-      { type: 'refresh-random-weapons' },
-      new URL(OBS_RANDOM_WEAPONS_URL).origin,
-    );
+    if (randomWeaponsPreviewFrame?.contentWindow && overlayServiceUrl) {
+      randomWeaponsPreviewFrame.contentWindow.postMessage(
+        { type: 'refresh-random-weapons' },
+        overlayServiceUrl,
+      );
+    }
     setMessage('随机武器已重新抽取。');
   } catch (error) {
     setMessage(String(error), true);
@@ -530,6 +510,8 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
-refreshAccounts().catch((error) => setMessage(String(error), true));
+loadObsCardCatalog()
+  .then(() => refreshAccounts())
+  .catch((error) => setMessage(String(error), true));
 refreshSyncStatus();
 refreshOverlayServiceStatus();

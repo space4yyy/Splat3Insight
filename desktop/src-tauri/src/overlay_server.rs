@@ -3,7 +3,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -13,8 +13,9 @@ use splat3_widget_core::overlay::OverlayState;
 
 pub const OVERLAY_HOST: &str = "127.0.0.1";
 pub const OVERLAY_PORT: u16 = 17_353;
-pub const OVERLAY_URL: &str = "http://127.0.0.1:17353/overlay";
 
+const OBS_CARD_CATALOG: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/obs-cards.json"));
 const OVERLAY_HTML: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/overlay.html"));
 const OVERLAY_CARD_CSS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -40,6 +41,52 @@ const DISPLAY_FONT: &[u8] = include_bytes!(concat!(
 const APP_ICON: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/icons/icon.png"));
 const MAX_CONCURRENT_CONNECTIONS: usize = 16;
 const MAX_REQUEST_HEADER_BYTES: usize = 8 * 1024;
+
+#[derive(Debug, Deserialize)]
+struct ObsCardDefinition {
+    id: String,
+    route: String,
+    page: String,
+    width: u16,
+    height: u16,
+}
+
+fn obs_card_catalog() -> &'static [ObsCardDefinition] {
+    static CATALOG: OnceLock<Vec<ObsCardDefinition>> = OnceLock::new();
+    CATALOG
+        .get_or_init(|| {
+            serde_json::from_str(OBS_CARD_CATALOG)
+                .expect("embedded OBS card catalog must be valid JSON")
+        })
+        .as_slice()
+}
+
+fn overlay_url() -> String {
+    let route = obs_card_catalog()
+        .iter()
+        .find(|card| card.id == "overlay")
+        .map(|card| card.route.as_str())
+        .expect("OBS card catalog must include the overlay card");
+    format!("http://{OVERLAY_HOST}:{OVERLAY_PORT}{route}")
+}
+
+fn render_card_page(card: &ObsCardDefinition) -> HttpResponse {
+    let template = match card.page.as_str() {
+        "overlay" => OVERLAY_HTML,
+        "weapons" => RANDOM_WEAPONS_HTML,
+        "rules" => RANDOM_WEAPONS_RULES_HTML,
+        "clock" => CLOCK_HTML,
+        _ => return not_found(),
+    };
+    let body = template
+        .replace("__OBS_CARD_WIDTH__", &card.width.to_string())
+        .replace("__OBS_CARD_HEIGHT__", &card.height.to_string());
+    HttpResponse {
+        status: "200 OK",
+        content_type: "text/html; charset=utf-8",
+        body: body.into_bytes(),
+    }
+}
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 const OVERLOAD_WRITE_TIMEOUT: Duration = Duration::from_millis(250);
 
@@ -106,7 +153,7 @@ struct OverlayServiceControllerInner {
 pub fn new_status() -> OverlayServiceStatusHandle {
     Arc::new(Mutex::new(OverlayServiceStatus {
         state: "stopped".to_owned(),
-        url: OVERLAY_URL.to_owned(),
+        url: overlay_url(),
         message: "OBS 服务未启动".to_owned(),
         error: None,
     }))
@@ -271,8 +318,9 @@ fn run_server(
     }
 
     set_status(&status, "running", "OBS 服务运行中", None);
-    write_log(&config, &format!("监听成功，OBS 地址: {OVERLAY_URL}"));
-    crate::log_console("overlay", &format!("OBS 地址: {OVERLAY_URL}"));
+    let url = overlay_url();
+    write_log(&config, &format!("监听成功，OBS 地址: {url}"));
+    crate::log_console("overlay", &format!("OBS 地址: {url}"));
     let active_connections = Arc::new(AtomicUsize::new(0));
     while !stop_signal.load(Ordering::SeqCst) {
         match listener.accept() {
@@ -455,16 +503,27 @@ fn route_request(
         });
     }
 
+    if path == "/" {
+        let card = obs_card_catalog()
+            .iter()
+            .find(|card| card.id == "overlay")
+            .expect("OBS card catalog must include the overlay card");
+        return Ok(render_card_page(card));
+    }
+    if let Some(card) = obs_card_catalog().iter().find(|card| card.route == path) {
+        return Ok(render_card_page(card));
+    }
+
     match path {
         "/favicon.png" => Ok(HttpResponse {
             status: "200 OK",
             content_type: "image/png",
             body: APP_ICON.to_vec(),
         }),
-        "/" | "/overlay" => Ok(HttpResponse {
+        "/obs-cards.json" => Ok(HttpResponse {
             status: "200 OK",
-            content_type: "text/html; charset=utf-8",
-            body: OVERLAY_HTML.as_bytes().to_vec(),
+            content_type: "application/json; charset=utf-8",
+            body: OBS_CARD_CATALOG.as_bytes().to_vec(),
         }),
         "/fonts/DFP_GBZY7.ttf" => Ok(HttpResponse {
             status: "200 OK",
@@ -480,21 +539,6 @@ fn route_request(
             status: "200 OK",
             content_type: "text/javascript; charset=utf-8",
             body: OVERLAY_CARD_RENDERER.as_bytes().to_vec(),
-        }),
-        "/random-weapons" => Ok(HttpResponse {
-            status: "200 OK",
-            content_type: "text/html; charset=utf-8",
-            body: RANDOM_WEAPONS_HTML.as_bytes().to_vec(),
-        }),
-        "/random-weapons-rules" => Ok(HttpResponse {
-            status: "200 OK",
-            content_type: "text/html; charset=utf-8",
-            body: RANDOM_WEAPONS_RULES_HTML.as_bytes().to_vec(),
-        }),
-        "/clock" => Ok(HttpResponse {
-            status: "200 OK",
-            content_type: "text/html; charset=utf-8",
-            body: CLOCK_HTML.as_bytes().to_vec(),
         }),
         "/api/random-weapons" => match load_private_weapon_set(config) {
             Ok(state) => Ok(HttpResponse {
@@ -1053,6 +1097,65 @@ mod tests {
         assert_eq!(response.status, "200 OK");
         assert_eq!(response.content_type, "text/javascript; charset=utf-8");
         assert_eq!(response.body, OVERLAY_CARD_RENDERER.as_bytes());
+    }
+
+    #[test]
+    fn catalog_routes_render_pages_with_catalog_dimensions() {
+        let directory = tempdir().unwrap();
+        let config = OverlayServerConfig {
+            accounts_path: directory.path().join("accounts.json"),
+            history_dir: directory.path().join("history"),
+        };
+
+        for card in obs_card_catalog() {
+            let response = route_request("GET", &card.route, &config).unwrap();
+            let page = String::from_utf8(response.body).unwrap();
+            assert_eq!(response.status, "200 OK", "{} route", card.id);
+            assert!(
+                page.contains(&format!("--obs-card-width: {}px", card.width)),
+                "{} width is injected from catalog",
+                card.id
+            );
+            assert!(
+                page.contains(&format!("--obs-card-height: {}px", card.height)),
+                "{} height is injected from catalog",
+                card.id
+            );
+            assert!(!page.contains("__OBS_CARD_WIDTH__"));
+            assert!(!page.contains("__OBS_CARD_HEIGHT__"));
+        }
+    }
+
+    #[test]
+    fn serves_the_same_card_catalog_used_by_routes() {
+        let directory = tempdir().unwrap();
+        let response = route_request(
+            "GET",
+            "/obs-cards.json",
+            &OverlayServerConfig {
+                accounts_path: directory.path().join("accounts.json"),
+                history_dir: directory.path().join("history"),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(response.status, "200 OK");
+        assert_eq!(response.body, OBS_CARD_CATALOG.as_bytes());
+        let parsed: Vec<ObsCardDefinition> = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(parsed.len(), obs_card_catalog().len());
+    }
+
+    #[test]
+    fn overlay_status_url_uses_catalog_route() {
+        let status = new_status();
+        assert_eq!(status.lock().unwrap().url, overlay_url());
+        assert!(overlay_url().ends_with(
+            &obs_card_catalog()
+                .iter()
+                .find(|card| card.id == "overlay")
+                .unwrap()
+                .route
+        ));
     }
 
     #[test]

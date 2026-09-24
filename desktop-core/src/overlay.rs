@@ -84,7 +84,7 @@ fn is_overlay_battle(record: &BattleRecord) -> bool {
     )
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 enum PowerTrack {
     XMatch {
         power_kind: String,
@@ -106,7 +106,28 @@ enum PowerTrack {
     },
 }
 
+const CACHED_POWER_TRACK_KEY: &str = "__s3w_overlay_power_track_v1";
+
+pub fn archived_battle_power_track_key(
+    record: &BattleRecord,
+    raw: &serde_json::Value,
+) -> Option<String> {
+    let item = ArchivedBattle {
+        record: record.clone(),
+        raw: raw.clone(),
+    };
+    power_track(&item).and_then(|track| serde_json::to_string(&track).ok())
+}
+
 fn power_track(item: &ArchivedBattle) -> Option<PowerTrack> {
+    if let Some(serialized_track) = item
+        .raw
+        .get(CACHED_POWER_TRACK_KEY)
+        .and_then(serde_json::Value::as_str)
+    {
+        return serde_json::from_str(serialized_track).ok();
+    }
+
     let record = &item.record;
     let power_kind = record.power_kind.as_ref()?.clone();
     match (record.mode.as_str(), record.bankara_mode.as_deref()) {

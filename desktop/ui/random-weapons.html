@@ -7,8 +7,9 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <style>
       * { box-sizing: border-box; }
-      html, body { width: 164px; height: 356px; margin: 0; overflow: hidden; background: transparent; }
-      #weapons { width: 164px; height: 356px; display: grid; grid-template-columns: repeat(2, 80px); grid-template-rows: 20px repeat(4, 80px); gap: 4px; border-radius: 6px; background: rgb(0 0 0 / 22%); }
+      :root { --obs-card-width: __OBS_CARD_WIDTH__px; --obs-card-height: __OBS_CARD_HEIGHT__px; }
+      html, body { width: var(--obs-card-width); height: var(--obs-card-height); margin: 0; overflow: hidden; background: transparent; }
+      #weapons { width: var(--obs-card-width); height: var(--obs-card-height); display: grid; grid-template-columns: repeat(2, 1fr); grid-template-rows: 20px repeat(4, 1fr); gap: 4px; border-radius: 6px; background: rgb(0 0 0 / 22%); }
       .team-label { display: grid; place-items: center; color: #000; font: 900 20px/20px system-ui, sans-serif; text-shadow: 0 0 2px rgb(255 255 255 / 75%); }
       img { display: block; width: 80px; height: 80px; object-fit: contain; }
     </style>

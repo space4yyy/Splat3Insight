@@ -12,6 +12,7 @@ build:
 test:
 	cargo test --manifest-path desktop-core/Cargo.toml
 	cargo test --manifest-path desktop/src-tauri/Cargo.toml
+	npm --prefix desktop test
 
 fmt-check:
 	cargo fmt --manifest-path desktop-core/Cargo.toml -- --check

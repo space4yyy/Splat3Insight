@@ -2,7 +2,8 @@
   "name": "splat3-streaming-widget-desktop",
   "private": true,
   "scripts": {
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "node --test tests/*.test.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"

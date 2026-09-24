@@ -8,8 +8,6 @@
 
 :root {
   font-family: "DFP GBZY7", Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
-  --overlay-base-width: 560px;
-  --overlay-base-height: 100px;
 }
 
 * {
@@ -17,8 +15,8 @@
 }
 
 .overlay-card {
-  width: var(--overlay-base-width);
-  height: var(--overlay-base-height);
+  width: var(--obs-card-width);
+  height: var(--obs-card-height);
   min-width: 0;
   max-width: none;
   min-height: 0;

@@ -10,6 +10,44 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use url::{form_urlencoded, Url};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NintendoIdentityError {
+    Transport,
+    SessionTokenRejected,
+    HttpStatus(u16),
+    InvalidResponse,
+    InvalidProfile,
+}
+
+impl std::fmt::Display for NintendoIdentityError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Transport => write!(formatter, "连接 Nintendo 账号服务失败，请检查网络后重试"),
+            Self::SessionTokenRejected => {
+                write!(
+                    formatter,
+                    "已保存的 Nintendo session token 已失效，请重新添加账号"
+                )
+            }
+            Self::HttpStatus(status) => write!(
+                formatter,
+                "Nintendo 账号服务暂时不可用（HTTP {status}），请稍后重试"
+            ),
+            Self::InvalidResponse => {
+                write!(
+                    formatter,
+                    "Nintendo 账号服务返回了无法识别的数据，请稍后重试"
+                )
+            }
+            Self::InvalidProfile => {
+                write!(formatter, "Nintendo 账号资料缺少必要信息，请稍后重试")
+            }
+        }
+    }
+}
+
+impl std::error::Error for NintendoIdentityError {}
+
 pub const NINTENDO_CLIENT_ID: &str = "71b963c1b7b6d119";
 pub const REDIRECT_URI: &str = "npf71b963c1b7b6d119://auth";
 const AUTHORIZE_URL: &str = "https://accounts.nintendo.com/connect/1.0.0/authorize";
@@ -148,13 +186,17 @@ pub async fn exchange_session_token(callback: LoginCallback) -> Result<NintendoI
         .await
         .map_err(|error| format!("Nintendo session response was invalid: {error}"))?;
 
-    identity_from_session_token(&client, &session_response.session_token).await
+    identity_from_session_token(&client, &session_response.session_token)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// Rehydrates the Nintendo identity and short-lived `id_token` from a saved
 /// session token. This lets SplatNet credentials be refreshed without asking
 /// the user to log in again.
-pub async fn refresh_identity(session_token: &str) -> Result<NintendoIdentity, String> {
+pub async fn refresh_identity(
+    session_token: &str,
+) -> Result<NintendoIdentity, NintendoIdentityError> {
     let client = reqwest::Client::new();
     identity_from_session_token(&client, session_token).await
 }
@@ -162,7 +204,7 @@ pub async fn refresh_identity(session_token: &str) -> Result<NintendoIdentity, S
 async fn identity_from_session_token(
     client: &reqwest::Client,
     session_token: &str,
-) -> Result<NintendoIdentity, String> {
+) -> Result<NintendoIdentity, NintendoIdentityError> {
     let token_response = client
         .post("https://accounts.nintendo.com/connect/1.0.0/api/token")
         .json(&serde_json::json!({
@@ -172,12 +214,13 @@ async fn identity_from_session_token(
         }))
         .send()
         .await
-        .map_err(|error| format!("Nintendo identity request failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("Nintendo identity request failed: {error}"))?
-        .json::<NintendoTokenResponse>()
+        .map_err(|_| NintendoIdentityError::Transport)?;
+    let status = token_response.status();
+    let token_body = token_response
+        .text()
         .await
-        .map_err(|error| format!("Nintendo identity response was invalid: {error}"))?;
+        .map_err(|_| NintendoIdentityError::Transport)?;
+    let token_response = parse_token_response(status, &token_body)?;
 
     let NintendoTokenResponse {
         access_token,
@@ -189,24 +232,28 @@ async fn identity_from_session_token(
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|error| format!("Nintendo profile request failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("Nintendo profile request failed: {error}"))?
-        .json::<UserProfileResponse>()
+        .map_err(|_| NintendoIdentityError::Transport)?;
+    if !profile.status().is_success() {
+        return Err(NintendoIdentityError::HttpStatus(profile.status().as_u16()));
+    }
+    let profile_body = profile
+        .text()
         .await
-        .map_err(|error| format!("Nintendo profile response was invalid: {error}"))?;
+        .map_err(|_| NintendoIdentityError::Transport)?;
+    let profile = serde_json::from_str::<UserProfileResponse>(&profile_body)
+        .map_err(|_| NintendoIdentityError::InvalidResponse)?;
 
     let account_id = match profile.id {
         serde_json::Value::String(value) => value,
         value => value.to_string(),
     };
     if account_id.is_empty() || account_id == "null" {
-        return Err("Nintendo profile did not include an account id".to_owned());
+        return Err(NintendoIdentityError::InvalidProfile);
     }
 
     let birthday = profile
         .birthday
-        .ok_or_else(|| "Nintendo profile did not include a birthday".to_owned())?;
+        .ok_or(NintendoIdentityError::InvalidProfile)?;
 
     Ok(NintendoIdentity {
         account_id,
@@ -220,6 +267,25 @@ async fn identity_from_session_token(
         id_token,
         session_token: session_token.to_owned(),
     })
+}
+
+fn parse_token_response(
+    status: reqwest::StatusCode,
+    body: &str,
+) -> Result<NintendoTokenResponse, NintendoIdentityError> {
+    let payload = serde_json::from_str::<serde_json::Value>(body).ok();
+    let error_code = payload
+        .as_ref()
+        .and_then(|value| value.get("error"))
+        .and_then(serde_json::Value::as_str);
+    if error_code == Some("invalid_grant") {
+        return Err(NintendoIdentityError::SessionTokenRejected);
+    }
+    if !status.is_success() {
+        return Err(NintendoIdentityError::HttpStatus(status.as_u16()));
+    }
+    serde_json::from_str::<NintendoTokenResponse>(body)
+        .map_err(|_| NintendoIdentityError::InvalidResponse)
 }
 
 fn random_url_token(length: usize) -> Result<String, String> {
@@ -243,6 +309,35 @@ fn callback_parameters(url: &Url) -> std::collections::HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_invalid_grant_is_classified_as_expired_credentials() {
+        let error = parse_token_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":"invalid_grant","error_description":"invalid credentials"}"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(error, NintendoIdentityError::SessionTokenRejected);
+    }
+
+    #[test]
+    fn token_server_errors_are_not_classified_as_expired_credentials() {
+        let error = parse_token_response(
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"error":"server_error"}"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(error, NintendoIdentityError::HttpStatus(503));
+    }
+
+    #[test]
+    fn malformed_successful_token_response_is_not_classified_as_expired() {
+        let error = parse_token_response(reqwest::StatusCode::OK, "not-json").unwrap_err();
+
+        assert_eq!(error, NintendoIdentityError::InvalidResponse);
+    }
 
     #[test]
     fn creates_pkce_authorization_request() {

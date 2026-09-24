@@ -57,11 +57,11 @@
       .overlay-preview__scale > .overlay-card { border-radius: 6px; }
       .overlay-empty { padding: 24px 0; color: #9d9aa8; text-align: center; }
       .weapon-source-preview { display: flex; justify-content: center; padding-top: 12px; }
-      .weapon-source-preview iframe { display: block; width: 164px; height: 356px; overflow: hidden; border: 0; border-radius: 6px; background: transparent; }
+      .weapon-source-preview iframe { display: block; overflow: hidden; border: 0; border-radius: 6px; background: transparent; }
       .weapon-rules-preview { display: flex; justify-content: center; padding-top: 12px; }
-      .weapon-rules-preview iframe { display: block; width: 230px; height: 100px; overflow: hidden; border: 0; border-radius: 8px; background: transparent; }
+      .weapon-rules-preview iframe { display: block; overflow: hidden; border: 0; border-radius: 8px; background: transparent; }
       .clock-preview { display: flex; justify-content: center; padding-top: 12px; }
-      .clock-preview iframe { display: block; width: 260px; height: 72px; overflow: hidden; border: 0; border-radius: 6px; background: transparent; }
+      .clock-preview iframe { display: block; overflow: hidden; border: 0; border-radius: 6px; background: transparent; }
       #background-close-prompt { width: min(420px, calc(100% - 32px)); border: 1px solid #4b4857; border-radius: 18px; padding: 22px; color: #f5f5f2; background: #1b1a23; box-shadow: 0 24px 80px #0009; }
       #background-close-prompt::backdrop { background: #09090dbb; }
       #background-close-prompt h2 { margin: 0; font-size: 20px; }
@@ -105,11 +105,11 @@
         </div>
         <div class="overlay-details">
           <div class="overlay-url-row">
-            <code>http://127.0.0.1:17353/overlay</code>
-            <button id="copy-overlay-url" class="secondary">复制</button>
+            <code data-obs-card-url="overlay"></code>
+            <button data-obs-card-copy="overlay" class="secondary">复制</button>
           </div>
           <div class="obs-help">
-            OBS 尺寸推荐：560 x 100
+            <span data-obs-card-size="overlay"></span>
           </div>
           <div id="overlay-service-status" class="service-status">正在检查 OBS 服务状态…</div>
         </div>
@@ -124,12 +124,12 @@
         </div>
         <div class="overlay-details">
           <div class="overlay-url-row">
-            <code>http://127.0.0.1:17353/random-weapons</code>
-            <button id="copy-random-weapons-url" class="secondary" type="button">复制</button>
+            <code data-obs-card-url="random-weapons"></code>
+            <button data-obs-card-copy="random-weapons" class="secondary" type="button">复制</button>
           </div>
-          <div class="obs-help">OBS 推荐尺寸：164 x 356。A、B 分列显示，每队 4 把；新私人赛同步、手动刷新或重载页面时重新抽取。</div>
+          <div class="obs-help"><span data-obs-card-size="random-weapons"></span>。A、B 分列显示，每队 4 把；新私人赛同步、手动刷新或重载页面时重新抽取。</div>
           <div class="weapon-source-preview">
-            <iframe src="http://127.0.0.1:17353/random-weapons?preview=1" title="私房随武预览" scrolling="no"></iframe>
+            <iframe data-obs-card-preview="random-weapons" title="私房随武预览" scrolling="no"></iframe>
           </div>
         </div>
       </section>
@@ -139,12 +139,12 @@
         </div>
         <div class="overlay-details">
           <div class="overlay-url-row">
-            <code>http://127.0.0.1:17353/random-weapons-rules</code>
-            <button id="copy-random-weapons-rules-url" class="secondary" type="button">复制</button>
+            <code data-obs-card-url="random-weapons-rules"></code>
+            <button data-obs-card-copy="random-weapons-rules" class="secondary" type="button">复制</button>
           </div>
-          <div class="obs-help">OBS 推荐尺寸：230 x 100</div>
+          <div class="obs-help"><span data-obs-card-size="random-weapons-rules"></span></div>
           <div class="weapon-rules-preview">
-            <iframe src="http://127.0.0.1:17353/random-weapons-rules" title="私房随武规则预览" scrolling="no"></iframe>
+            <iframe data-obs-card-preview="random-weapons-rules" title="私房随武规则预览" scrolling="no"></iframe>
           </div>
         </div>
       </section>
@@ -154,12 +154,12 @@
         </div>
         <div class="overlay-details">
           <div class="overlay-url-row">
-            <code>http://127.0.0.1:17353/clock</code>
-            <button id="copy-clock-url" class="secondary" type="button">复制</button>
+            <code data-obs-card-url="clock"></code>
+            <button data-obs-card-copy="clock" class="secondary" type="button">复制</button>
           </div>
-          <div class="obs-help">本地时间（24 小时制，每秒更新）· OBS 推荐尺寸：260 x 72</div>
+          <div class="obs-help">本地时间（24 小时制，每秒更新）· <span data-obs-card-size="clock"></span></div>
           <div class="clock-preview">
-            <iframe src="http://127.0.0.1:17353/clock" title="时钟预览" scrolling="no"></iframe>
+            <iframe data-obs-card-preview="clock" title="时钟预览" scrolling="no"></iframe>
           </div>
         </div>
       </section>
