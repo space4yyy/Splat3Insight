@@ -5,7 +5,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::{json, Value};
 use splat3_widget_core::history::{
-    ArchivedBattle, BattleRecord, HistoryCache, HistoryFetchedRecord, HistorySyncSummary,
+    parse_battle, ArchivedBattle, BattleRecord, HistoryCache, HistoryFetchedRecord,
+    HistorySyncSummary,
 };
 #[cfg(test)]
 use splat3_widget_core::history::{ArchivedCoop, CoopRecord};
@@ -22,6 +23,7 @@ const EXPORT_DIRECTORY: &str = "exports";
 const DATABASE_SCHEMA_VERSION: i64 = 2;
 const NO_OVERLAY_TRACK: &str = "none";
 const CACHED_POWER_TRACK_KEY: &str = "__s3w_overlay_power_track_v1";
+const EVENT_POWER_MIGRATION: &str = "event-power-fields-v1";
 
 fn database_path(history_dir: &Path) -> PathBuf {
     history_dir.join(DATABASE_FILE)
@@ -72,6 +74,12 @@ fn open_database(history_dir: &Path) -> Result<Connection, String> {
                  account_id TEXT PRIMARY KEY,
                  state_json TEXT NOT NULL,
                  updated_at_ms INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS history_migrations (
+                 account_id TEXT NOT NULL,
+                 migration_key TEXT NOT NULL,
+                 version INTEGER NOT NULL,
+                 PRIMARY KEY (account_id, migration_key)
              );
              CREATE TABLE IF NOT EXISTS private_weapon_sets (
                  account_id TEXT PRIMARY KEY,
@@ -170,8 +178,11 @@ pub(crate) fn mark_sync_started(
              VALUES (?1, ?2, ?3, 0)
              ON CONFLICT(account_id) DO UPDATE SET
                  schema_version = excluded.schema_version,
-                 fetched_at_ms = excluded.fetched_at_ms,
-                 sync_complete = 0",
+                 fetched_at_ms = CASE
+                     WHEN history_meta.sync_complete = 1 THEN history_meta.fetched_at_ms
+                     ELSE excluded.fetched_at_ms
+                 END,
+                 sync_complete = history_meta.sync_complete",
             params![account_id, DATABASE_SCHEMA_VERSION, fetched_at_ms],
         )
         .map_err(|error| format!("保存历史同步开始状态失败：{error}"))?;
@@ -439,6 +450,35 @@ pub(crate) fn load_overlay_state(
     account_id: &str,
 ) -> Result<OverlayState, String> {
     let connection = open_database(history_dir)?;
+    let migrated_version = connection
+        .query_row(
+            "SELECT version FROM history_migrations
+             WHERE account_id = ?1 AND migration_key = ?2",
+            params![account_id, EVENT_POWER_MIGRATION],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取活动赛卡片数据版本失败：{error}"))?;
+    if migrated_version != Some(1) {
+        drop(connection);
+        reparse_event_match_records(history_dir, account_id)?;
+        let state = match load_overlay_cache(history_dir, account_id)? {
+            Some(cache) => OverlayState::from_history(&cache),
+            None => empty_overlay_state(),
+        };
+        save_overlay_state(history_dir, account_id, &state)?;
+        let connection = open_database(history_dir)?;
+        connection
+            .execute(
+                "INSERT INTO history_migrations(account_id, migration_key, version)
+                 VALUES (?1, ?2, 1)
+                 ON CONFLICT(account_id, migration_key) DO UPDATE SET
+                     version = excluded.version",
+                params![account_id, EVENT_POWER_MIGRATION],
+            )
+            .map_err(|error| format!("保存活动赛卡片数据版本失败：{error}"))?;
+        return Ok(state);
+    }
     let snapshot = connection
         .query_row(
             "SELECT state_json FROM overlay_snapshots WHERE account_id = ?1",
@@ -476,6 +516,72 @@ pub(crate) fn load_overlay_state(
     };
     save_overlay_state(history_dir, account_id, &state)?;
     Ok(state)
+}
+
+fn empty_overlay_state() -> OverlayState {
+    OverlayState {
+        selected: None,
+        recent_summary: RecentSummary {
+            sample_size: 0,
+            win: 0,
+            lose: 0,
+            win_rate: 0.0,
+        },
+    }
+}
+
+fn reparse_event_match_records(history_dir: &Path, account_id: &str) -> Result<(), String> {
+    let connection = open_database(history_dir)?;
+    let records = {
+        let mut statement = connection
+            .prepare(
+                "SELECT record_id, record_json, raw_json, raw_encoding
+                 FROM history_records
+                 WHERE account_id = ?1 AND record_type = 'battle'
+                   AND record_json LIKE '%\"mode\":\"EVENT_MATCH\"%'",
+            )
+            .map_err(|error| format!("准备活动赛卡片数据升级失败：{error}"))?;
+        let rows = statement
+            .query_map([account_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|error| format!("读取待升级活动赛记录失败：{error}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("读取待升级活动赛记录行失败：{error}"))?
+    };
+
+    for (record_id, record_json, raw_bytes, raw_encoding) in records {
+        let mut record = serde_json::from_str::<BattleRecord>(&record_json)
+            .map_err(|error| format!("解析待升级活动赛记录失败：{error}"))?;
+        if record.mode != "EVENT_MATCH" {
+            continue;
+        }
+        let raw = decode_raw_json(&raw_bytes, &raw_encoding)?;
+        if let Some(parsed) = parse_battle(&raw, &record_id) {
+            if parsed.power.is_some() {
+                record.power = parsed.power;
+                record.power_kind = parsed.power_kind;
+            }
+        }
+        let track_key = archived_battle_power_track_key(&record, &raw)
+            .unwrap_or_else(|| NO_OVERLAY_TRACK.to_owned());
+        let updated_json = serde_json::to_string(&record)
+            .map_err(|error| format!("序列化升级后的活动赛记录失败：{error}"))?;
+        connection
+            .execute(
+                "UPDATE history_records
+                 SET record_json = ?3, overlay_track_key = ?4
+                 WHERE account_id = ?1 AND record_type = 'battle' AND record_id = ?2",
+                params![account_id, record_id, updated_json, track_key],
+            )
+            .map_err(|error| format!("更新活动赛卡片数据失败：{error}"))?;
+    }
+    Ok(())
 }
 
 pub(crate) fn save_overlay_state(
@@ -1619,6 +1725,50 @@ mod tests {
                 .power_delta,
             Some(20.0)
         );
+    }
+
+    #[test]
+    fn overlay_load_reparses_event_power_without_rewriting_archived_raw_json() {
+        let directory = tempdir().unwrap();
+        let mut cache = sample_cache();
+        let mut event = cache.battles.remove(0);
+        event.record.mode = "EVENT_MATCH".to_owned();
+        event.record.power = None;
+        event.record.power_kind = Some("event".to_owned());
+        event.raw = json!({
+            "id": "battle-1",
+            "vsMode": { "mode": "LEAGUE" },
+            "leagueMatch": {
+                "teamId": "team-a",
+                "myLeaguePower": 1789.5570782676411,
+                "leagueMatchEvent": { "id": "event-a" }
+            }
+        });
+        let mut archived_raw = event.raw.clone();
+        cache.battles = (1..=5)
+            .map(|index| {
+                let mut battle = event.clone();
+                battle.record.id = format!("battle-{index}");
+                battle.record.played_time = Some(format!("2026-09-22T00:0{index}:00Z"));
+                battle.raw["id"] = Value::String(battle.record.id.clone());
+                if index == 5 {
+                    archived_raw = battle.raw.clone();
+                }
+                battle
+            })
+            .collect();
+        save_cache(directory.path(), "account", &cache).unwrap();
+
+        let state = load_overlay_state(directory.path(), "account").unwrap();
+        let reparsed = load_cache(directory.path(), "account").unwrap().unwrap();
+        assert_eq!(reparsed.battles[0].record.id, "battle-5");
+        assert_eq!(reparsed.battles[0].record.power, Some(1789.5570782676411));
+        assert_eq!(
+            state.selected.as_ref().and_then(|battle| battle.power),
+            Some(1789.5570782676411)
+        );
+
+        assert_eq!(reparsed.battles[0].raw, archived_raw);
     }
 
     #[test]

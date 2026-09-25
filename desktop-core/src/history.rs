@@ -21,7 +21,7 @@ const LATEST_BATTLE_QUERY: &str =
 const X_BATTLE_HISTORIES_QUERY: &str =
     "eb5996a12705c2e94813a62e05c0dc419aad2811b8d49d53e5732290105559cb";
 const BATTLE_DETAIL_QUERY: &str =
-    "94faa2ff992222d11ced55e0f349920a82ac50f414ae33c83d1d1c9d8161c5dd";
+    "f893e1ddcfb8a4fd645fd75ced173f18b2750e5cfba41d2669b9814f6ceaec46";
 const COOP_QUERY: &str = "e11a8cf2c3de7348495dea5cdcaa25e0c153541c4ed63f044b6c174bc5b703df";
 const COOP_DETAIL_QUERY: &str = "f2d55873a9281213ae27edc171e2b19131b3021a2ae263757543cdd3bf015cc8";
 
@@ -287,6 +287,7 @@ impl SplatNetDataClient {
         }
         let http = reqwest::Client::builder()
             .user_agent(&config.app_user_agent)
+            .http1_only()
             .build()
             .map_err(|error| format!("创建 SplatNet 数据客户端失败：{error}"))?;
         let web_view_version = match config.web_view_version.clone() {
@@ -783,6 +784,7 @@ impl SplatNetDataClient {
                 .header("Accept-Language", language)
                 .header("User-Agent", &self.config.app_user_agent)
                 .header("X-Web-View-Ver", &self.web_view_version)
+                .header("Accept-Encoding", "gzip, deflate")
                 .header("Content-Type", "application/json")
                 .header("Accept", "*/*")
                 .header("Origin", SPLATNET_URL)
@@ -1078,7 +1080,7 @@ fn normalize_x_battle_id(id: &str) -> String {
     decoded.replace("XMATCH", "RECENT")
 }
 
-fn parse_battle(detail: &Value, fallback_id: &str) -> Option<BattleRecord> {
+pub fn parse_battle(detail: &Value, fallback_id: &str) -> Option<BattleRecord> {
     let id = string_at(detail, &["id"]).unwrap_or_else(|| fallback_id.to_owned());
     let raw_mode = string_at(detail, &["vsMode", "mode"]).unwrap_or_else(|| "BATTLE".to_owned());
     let bankara_mode = string_at(detail, &["bankaraMatch", "mode"]);
@@ -1128,6 +1130,7 @@ fn parse_battle(detail: &Value, fallback_id: &str) -> Option<BattleRecord> {
                 &["event", "eventPower"],
                 &["event", "power"],
                 &["leagueMatch", "eventPower"],
+                &["leagueMatch", "myLeaguePower"],
                 &["leagueMatch", "power"],
                 &["eventPower"],
             ]
@@ -1462,6 +1465,25 @@ mod tests {
     }
 
     #[test]
+    fn parses_event_match_power_from_league_match_history() {
+        let detail = json!({
+            "id": "event-battle-league-shape",
+            "vsMode": { "mode": "LEAGUE" },
+            "vsRule": { "name": "AREA" },
+            "leagueMatch": {
+                "teamId": "team-a",
+                "myLeaguePower": 1789.5570782676411,
+                "leagueMatchEvent": { "id": "event-session-a", "name": "Test Event" }
+            }
+        });
+
+        let record = parse_battle(&detail, "fallback").unwrap();
+        assert_eq!(record.mode, "EVENT_MATCH");
+        assert_eq!(record.power, Some(1789.5570782676411));
+        assert_eq!(record.power_kind.as_deref(), Some("event"));
+    }
+
+    #[test]
     fn parses_private_battle_without_power() {
         let detail = json!({
             "id": "private-battle-1",
@@ -1526,7 +1548,7 @@ mod tests {
         );
         assert_eq!(
             BATTLE_DETAIL_QUERY,
-            "94faa2ff992222d11ced55e0f349920a82ac50f414ae33c83d1d1c9d8161c5dd"
+            "f893e1ddcfb8a4fd645fd75ced173f18b2750e5cfba41d2669b9814f6ceaec46"
         );
         assert_eq!(
             COOP_QUERY,

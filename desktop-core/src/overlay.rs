@@ -213,6 +213,7 @@ fn event_session_id(raw: &serde_json::Value) -> Option<String> {
             &["event", "id"],
             &["leagueMatch", "eventId"],
             &["leagueMatch", "id"],
+            &["leagueMatch", "leagueMatchEvent", "id"],
             &["eventMatchId"],
             &["eventId"],
             &["eventBattleId"],
@@ -809,6 +810,45 @@ mod tests {
         assert_eq!(selected.power_delta, Some(10.0));
     }
 
+    #[test]
+    fn event_match_uses_league_match_event_and_team_ids() {
+        let mut battles = (1..=5)
+            .map(|index| {
+                league_event_battle(
+                    &format!("team-a-{index}"),
+                    &format!("2026-09-22T00:0{index}:00Z"),
+                    1700.0 + f64::from(index),
+                    "event-a",
+                    "team-a",
+                )
+            })
+            .collect::<Vec<_>>();
+        battles.push(league_event_battle(
+            "team-b-1",
+            "2026-09-22T00:06:00Z",
+            2300.0,
+            "event-a",
+            "team-b",
+        ));
+        battles.push(league_event_battle(
+            "team-a-6",
+            "2026-09-22T00:07:00Z",
+            1715.0,
+            "event-a",
+            "team-a",
+        ));
+
+        let state = OverlayState::from_history(&HistoryCache {
+            schema_version: 1,
+            fetched_at_ms: 1,
+            battles,
+            coop: Vec::new(),
+        });
+        let selected = state.selected.unwrap();
+        assert_eq!(selected.id, "team-a-6");
+        assert_eq!(selected.power_delta, Some(10.0));
+    }
+
     fn challenge_battle(id: &str, time: &str, power: f64, weapon_id: &str) -> ArchivedBattle {
         let mut item = battle(
             id,
@@ -858,6 +898,25 @@ mod tests {
                 "timeSlotId": time_slot_id,
                 "isSolo": is_solo,
                 "groupId": group_id
+            }
+        });
+        item
+    }
+
+    fn league_event_battle(
+        id: &str,
+        time: &str,
+        power: f64,
+        event_id: &str,
+        team_id: &str,
+    ) -> ArchivedBattle {
+        let mut item = battle(id, time, "EVENT_MATCH", Some(power), "WIN");
+        item.record.power_kind = Some("event".to_owned());
+        item.raw = serde_json::json!({
+            "leagueMatch": {
+                "leagueMatchEvent": { "id": event_id },
+                "myLeaguePower": power,
+                "teamId": team_id
             }
         });
         item
