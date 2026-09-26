@@ -80,6 +80,7 @@ exitFromCloseButton.addEventListener('click', async () => {
 
 function setMessage(value, error = false) {
   message.textContent = value;
+  message.title = value;
   message.hidden = !value;
   message.classList.toggle('error', error);
 }
@@ -110,12 +111,13 @@ function renderSyncStatus(status) {
       : '';
     syncStatusElement.textContent = `${prefix}：${status.message}${progress}${retry}`;
   } else if (status.state === 'completed') {
-    syncStatusElement.textContent = `最近同步完成：新增 ${status.added_battle_count} 条对战、${status.added_coop_count} 条打工。`;
+    syncStatusElement.textContent = `同步完成：新增 ${status.added_battle_count} 场对战、${status.added_coop_count} 场打工。`;
   } else if (status.state === 'error') {
     syncStatusElement.textContent = `同步失败：${status.error || status.message}`;
   } else {
     syncStatusElement.textContent = status.message;
   }
+  syncStatusElement.title = syncStatusElement.textContent;
   syncStatusElement.classList.toggle('syncing', busy);
   syncStatusElement.classList.toggle('error', status.state === 'error');
 }
@@ -352,7 +354,7 @@ async function refreshAccounts() {
   const result = await invoke('list_accounts');
   renderAccountList(result);
   await refreshOverlay(result.find((account) => account.active)?.account_id || null);
-  setMessage(result.length ? '账号信息已保存到系统凭据库。' : '');
+  setMessage(result.length ? '账号已保存。' : '');
 }
 
 async function refreshSyncStatus() {

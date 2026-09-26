@@ -64,7 +64,7 @@ pub(super) async fn sync_account_inner(
     update_sync_status(sync_runtime, account_id, |status| {
         status.state = "preparing".to_owned();
         status.account_id = Some(account_id.to_owned());
-        status.message = "正在准备 SplatNet 数据客户端…".to_owned();
+        status.message = "准备同步…".to_owned();
         status.phase = "preparing".to_owned();
         status.progress_completed = 0;
         status.progress_total = 0;
@@ -108,9 +108,9 @@ pub(super) async fn sync_account_inner(
         )?;
 
     let sync_description = if initial_sync {
-        "首次同步：正在拉取当前账号可用的全部历史对战和打工记录…"
+        "正在拉取历史数据…"
     } else {
-        "增量同步：正在检查最近记录中的新数据…"
+        "检查新数据…"
     };
     update_sync_status(sync_runtime, account_id, |status| {
         status.state = "syncing".to_owned();
