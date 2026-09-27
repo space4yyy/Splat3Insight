@@ -24,6 +24,7 @@ const DATABASE_SCHEMA_VERSION: i64 = 2;
 const NO_OVERLAY_TRACK: &str = "none";
 const CACHED_POWER_TRACK_KEY: &str = "__s3w_overlay_power_track_v1";
 const EVENT_POWER_MIGRATION: &str = "event-power-fields-v1";
+const MODE_DELTA_MIGRATION: &str = "mode-level-deltas-v1";
 
 fn database_path(history_dir: &Path) -> PathBuf {
     history_dir.join(DATABASE_FILE)
@@ -477,6 +478,43 @@ pub(crate) fn load_overlay_state(
                 params![account_id, EVENT_POWER_MIGRATION],
             )
             .map_err(|error| format!("保存活动赛卡片数据版本失败：{error}"))?;
+        connection
+            .execute(
+                "INSERT INTO history_migrations(account_id, migration_key, version)
+                 VALUES (?1, ?2, 1)
+                 ON CONFLICT(account_id, migration_key) DO UPDATE SET
+                     version = excluded.version",
+                params![account_id, MODE_DELTA_MIGRATION],
+            )
+            .map_err(|error| format!("保存模式差分卡片数据版本失败：{error}"))?;
+        return Ok(state);
+    }
+    let mode_delta_version = connection
+        .query_row(
+            "SELECT version FROM history_migrations
+             WHERE account_id = ?1 AND migration_key = ?2",
+            params![account_id, MODE_DELTA_MIGRATION],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取模式差分卡片数据版本失败：{error}"))?;
+    if mode_delta_version != Some(1) {
+        drop(connection);
+        let state = match load_overlay_cache(history_dir, account_id)? {
+            Some(cache) => OverlayState::from_history(&cache),
+            None => empty_overlay_state(),
+        };
+        save_overlay_state(history_dir, account_id, &state)?;
+        let connection = open_database(history_dir)?;
+        connection
+            .execute(
+                "INSERT INTO history_migrations(account_id, migration_key, version)
+                 VALUES (?1, ?2, 1)
+                 ON CONFLICT(account_id, migration_key) DO UPDATE SET
+                     version = excluded.version",
+                params![account_id, MODE_DELTA_MIGRATION],
+            )
+            .map_err(|error| format!("保存模式差分卡片数据版本失败：{error}"))?;
         return Ok(state);
     }
     let snapshot = connection
@@ -1399,6 +1437,48 @@ mod tests {
             cached.selected.as_ref().and_then(|battle| battle.power),
             Some(2200.0)
         );
+    }
+
+    #[test]
+    fn mode_delta_migration_rebuilds_stale_overlay_snapshots() {
+        let directory = tempdir().unwrap();
+        let mut latest = sample_cache().battles.remove(0);
+        latest.record.id = "open-latest".to_owned();
+        latest.record.played_time = Some("2026-09-22T03:00:00Z".to_owned());
+        latest.record.mode = "BANKARA".to_owned();
+        latest.record.bankara_mode = Some("OPEN".to_owned());
+        latest.record.power = Some(2031.8);
+        latest.record.power_kind = Some("team".to_owned());
+        latest.raw = json!({"myTeam":{"players":[{"id":"latest-a"},{"id":"latest-b"}]}});
+        let mut previous = latest.clone();
+        previous.record.id = "open-previous".to_owned();
+        previous.record.played_time = Some("2026-09-22T02:00:00Z".to_owned());
+        previous.record.power = Some(2023.9);
+        previous.raw = json!({"myTeam":{"players":[{"id":"previous-a"},{"id":"previous-b"}]}});
+        let mut cache = sample_cache();
+        cache.battles = vec![latest, previous];
+        save_cache(directory.path(), "account", &cache).unwrap();
+
+        let connection = open_database(directory.path()).unwrap();
+        connection
+            .execute(
+                "INSERT INTO history_migrations(account_id, migration_key, version)
+                 VALUES (?1, ?2, 1)",
+                params!["account", EVENT_POWER_MIGRATION],
+            )
+            .unwrap();
+        drop(connection);
+
+        let old_cache = load_overlay_cache(directory.path(), "account")
+            .unwrap()
+            .unwrap();
+        let mut stale_state = OverlayState::from_history(&old_cache);
+        stale_state.selected.as_mut().unwrap().power_delta = Some(0.0);
+        save_overlay_state(directory.path(), "account", &stale_state).unwrap();
+
+        let refreshed = load_overlay_state(directory.path(), "account").unwrap();
+        let delta = refreshed.selected.unwrap().power_delta.unwrap();
+        assert!((delta - 7.9).abs() < 0.0001);
     }
 
     #[test]

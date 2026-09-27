@@ -199,6 +199,31 @@ fn power_track(item: &ArchivedBattle) -> Option<PowerTrack> {
     }
 }
 
+fn mode_level_delta_track(item: &ArchivedBattle) -> Option<&'static str> {
+    let scope = match (
+        item.record.mode.as_str(),
+        item.record.bankara_mode.as_deref(),
+    ) {
+        ("BANKARA", Some("OPEN")) => "BANKARA_OPEN",
+        ("EVENT_MATCH", _) => "EVENT_MATCH",
+        _ => return None,
+    };
+    Some(scope)
+}
+
+fn same_power_delta_track(current: &ArchivedBattle, candidate: &ArchivedBattle) -> bool {
+    match (
+        mode_level_delta_track(current),
+        mode_level_delta_track(candidate),
+    ) {
+        (Some(current_scope), Some(candidate_scope)) => current_scope == candidate_scope,
+        (Some(_), None) | (None, Some(_)) => false,
+        (None, None) => power_track(current)
+            .zip(power_track(candidate))
+            .is_some_and(|(current_track, candidate_track)| current_track == candidate_track),
+    }
+}
+
 fn event_session_id(raw: &serde_json::Value) -> Option<String> {
     let event_id = identifier_at_any(
         raw,
@@ -404,15 +429,17 @@ fn to_overlay_battle(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> Overla
         item.record.power
     };
     let power_delta = power.and_then(|current_power| {
-        let track = current_track.as_ref()?;
+        if mode_level_delta_track(item).is_none() && current_track.is_none() {
+            return None;
+        }
         Some(
             older
                 .iter()
                 .enumerate()
                 .filter(|(index, candidate)| {
                     candidate.record.power.is_some()
-                        && power_track(candidate).as_ref() == Some(track)
-                        && (!matches!(track, PowerTrack::EventMatch { .. })
+                        && same_power_delta_track(item, candidate)
+                        && (item.record.mode != "EVENT_MATCH"
                             || event_power_is_placed(candidate, &older[*index + 1..]))
                         && (candidate.record.power.unwrap() - current_power).abs() > 0.0001
                 })
@@ -617,9 +644,10 @@ mod tests {
     }
 
     #[test]
-    fn open_power_delta_is_scoped_to_team_independent_of_player_order() {
+    fn open_power_delta_is_scoped_to_mode_instead_of_team() {
         let latest = open_battle("latest", "03:00", 1748.4, &["alpha", "beta"]);
-        let other_team = open_battle("other-team", "02:00", 2000.0, &["alpha", "gamma"]);
+        let mut other_team = open_battle("other-team", "02:00", 2000.0, &["gamma", "delta"]);
+        other_team.record.power_kind = Some("different".to_owned());
         let previous = open_battle("previous", "01:00", 1700.0, &["beta", "alpha"]);
 
         let state = OverlayState::from_history(&HistoryCache {
@@ -628,7 +656,60 @@ mod tests {
             battles: vec![latest, other_team, previous],
             coop: Vec::new(),
         });
-        assert!((state.selected.unwrap().power_delta.unwrap() - 48.4).abs() < 0.0001);
+        assert!((state.selected.unwrap().power_delta.unwrap() + 251.6).abs() < 0.0001);
+    }
+
+    #[test]
+    fn event_match_delta_is_scoped_to_mode_across_events_and_groups() {
+        let mut battles = Vec::new();
+        for index in 1..=5 {
+            battles.push(event_battle(
+                &format!("group-a-{index}"),
+                &format!("2026-09-22T00:{index:02}:00Z"),
+                Some(1800.0 + f64::from(index)),
+                "event-a",
+                "slot-1",
+                false,
+                Some("party-a"),
+            ));
+        }
+        for index in 1..=5 {
+            battles.push(event_battle(
+                &format!("group-b-{index}"),
+                &format!("2026-09-22T00:{:02}:00Z", index + 5),
+                Some(2400.0 + f64::from(index)),
+                "event-b",
+                "slot-2",
+                false,
+                Some("party-b"),
+            ));
+        }
+        for battle in battles
+            .iter_mut()
+            .filter(|battle| battle.record.id.starts_with("group-b-"))
+        {
+            battle.record.power_kind = Some("team-event".to_owned());
+        }
+        battles.push(event_battle(
+            "group-a-6",
+            "2026-09-22T00:11:00Z",
+            Some(1815.0),
+            "event-a",
+            "slot-1",
+            false,
+            Some("party-a"),
+        ));
+
+        let state = OverlayState::from_history(&HistoryCache {
+            schema_version: 1,
+            fetched_at_ms: 1,
+            battles,
+            coop: Vec::new(),
+        });
+        let selected = state.selected.unwrap();
+        assert_eq!(selected.id, "group-a-6");
+        assert_eq!(selected.power, Some(1815.0));
+        assert_eq!(selected.power_delta, Some(-590.0));
     }
 
     #[test]
