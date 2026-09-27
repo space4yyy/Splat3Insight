@@ -21,7 +21,7 @@ const LATEST_BATTLE_QUERY: &str =
 const X_BATTLE_HISTORIES_QUERY: &str =
     "eb5996a12705c2e94813a62e05c0dc419aad2811b8d49d53e5732290105559cb";
 const BATTLE_DETAIL_QUERY: &str =
-    "f893e1ddcfb8a4fd645fd75ced173f18b2750e5cfba41d2669b9814f6ceaec46";
+    "94faa2ff992222d11ced55e0f349920a82ac50f414ae33c83d1d1c9d8161c5dd";
 const COOP_QUERY: &str = "e11a8cf2c3de7348495dea5cdcaa25e0c153541c4ed63f044b6c174bc5b703df";
 const COOP_DETAIL_QUERY: &str = "f2d55873a9281213ae27edc171e2b19131b3021a2ae263757543cdd3bf015cc8";
 
@@ -47,6 +47,7 @@ pub enum HistoryErrorKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryError {
     kind: HistoryErrorKind,
+    status: Option<u16>,
     message: String,
 }
 
@@ -54,6 +55,7 @@ impl HistoryError {
     pub fn other(message: impl Into<String>) -> Self {
         Self {
             kind: HistoryErrorKind::Other,
+            status: None,
             message: message.into(),
         }
     }
@@ -61,6 +63,7 @@ impl HistoryError {
     pub fn token_expired(message: impl Into<String>) -> Self {
         Self {
             kind: HistoryErrorKind::TokenExpired,
+            status: None,
             message: message.into(),
         }
     }
@@ -69,9 +72,19 @@ impl HistoryError {
         self.kind
     }
 
+    fn is_unavailable_detail(&self) -> bool {
+        matches!(self.status, Some(400 | 404))
+    }
+
+    fn with_http_status(mut self, status: u16) -> Self {
+        self.status = Some(status);
+        self
+    }
+
     pub fn with_context(self, context: impl AsRef<str>) -> Self {
         Self {
             kind: self.kind,
+            status: self.status,
             message: format!("{}{}", context.as_ref(), self.message),
         }
     }
@@ -79,6 +92,7 @@ impl HistoryError {
     pub fn with_message(self, message: impl Into<String>) -> Self {
         Self {
             kind: self.kind,
+            status: self.status,
             message: message.into(),
         }
     }
@@ -566,10 +580,11 @@ impl SplatNetDataClient {
         let coop_ids = new_ids(coop_ids, known_coop_ids);
 
         let mut battles = Vec::with_capacity(battle_ids.len());
+        let mut unavailable_battle_details = 0;
         let battle_total = battle_ids.len();
         notify_progress(progress, "battle-details", 0, battle_total, 0);
         for (index, id) in battle_ids.into_iter().enumerate() {
-            if let Some(detail) = self
+            let detail = match self
                 .fetch_detail(
                     BATTLE_DETAIL_QUERY,
                     "vsResultId",
@@ -579,10 +594,20 @@ impl SplatNetDataClient {
                     "battle-details",
                 )
                 .await
-                .map_err(|error| {
-                    error.with_context(format!("对战详情查询失败（第 {} 条）：", battles.len() + 1))
-                })?
             {
+                Ok(detail) => detail,
+                Err(error) if error.is_unavailable_detail() => {
+                    unavailable_battle_details += 1;
+                    notify_progress(progress, "battle-details", index + 1, battle_total, 0);
+                    continue;
+                }
+                Err(error) => {
+                    return Err(
+                        error.with_context(format!("对战详情查询失败（第 {} 条）：", index + 1))
+                    )
+                }
+            };
+            if let Some(detail) = detail {
                 if let Some(record) = parse_battle(&detail, &id) {
                     let archived = ArchivedBattle {
                         record,
@@ -630,10 +655,11 @@ impl SplatNetDataClient {
         }
 
         let mut coop = Vec::with_capacity(coop_ids.len());
+        let mut unavailable_coop_details = 0;
         let coop_total = coop_ids.len();
         notify_progress(progress, "coop-details", 0, coop_total, 0);
         for (index, id) in coop_ids.into_iter().enumerate() {
-            if let Some(detail) = self
+            let detail = match self
                 .fetch_detail(
                     COOP_DETAIL_QUERY,
                     "coopHistoryDetailId",
@@ -643,10 +669,20 @@ impl SplatNetDataClient {
                     "coop-details",
                 )
                 .await
-                .map_err(|error| {
-                    error.with_context(format!("打工详情查询失败（第 {} 条）：", coop.len() + 1))
-                })?
             {
+                Ok(detail) => detail,
+                Err(error) if error.is_unavailable_detail() => {
+                    unavailable_coop_details += 1;
+                    notify_progress(progress, "coop-details", index + 1, coop_total, 0);
+                    continue;
+                }
+                Err(error) => {
+                    return Err(
+                        error.with_context(format!("打工详情查询失败（第 {} 条）：", index + 1))
+                    )
+                }
+            };
+            if let Some(detail) = detail {
                 if let Some(record) = parse_coop(&detail, &id) {
                     let archived = ArchivedCoop {
                         record,
@@ -665,6 +701,17 @@ impl SplatNetDataClient {
 
         battles.sort_by(|left, right| right.record.played_time.cmp(&left.record.played_time));
         coop.sort_by(|left, right| right.record.played_time.cmp(&left.record.played_time));
+
+        let unavailable_detail_count = unavailable_battle_details + unavailable_coop_details;
+        if unavailable_detail_count > 0 {
+            notify_progress(
+                progress,
+                "partial-details",
+                unavailable_detail_count,
+                unavailable_detail_count,
+                0,
+            );
+        }
 
         Ok(HistoryCache {
             schema_version: 1,
@@ -772,7 +819,7 @@ impl SplatNetDataClient {
             "variables": variables,
         });
         let mut retry_attempt = 0;
-        let (status, content_type, request_id, response_body) = loop {
+        let (status, content_type, request_id, server, backend_version, response_body) = loop {
             self.wait_for_request_slot().await;
             let response = self
                 .http
@@ -788,6 +835,10 @@ impl SplatNetDataClient {
                 .header("Content-Type", "application/json")
                 .header("Accept", "*/*")
                 .header("Origin", SPLATNET_URL)
+                .header("Sec-Fetch-Dest", "empty")
+                .header("Sec-Fetch-Mode", "cors")
+                .header("Sec-Fetch-Site", "same-origin")
+                .header("X-NACountry", &self.config.country)
                 .header("X-Requested-With", "com.nintendo.znca")
                 .header(
                     "Referer",
@@ -796,10 +847,7 @@ impl SplatNetDataClient {
                         self.config.country
                     ),
                 )
-                .header(
-                    "Cookie",
-                    format!("_gtoken={}; _dnt=1", self.config.game_web_token),
-                )
+                .header("Cookie", format!("_gtoken={}", self.config.game_web_token))
                 .json(&request_body)
                 .send()
                 .await;
@@ -844,6 +892,8 @@ impl SplatNetDataClient {
                 .and_then(|value| value.to_str().ok())
                 .unwrap_or("none")
                 .to_owned();
+            let server = safe_response_header_marker(response.headers(), "server");
+            let backend_version = safe_response_header_marker(response.headers(), "x-be-version");
             let response_body = match response.bytes().await {
                 Ok(body) => body,
                 Err(_error) if retry_attempt < MAX_NETWORK_RETRIES => {
@@ -866,7 +916,14 @@ impl SplatNetDataClient {
                 tokio::time::sleep(retry_delay(retry_attempt, retry_after)).await;
                 continue;
             }
-            break (status, content_type, request_id, response_body);
+            break (
+                status,
+                content_type,
+                request_id,
+                server,
+                backend_version,
+                response_body,
+            );
         };
         parse_graphql_response(
             status,
@@ -875,6 +932,16 @@ impl SplatNetDataClient {
             &response_body,
             retry_attempt,
         )
+        .map_err(|error| {
+            if status == reqwest::StatusCode::BAD_REQUEST {
+                let message = error.to_string();
+                error.with_message(format!(
+                    "{message}；服务端标识 server={server}, x-be-version={backend_version}"
+                ))
+            } else {
+                error
+            }
+        })
     }
 }
 
@@ -893,23 +960,27 @@ fn parse_graphql_response(
     if status == reqwest::StatusCode::FORBIDDEN {
         return Err(HistoryError::other(
             "SplatNet 拒绝了数据请求，客户端版本或 Web View 版本可能已过期",
-        ));
+        )
+        .with_http_status(status.as_u16()));
     }
     if !status.is_success() {
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             return Err(HistoryError::other(format!(
                 "SplatNet 请求过于频繁（HTTP 429），已重试 {retry_attempt} 次，请稍后再试"
-            )));
+            ))
+            .with_http_status(status.as_u16()));
         }
         if status.is_server_error() {
             return Err(HistoryError::other(format!(
                 "SplatNet 服务暂时不可用（HTTP {status}），已重试 {retry_attempt} 次，请稍后再试；Request-ID: {request_id}"
-            )));
+            ))
+            .with_http_status(status.as_u16()));
         }
         return Err(HistoryError::other(format!(
             "SplatNet 数据请求失败（HTTP {status}，Content-Type: {content_type}，Request-ID: {request_id}，响应：{}）",
             response_preview(response_body)
-        )));
+        ))
+        .with_http_status(status.as_u16()));
     }
 
     let value: Value = serde_json::from_slice(response_body).map_err(|_| {
@@ -986,6 +1057,22 @@ fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.trim().parse::<u64>().ok())?;
     (seconds > 0).then(|| Duration::from_secs(seconds).min(MAX_RETRY_DELAY))
+}
+
+fn safe_response_header_marker(headers: &reqwest::header::HeaderMap, name: &str) -> String {
+    let marker: String = headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || "._-".contains(*character))
+        .take(64)
+        .collect();
+    if marker.is_empty() {
+        "unknown".to_owned()
+    } else {
+        marker
+    }
 }
 
 fn retry_delay(attempt: usize, retry_after: Option<Duration>) -> Duration {
@@ -1548,7 +1635,7 @@ mod tests {
         );
         assert_eq!(
             BATTLE_DETAIL_QUERY,
-            "f893e1ddcfb8a4fd645fd75ced173f18b2750e5cfba41d2669b9814f6ceaec46"
+            "94faa2ff992222d11ced55e0f349920a82ac50f414ae33c83d1d1c9d8161c5dd"
         );
         assert_eq!(
             COOP_QUERY,
@@ -1641,6 +1728,40 @@ mod tests {
         .unwrap_err();
         assert!(throttled.to_string().contains("HTTP 429"));
         assert!(!throttled.to_string().contains("must-not-appear"));
+
+        let unavailable = parse_graphql_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            "text/html",
+            "req-5",
+            b"",
+            0,
+        )
+        .unwrap_err()
+        .with_context("对战详情查询失败：");
+        assert!(unavailable.is_unavailable_detail());
+
+        let forbidden =
+            parse_graphql_response(reqwest::StatusCode::FORBIDDEN, "text/html", "req-6", b"", 0)
+                .unwrap_err();
+        assert!(!forbidden.is_unavailable_detail());
+    }
+
+    #[test]
+    fn response_header_markers_are_sanitized_and_bounded() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "server",
+            reqwest::header::HeaderValue::from_static("edge/name v1"),
+        );
+
+        assert_eq!(
+            safe_response_header_marker(&headers, "server"),
+            "edgenamev1"
+        );
+        assert_eq!(
+            safe_response_header_marker(&headers, "x-be-version"),
+            "unknown"
+        );
     }
 
     #[test]

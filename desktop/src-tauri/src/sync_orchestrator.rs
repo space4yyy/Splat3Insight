@@ -164,7 +164,12 @@ pub(super) async fn sync_account_inner(
     })?;
     let progress_status = Arc::clone(sync_runtime);
     let progress_account_id = account_id.to_owned();
+    let unavailable_detail_count = Arc::new(AtomicUsize::new(0));
+    let unavailable_detail_count_for_progress = Arc::clone(&unavailable_detail_count);
     let progress: HistoryProgressCallback = Arc::new(move |progress: HistoryFetchProgress| {
+        if progress.phase == "partial-details" {
+            unavailable_detail_count_for_progress.store(progress.completed, Ordering::Relaxed);
+        }
         update_sync_status(&progress_status, &progress_account_id, |status| {
             status.phase = progress.phase.clone();
             status.progress_completed = progress.completed;
@@ -176,6 +181,9 @@ pub(super) async fn sync_account_inner(
                 "coop-list" => "正在获取最近打工列表…".to_owned(),
                 "battle-details" => "正在获取对战详情…".to_owned(),
                 "coop-details" => "正在获取打工详情…".to_owned(),
+                "partial-details" => {
+                    format!("{} 条详情暂不可读，正在完成同步…", progress.completed)
+                }
                 phase if phase.starts_with("retrying:") => "网络波动，正在重试…".to_owned(),
                 _ => "正在同步数据…".to_owned(),
             };
@@ -256,7 +264,22 @@ pub(super) async fn sync_account_inner(
     drop(record_writer);
     let added_battle_count = cache.battles.len();
     let added_coop_count = cache.coop.len();
+    let unavailable_detail_count = unavailable_detail_count.load(Ordering::Relaxed);
     let x_settlement_update_count = x_settlement_updates.load(Ordering::Relaxed);
+    if unavailable_detail_count > 0
+        && (initial_sync || added_battle_count > 0 || added_coop_count > 0)
+    {
+        write_account_log(
+            auth_log_path,
+            "history-fetch",
+            &metadata.display_name,
+            account_id,
+            &format!(
+                "{} 条战绩详情暂不可读取，其余记录已保存；后续同步会继续重试",
+                unavailable_detail_count
+            ),
+        );
+    }
     if x_settlement_update_count > 0 {
         write_account_log(
             auth_log_path,
