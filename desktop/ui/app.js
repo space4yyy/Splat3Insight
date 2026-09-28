@@ -13,8 +13,6 @@ const syncStatusElement = document.querySelector('#sync-status');
 const overlayServiceStatusElement = document.querySelector('#overlay-service-status');
 const startOverlayServiceButton = document.querySelector('#start-overlay-service');
 const stopOverlayServiceButton = document.querySelector('#stop-overlay-service');
-const refreshPrivateWeaponsButton = document.querySelector('#refresh-private-weapons');
-const randomWeaponsPreviewFrame = document.querySelector('.weapon-source-preview iframe');
 const backgroundClosePrompt = document.querySelector('#background-close-prompt');
 const cancelCloseButton = document.querySelector('#cancel-close');
 const exitFromCloseButton = document.querySelector('#exit-from-close');
@@ -401,24 +399,6 @@ stopOverlayServiceButton.addEventListener('click', async () => {
   } catch (error) {
     setMessage(String(error), true);
     await refreshOverlayServiceStatus();
-  }
-});
-
-refreshPrivateWeaponsButton.addEventListener('click', async () => {
-  refreshPrivateWeaponsButton.disabled = true;
-  try {
-    await invoke('refresh_private_weapons');
-    if (randomWeaponsPreviewFrame?.contentWindow && overlayServiceUrl) {
-      randomWeaponsPreviewFrame.contentWindow.postMessage(
-        { type: 'refresh-random-weapons' },
-        overlayServiceUrl,
-      );
-    }
-    setMessage('随机武器已重新抽取。');
-  } catch (error) {
-    setMessage(String(error), true);
-  } finally {
-    refreshPrivateWeaponsButton.disabled = false;
   }
 });
 

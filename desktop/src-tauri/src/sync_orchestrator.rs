@@ -1,6 +1,6 @@
 use super::{
-    account_auth_error, history_store, load_history_summary, now_ms, private_weapons,
-    update_sync_status, write_account_log, Registry, SyncError, SyncRuntime, HISTORY_WINDOW_SIZE,
+    account_auth_error, history_store, load_history_summary, now_ms, update_sync_status,
+    write_account_log, Registry, SyncError, SyncRuntime, HISTORY_WINDOW_SIZE,
 };
 use splat3_widget_core::history::{
     HistoryFetchProgress, HistoryFetchedRecord, HistoryProgressCallback, HistoryRecordCallback,
@@ -291,73 +291,6 @@ pub(super) async fn sync_account_inner(
                 x_settlement_update_count
             ),
         );
-    }
-    if let Some(latest_private_battle) =
-        history_store::load_latest_private_battle(history_dir, account_id).map_err(|error| {
-            account_auth_error(
-                auth_log_path,
-                "private-weapons",
-                &metadata.display_name,
-                account_id,
-                error,
-            )
-        })?
-    {
-        let current_set =
-            history_store::load_private_weapon_set(history_dir, account_id).map_err(|error| {
-                account_auth_error(
-                    auth_log_path,
-                    "private-weapons",
-                    &metadata.display_name,
-                    account_id,
-                    error,
-                )
-            })?;
-        let current_match_id = current_set
-            .as_deref()
-            .and_then(|serialized| {
-                serde_json::from_str::<private_weapons::PrivateWeaponSet>(serialized).ok()
-            })
-            .and_then(|set| set.match_id);
-        if current_match_id.as_deref() != Some(latest_private_battle.id.as_str()) {
-            let weapon_set = private_weapons::create_set(
-                Some(&latest_private_battle.id),
-                latest_private_battle.played_time.clone(),
-            )
-            .map_err(|error| {
-                account_auth_error(
-                    auth_log_path,
-                    "private-weapons",
-                    &metadata.display_name,
-                    account_id,
-                    error,
-                )
-            })?;
-            let serialized = serde_json::to_string(&weapon_set)
-                .map_err(|error| format!("序列化随机武器结果失败：{error}"))?;
-            history_store::save_private_weapon_set(
-                history_dir,
-                account_id,
-                &latest_private_battle.id,
-                &serialized,
-            )
-            .map_err(|error| {
-                account_auth_error(
-                    auth_log_path,
-                    "private-weapons",
-                    &metadata.display_name,
-                    account_id,
-                    error,
-                )
-            })?;
-            write_account_log(
-                auth_log_path,
-                "private-weapons",
-                &metadata.display_name,
-                account_id,
-                "检测到新的私人比赛，已生成并保存随机武器组合",
-            );
-        }
     }
     if initial_sync || added_battle_count > 0 || x_settlement_update_count > 0 {
         if let Some(overlay_cache) = history_store::load_overlay_cache(history_dir, account_id)

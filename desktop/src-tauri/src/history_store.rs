@@ -82,12 +82,6 @@ fn open_database(history_dir: &Path) -> Result<Connection, String> {
                  version INTEGER NOT NULL,
                  PRIMARY KEY (account_id, migration_key)
              );
-             CREATE TABLE IF NOT EXISTS private_weapon_sets (
-                 account_id TEXT PRIMARY KEY,
-                 match_id TEXT NOT NULL,
-                 set_json TEXT NOT NULL,
-                 updated_at_ms INTEGER NOT NULL
-             );
              CREATE TABLE IF NOT EXISTS x_battle_measurement_snapshots (
                  account_id TEXT NOT NULL,
                  record_id TEXT NOT NULL,
@@ -643,66 +637,6 @@ pub(crate) fn save_overlay_state(
     Ok(())
 }
 
-pub(crate) fn load_latest_private_battle(
-    history_dir: &Path,
-    account_id: &str,
-) -> Result<Option<BattleRecord>, String> {
-    let connection = open_database(history_dir)?;
-    connection
-        .query_row(
-            "SELECT record_json FROM history_records
-             WHERE account_id = ?1 AND record_type = 'battle'
-               AND record_json LIKE '%\"mode\":\"PRIVATE_BATTLE\"%'
-             ORDER BY played_time IS NULL, played_time DESC, rowid DESC
-             LIMIT 1",
-            [account_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|error| format!("读取最近私人比赛记录失败：{error}"))?
-        .map(|record| {
-            serde_json::from_str::<BattleRecord>(&record)
-                .map_err(|error| format!("解析最近私人比赛记录失败：{error}"))
-        })
-        .transpose()
-}
-
-pub(crate) fn load_private_weapon_set(
-    history_dir: &Path,
-    account_id: &str,
-) -> Result<Option<String>, String> {
-    let connection = open_database(history_dir)?;
-    connection
-        .query_row(
-            "SELECT set_json FROM private_weapon_sets WHERE account_id = ?1",
-            [account_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|error| format!("读取私人比赛随机武器失败：{error}"))
-}
-
-pub(crate) fn save_private_weapon_set(
-    history_dir: &Path,
-    account_id: &str,
-    match_id: &str,
-    serialized_set: &str,
-) -> Result<(), String> {
-    let connection = open_database(history_dir)?;
-    connection
-        .execute(
-            "INSERT INTO private_weapon_sets(account_id, match_id, set_json, updated_at_ms)
-             VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(account_id) DO UPDATE SET
-                 match_id = excluded.match_id,
-                 set_json = excluded.set_json,
-                 updated_at_ms = excluded.updated_at_ms",
-            params![account_id, match_id, serialized_set, now_ms()],
-        )
-        .map_err(|error| format!("保存私人比赛随机武器失败：{error}"))?;
-    Ok(())
-}
-
 #[cfg(test)]
 pub(crate) fn save_cache(
     history_dir: &Path,
@@ -1140,12 +1074,23 @@ pub(crate) fn delete_account(history_dir: &Path, account_id: &str) -> Result<(),
             [account_id],
         )
         .map_err(|error| format!("删除账号卡片缓存失败：{error}"))?;
-    transaction
-        .execute(
-            "DELETE FROM private_weapon_sets WHERE account_id = ?1",
-            [account_id],
+    let has_private_weapon_sets: bool = transaction
+        .query_row(
+            "SELECT EXISTS (
+                SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'private_weapon_sets'
+            )",
+            [],
+            |row| row.get(0),
         )
-        .map_err(|error| format!("删除账号随机武器数据失败：{error}"))?;
+        .map_err(|error| format!("检查旧账号扩展数据失败：{error}"))?;
+    if has_private_weapon_sets {
+        transaction
+            .execute(
+                "DELETE FROM private_weapon_sets WHERE account_id = ?1",
+                [account_id],
+            )
+            .map_err(|error| format!("删除旧账号扩展数据失败：{error}"))?;
+    }
     transaction
         .execute(
             "DELETE FROM x_battle_measurement_snapshots WHERE account_id = ?1",
@@ -1310,6 +1255,21 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn public_database_schema_does_not_create_private_weapon_storage() {
+        let directory = tempdir().unwrap();
+        let connection = open_database(directory.path()).unwrap();
+        let table_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'private_weapon_sets'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_count, 0);
     }
 
     #[test]
@@ -1498,13 +1458,20 @@ mod tests {
                 },
             )
             .unwrap();
-        save_private_weapon_set(
-            directory.path(),
-            "account",
-            "match-1",
-            "{\"set_id\":\"set-1\"}",
-        )
-        .unwrap();
+        let connection = open_database(directory.path()).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE private_weapon_sets (
+                     account_id TEXT PRIMARY KEY,
+                     match_id TEXT NOT NULL,
+                     set_json TEXT NOT NULL,
+                     updated_at_ms INTEGER NOT NULL
+                 );
+                 INSERT INTO private_weapon_sets(account_id, match_id, set_json, updated_at_ms)
+                 VALUES ('account', 'match-1', '{\"set_id\":\"set-1\"}', 0);",
+            )
+            .unwrap();
+        drop(connection);
         let export_path = export(directory.path(), "account").unwrap();
         load_overlay_state(directory.path(), "account").unwrap();
         fs::write(
@@ -1539,40 +1506,17 @@ mod tests {
             )
             .unwrap();
         assert_eq!(measurement_count, 0);
-        assert!(load_private_weapon_set(directory.path(), "account")
-            .unwrap()
-            .is_none());
+        let legacy_extension_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM private_weapon_sets WHERE account_id = 'account'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_extension_count, 0);
         assert!(!export_path.exists());
         assert!(!legacy_path(directory.path(), "account").exists());
         assert!(!legacy_archive.exists());
-    }
-
-    #[test]
-    fn finds_latest_private_battle_without_decoding_archived_raw_json() {
-        let directory = tempdir().unwrap();
-        let mut cache = sample_cache();
-        cache.battles[0].record.mode = "PRIVATE_BATTLE".to_owned();
-        cache.battles[0].record.id = "private-1".to_owned();
-        cache.battles[0].record.played_time = Some("2026-09-20T00:00:00Z".to_owned());
-        let mut newer = cache.battles[0].clone();
-        newer.record.id = "private-2".to_owned();
-        newer.record.played_time = Some("2026-09-22T00:00:00Z".to_owned());
-        cache.battles.push(newer);
-        save_cache(directory.path(), "account", &cache).unwrap();
-
-        let connection = open_database(directory.path()).unwrap();
-        connection
-            .execute(
-                "UPDATE history_records SET raw_json = X'00' WHERE account_id = ?1",
-                ["account"],
-            )
-            .unwrap();
-        drop(connection);
-
-        let latest = load_latest_private_battle(directory.path(), "account")
-            .unwrap()
-            .unwrap();
-        assert_eq!(latest.id, "private-2");
     }
 
     #[test]

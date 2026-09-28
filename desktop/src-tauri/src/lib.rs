@@ -31,7 +31,6 @@ use tokio::sync::watch;
 
 pub(crate) mod history_store;
 mod overlay_server;
-mod private_weapons;
 mod sync_orchestrator;
 
 type Registry = AccountRegistry<CachedSecretStore<KeyringSecretStore>>;
@@ -1097,35 +1096,6 @@ fn get_overlay_state(
 }
 
 #[tauri::command]
-fn refresh_private_weapons(state: State<'_, AppState>) -> Result<(), String> {
-    let account_id = resolve_account_id(&state.registry, None)?;
-    let display_name = account_display_name(&state.registry, &account_id);
-    let battle = history_store::load_latest_private_battle(&state.history_dir, &account_id)?;
-    let set = private_weapons::create_set(
-        battle.as_ref().map(|battle| battle.id.as_str()),
-        battle
-            .as_ref()
-            .and_then(|battle| battle.played_time.clone()),
-    )?;
-    let serialized =
-        serde_json::to_string(&set).map_err(|error| format!("序列化随机武器结果失败：{error}"))?;
-    history_store::save_private_weapon_set(
-        &state.history_dir,
-        &account_id,
-        set.match_id.as_deref().unwrap_or_default(),
-        &serialized,
-    )?;
-    write_account_log(
-        &state.auth_log_path,
-        "private-weapons",
-        &display_name,
-        &account_id,
-        "手动重新抽取私人比赛随机武器",
-    );
-    Ok(())
-}
-
-#[tauri::command]
 fn begin_nintendo_login(state: State<'_, AppState>) -> Result<String, String> {
     let attempt = begin_login()?;
     let authorize_url = attempt.authorize_url.clone();
@@ -1791,7 +1761,6 @@ pub fn run() {
             start_overlay_service,
             stop_overlay_service,
             get_overlay_state,
-            refresh_private_weapons,
             begin_nintendo_login,
             cancel_nintendo_login,
             complete_nintendo_login,

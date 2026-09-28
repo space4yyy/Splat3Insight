@@ -7,3 +7,5 @@ data/s3s-exports/
 desktop-core/target/
 desktop/src-tauri/target/
 /build-install-macos.sh
+/build-private-macos.sh
+/.private-build/

@@ -57,12 +57,6 @@
       .overlay-preview__scale { width: max-content; transform-origin: top center; }
       .overlay-preview__scale > .overlay-card { border-radius: 6px; }
       .overlay-empty { padding: 24px 0; color: #9d9aa8; text-align: center; }
-      .weapon-source-preview { display: flex; justify-content: center; padding-top: 12px; }
-      .weapon-source-preview iframe { display: block; overflow: hidden; border: 0; border-radius: 6px; background: transparent; }
-      .weapon-rules-preview { display: flex; justify-content: center; padding-top: 12px; }
-      .weapon-rules-preview iframe { display: block; overflow: hidden; border: 0; border-radius: 8px; background: transparent; }
-      .clock-preview { display: flex; justify-content: center; padding-top: 12px; }
-      .clock-preview iframe { display: block; overflow: hidden; border: 0; border-radius: 6px; background: transparent; }
       #background-close-prompt { width: min(420px, calc(100% - 32px)); border: 1px solid #4b4857; border-radius: 18px; padding: 22px; color: #f5f5f2; background: #1b1a23; box-shadow: 0 24px 80px #0009; }
       #background-close-prompt::backdrop { background: #09090dbb; }
       #background-close-prompt h2 { margin: 0; font-size: 20px; }
@@ -116,52 +110,6 @@
         </div>
         <div id="overlay-preview" class="overlay-preview">
           <div class="overlay-empty">登录并同步历史后显示真实对战数据。</div>
-        </div>
-      </section>
-      <section class="panel">
-        <div class="row">
-          <strong>私房随武</strong>
-          <button id="refresh-private-weapons" class="overlay-primary-action" type="button">刷新</button>
-        </div>
-        <div class="overlay-details">
-          <div class="overlay-url-row">
-            <code data-obs-card-url="random-weapons"></code>
-            <button data-obs-card-copy="random-weapons" class="secondary" type="button">复制</button>
-          </div>
-          <div class="obs-help"><span data-obs-card-size="random-weapons"></span>。A、B 分列显示，每队 4 把；新私人赛同步、手动刷新或重载页面时重新抽取。</div>
-          <div class="weapon-source-preview">
-            <iframe data-obs-card-preview="random-weapons" title="私房随武预览" scrolling="no"></iframe>
-          </div>
-        </div>
-      </section>
-      <section class="panel">
-        <div class="row">
-          <strong>私房随武规则</strong>
-        </div>
-        <div class="overlay-details">
-          <div class="overlay-url-row">
-            <code data-obs-card-url="random-weapons-rules"></code>
-            <button data-obs-card-copy="random-weapons-rules" class="secondary" type="button">复制</button>
-          </div>
-          <div class="obs-help"><span data-obs-card-size="random-weapons-rules"></span></div>
-          <div class="weapon-rules-preview">
-            <iframe data-obs-card-preview="random-weapons-rules" title="私房随武规则预览" scrolling="no"></iframe>
-          </div>
-        </div>
-      </section>
-      <section class="panel">
-        <div class="row">
-          <strong>时钟</strong>
-        </div>
-        <div class="overlay-details">
-          <div class="overlay-url-row">
-            <code data-obs-card-url="clock"></code>
-            <button data-obs-card-copy="clock" class="secondary" type="button">复制</button>
-          </div>
-          <div class="obs-help">本地时间（24 小时制，每秒更新）· <span data-obs-card-size="clock"></span></div>
-          <div class="clock-preview">
-            <iframe data-obs-card-preview="clock" title="时钟预览" scrolling="no"></iframe>
-          </div>
         </div>
       </section>
     </main>

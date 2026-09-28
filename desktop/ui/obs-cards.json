@@ -7,33 +7,5 @@
     "sizeLabel": "OBS 尺寸推荐",
     "width": 560,
     "height": 100
-  },
-  {
-    "id": "random-weapons",
-    "route": "/random-weapons",
-    "page": "weapons",
-    "name": "私房随武",
-    "sizeLabel": "OBS 推荐尺寸",
-    "width": 164,
-    "height": 356,
-    "previewQuery": "?preview=1"
-  },
-  {
-    "id": "random-weapons-rules",
-    "route": "/random-weapons-rules",
-    "page": "rules",
-    "name": "私房随武规则",
-    "sizeLabel": "OBS 推荐尺寸",
-    "width": 230,
-    "height": 100
-  },
-  {
-    "id": "clock",
-    "route": "/clock",
-    "page": "clock",
-    "name": "时钟",
-    "sizeLabel": "OBS 推荐尺寸",
-    "width": 260,
-    "height": 72
   }
 ]

@@ -3,15 +3,12 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const ui = new URL('../ui/', import.meta.url);
-const [cards, indexHtml, appJs, overlayCss, overlayHtml, weaponsHtml, rulesHtml, clockHtml, tauriConfig] = await Promise.all([
+const [cards, indexHtml, appJs, overlayCss, overlayHtml, tauriConfig] = await Promise.all([
   readFile(new URL('obs-cards.json', ui), 'utf8').then(JSON.parse),
   readFile(new URL('index.html', ui), 'utf8'),
   readFile(new URL('app.js', ui), 'utf8'),
   readFile(new URL('overlay-card.css', ui), 'utf8'),
   readFile(new URL('overlay.html', ui), 'utf8'),
-  readFile(new URL('random-weapons.html', ui), 'utf8'),
-  readFile(new URL('random-weapons-rules.html', ui), 'utf8'),
-  readFile(new URL('clock.html', ui), 'utf8'),
   readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8').then(JSON.parse),
 ]);
 
@@ -40,6 +37,12 @@ test('app links, size labels, previews, and copy buttons all reference catalog I
   assert.doesNotMatch(indexHtml, /http:\/\/127\.0\.0\.1:17353\//);
 });
 
+test('public edition excludes private weapon and clock cards', () => {
+  assert.deepEqual(cards.map((card) => card.id), ['overlay']);
+  assert.doesNotMatch(indexHtml, /私房随武|时钟/);
+  assert.doesNotMatch(appJs, /random-weapons|refresh_private_weapons/);
+});
+
 test('Tauri CSP allows the app to fetch its same-origin card catalog', () => {
   const connectSource = tauriConfig.app.security.csp
     .split(';')
@@ -49,14 +52,10 @@ test('Tauri CSP allows the app to fetch its same-origin card catalog', () => {
   assert.match(connectSource, /(?:^|\s)'self'(?:\s|$)/);
 });
 
-test('manual weapon refresh does not reference removed hard-coded URL constants', () => {
-  assert.doesNotMatch(appJs, /\bOBS_RANDOM_WEAPONS_URL\b/);
-});
-
 test('OBS page templates receive dimensions from the card catalog', () => {
   assert.match(overlayCss, /width: var\(--obs-card-width\)/);
   assert.match(overlayCss, /height: var\(--obs-card-height\)/);
-  for (const page of [overlayHtml, weaponsHtml, rulesHtml, clockHtml]) {
+  for (const page of [overlayHtml]) {
     assert.match(page, /__OBS_CARD_WIDTH__/);
     assert.match(page, /__OBS_CARD_HEIGHT__/);
   }
