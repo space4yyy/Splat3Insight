@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Splat3StreamingWidget",
+  "productName": "Splat3 Insight",
   "version": "0.1.0",
-  "identifier": "ink.space4.splat3streamingwidget",
+  "identifier": "ink.space4.Splat3Insight",
   "build": {
     "frontendDist": "../ui"
   },
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Splat3StreamingWidget",
+        "title": "Splat3 Insight",
         "width": 560,
         "height": 680,
         "minWidth": 420,

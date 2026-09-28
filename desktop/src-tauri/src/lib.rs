@@ -26,7 +26,7 @@ use tauri::{
     tray::TrayIconBuilder,
     AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalPosition, State, WebviewWindow,
 };
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
+use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tokio::sync::watch;
 
 pub(crate) mod history_store;
@@ -35,6 +35,8 @@ mod private_weapons;
 mod sync_orchestrator;
 
 type Registry = AccountRegistry<CachedSecretStore<KeyringSecretStore>>;
+
+const AUTOSTART_APP_NAME: &str = "Splat3Insight";
 
 struct AppState {
     registry: Arc<Mutex<Registry>>,
@@ -1415,7 +1417,7 @@ fn associate_autostart_agent_with_app(app: &AppHandle) -> Result<(), String> {
         .home_dir()
         .map_err(|error| error.to_string())?
         .join("Library/LaunchAgents")
-        .join(format!("{}.plist", app.package_info().name));
+        .join(format!("{AUTOSTART_APP_NAME}.plist"));
     associate_launch_agent_with_bundle(&agent_path, &app.config().identifier, &executable_path)
 }
 
@@ -1615,10 +1617,12 @@ fn build_tray(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_autostart::init(
-            MacosLauncher::LaunchAgent,
-            Some(vec!["--background"]),
-        ))
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name(AUTOSTART_APP_NAME)
+                .args(["--background"])
+                .build(),
+        )
         .setup(|app| {
             let launch_in_background =
                 std::env::args_os().any(|argument| argument == "--background");
@@ -1798,7 +1802,7 @@ pub fn run() {
             exit_app,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building Splat 3 Streaming Widget")
+        .expect("error while building Splat3 Insight")
         .run(|app, event| match event {
             #[cfg(target_os = "macos")]
             RunEvent::Reopen {
@@ -2090,16 +2094,16 @@ mod tests {
     #[test]
     fn associates_login_agent_with_app_bundle_identifier() {
         let directory = tempdir().unwrap();
-        let path = directory.path().join("Splat3StreamingWidget.plist");
+        let path = directory.path().join("Splat3Insight.plist");
         let mut dictionary = plist::Dictionary::new();
         dictionary.insert(
             "Label".to_owned(),
-            plist::Value::String("Splat3StreamingWidget".to_owned()),
+            plist::Value::String("Splat3Insight".to_owned()),
         );
         dictionary.insert(
             "ProgramArguments".to_owned(),
             plist::Value::Array(vec![
-                plist::Value::String("/old/path/splat3-streaming-widget".to_owned()),
+                plist::Value::String("/old/path/LegacyExecutable".to_owned()),
                 plist::Value::String("--background".to_owned()),
             ]),
         );
@@ -2107,12 +2111,11 @@ mod tests {
             .to_file_xml(&path)
             .unwrap();
 
-        let expected_executable = Path::new(
-            "/Applications/Splat3StreamingWidget.app/Contents/MacOS/Splat3StreamingWidget",
-        );
+        let expected_executable =
+            Path::new("/Applications/Splat3 Insight.app/Contents/MacOS/Splat3Insight");
         super::associate_launch_agent_with_bundle(
             &path,
-            "ink.space4.splat3streamingwidget",
+            "ink.space4.Splat3Insight",
             expected_executable,
         )
         .unwrap();
@@ -2122,7 +2125,7 @@ mod tests {
         assert_eq!(
             dictionary.get("AssociatedBundleIdentifiers"),
             Some(&plist::Value::Array(vec![plist::Value::String(
-                "ink.space4.splat3streamingwidget".to_owned()
+                "ink.space4.Splat3Insight".to_owned()
             )]))
         );
         assert_eq!(

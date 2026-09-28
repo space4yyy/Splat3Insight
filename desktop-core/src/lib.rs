@@ -13,7 +13,7 @@ pub mod nintendo_auth;
 pub mod overlay;
 pub mod splatnet_auth;
 
-pub const KEYRING_SERVICE: &str = "ink.space4.splat3streamingwidget";
+pub const KEYRING_SERVICE: &str = "ink.space4.Splat3Insight";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AccountMetadata {
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn keyring_service_matches_the_configured_bundle_identifier() {
-        assert_eq!(KEYRING_SERVICE, "ink.space4.splat3streamingwidget");
+        assert_eq!(KEYRING_SERVICE, "ink.space4.Splat3Insight");
     }
 
     fn metadata(id: &str, name: &str) -> AccountMetadata {

@@ -1,5 +1,5 @@
 {
-  "name": "splat3-streaming-widget-desktop",
+  "name": "splat3-insight-desktop",
   "private": true,
   "scripts": {
     "tauri": "tauri",

@@ -1,17 +1,17 @@
 [package]
-name = "splat3-streaming-widget"
+name = "splat3-insight"
 version = "0.1.0"
-description = "Splatoon 3 streaming overlay desktop app"
-authors = ["Splat3 Streaming Widget"]
+description = "Splat3 Insight desktop app for Splatoon 3 statistics and OBS overlays"
+authors = ["Splat3 Insight"]
 edition = "2021"
 autobins = false
 
 [lib]
-name = "splat3_streaming_widget_lib"
+name = "splat3_insight_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "Splat3StreamingWidget"
+name = "Splat3Insight"
 path = "src/main.rs"
 
 [build-dependencies]

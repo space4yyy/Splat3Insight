@@ -109,7 +109,7 @@ impl<'a> SplatNetClient<'a> {
                 .post(endpoint)
                 .header(
                     "User-Agent",
-                    format!("splat3-streaming-widget/{}", self.config.client_version),
+                    format!("Splat3Insight/{}", self.config.client_version),
                 )
                 .header("Content-Type", "application/json; charset=utf-8")
                 .header("Accept", "application/json")
@@ -434,7 +434,7 @@ async fn fetch_nso_app_version(
         .header("Accept", "application/json")
         .header(
             "User-Agent",
-            format!("splat3-streaming-widget/{}", config.client_version),
+            format!("Splat3Insight/{}", config.client_version),
         )
         .header(
             "Authorization",
@@ -490,7 +490,7 @@ async fn decrypt_coral_response(
         .header("Accept", "text/plain")
         .header(
             "User-Agent",
-            format!("splat3-streaming-widget/{}", config.client_version),
+            format!("Splat3Insight/{}", config.client_version),
         )
         .json(&json!({
             "data": general_purpose::STANDARD.encode(response_bytes),

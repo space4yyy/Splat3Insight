@@ -1,4 +1,4 @@
-# 斯普拉遁3直播小组件
+# Splat3 Insight
 
 跨平台桌面应用，为 OBS 提供透明的 Splatoon 3 对战信息卡片。
 
