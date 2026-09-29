@@ -476,8 +476,19 @@ fn route_request(
     config: &OverlayServerConfig,
 ) -> Result<HttpResponse, String> {
     #[cfg(feature = "local-extension")]
-    if let Some(response) = crate::local_extension::route_request(method, path, config)? {
-        return Ok(response);
+    if let Some(response) = crate::local_extension::route_request(
+        method,
+        path,
+        &crate::extension_host::ExtensionContext {
+            accounts_path: config.accounts_path.clone(),
+            history_dir: config.history_dir.clone(),
+        },
+    )? {
+        return Ok(HttpResponse {
+            status: response.status,
+            content_type: response.content_type,
+            body: response.body,
+        });
     }
 
     if method != "GET" {

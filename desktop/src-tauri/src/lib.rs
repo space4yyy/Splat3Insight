@@ -29,6 +29,8 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tokio::sync::watch;
 
+#[cfg(feature = "local-extension")]
+mod extension_host;
 pub(crate) mod history_store;
 #[cfg(feature = "local-extension")]
 mod local_extension;
