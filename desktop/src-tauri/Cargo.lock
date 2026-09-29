@@ -3881,6 +3881,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "flate2",
+ "getrandom 0.4.3",
  "objc2-app-kit",
  "objc2-foundation",
  "plist",

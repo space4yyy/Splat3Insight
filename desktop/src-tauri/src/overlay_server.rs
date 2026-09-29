@@ -118,10 +118,10 @@ pub struct OverlayServiceStatus {
     pub error: Option<String>,
 }
 
-struct HttpResponse {
-    status: &'static str,
-    content_type: &'static str,
-    body: Vec<u8>,
+pub(crate) struct HttpResponse {
+    pub(crate) status: &'static str,
+    pub(crate) content_type: &'static str,
+    pub(crate) body: Vec<u8>,
 }
 
 pub type OverlayServiceStatusHandle = Arc<Mutex<OverlayServiceStatus>>;
@@ -475,6 +475,11 @@ fn route_request(
     path: &str,
     config: &OverlayServerConfig,
 ) -> Result<HttpResponse, String> {
+    #[cfg(feature = "local-extension")]
+    if let Some(response) = crate::local_extension::route_request(method, path, config)? {
+        return Ok(response);
+    }
+
     if method != "GET" {
         return Ok(HttpResponse {
             status: "405 Method Not Allowed",
@@ -861,6 +866,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "local-extension"))]
     fn public_server_does_not_serve_private_cards_or_weapon_endpoints() {
         let directory = tempdir().unwrap();
         let config = OverlayServerConfig {

@@ -1074,23 +1074,7 @@ pub(crate) fn delete_account(history_dir: &Path, account_id: &str) -> Result<(),
             [account_id],
         )
         .map_err(|error| format!("删除账号卡片缓存失败：{error}"))?;
-    let has_private_weapon_sets: bool = transaction
-        .query_row(
-            "SELECT EXISTS (
-                SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'private_weapon_sets'
-            )",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|error| format!("检查旧账号扩展数据失败：{error}"))?;
-    if has_private_weapon_sets {
-        transaction
-            .execute(
-                "DELETE FROM private_weapon_sets WHERE account_id = ?1",
-                [account_id],
-            )
-            .map_err(|error| format!("删除旧账号扩展数据失败：{error}"))?;
-    }
+    delete_extension_account_data(&transaction, account_id)?;
     transaction
         .execute(
             "DELETE FROM x_battle_measurement_snapshots WHERE account_id = ?1",
@@ -1112,6 +1096,55 @@ pub(crate) fn delete_account(history_dir: &Path, account_id: &str) -> Result<(),
         &format!("{account_id}-"),
         "历史导出文件",
     )
+}
+
+fn delete_extension_account_data(
+    transaction: &rusqlite::Transaction<'_>,
+    account_id: &str,
+) -> Result<(), String> {
+    let table_names = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT name FROM sqlite_master
+                 WHERE type = 'table' AND name GLOB 'extension_[A-Za-z0-9_]*'",
+            )
+            .map_err(|error| format!("查找扩展账号数据表失败：{error}"))?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("读取扩展账号数据表失败：{error}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("读取扩展账号数据表失败：{error}"))?
+    };
+
+    for table_name in table_names {
+        if !table_name.strip_prefix("extension_").is_some_and(|suffix| {
+            !suffix.is_empty()
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        }) {
+            continue;
+        }
+        let columns = {
+            let mut statement = transaction
+                .prepare(&format!("PRAGMA table_info(\"{table_name}\")"))
+                .map_err(|error| format!("检查扩展账号数据表失败：{error}"))?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|error| format!("读取扩展账号数据列失败：{error}"))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("读取扩展账号数据列失败：{error}"))?
+        };
+        if columns.iter().any(|column| column == "account_id") {
+            transaction
+                .execute(
+                    &format!("DELETE FROM \"{table_name}\" WHERE account_id = ?1"),
+                    [account_id],
+                )
+                .map_err(|error| format!("删除扩展账号数据失败：{error}"))?;
+        }
+    }
+    Ok(())
 }
 
 fn remove_file_if_present(path: &Path, description: &str) -> Result<(), String> {
@@ -1461,14 +1494,12 @@ mod tests {
         let connection = open_database(directory.path()).unwrap();
         connection
             .execute_batch(
-                "CREATE TABLE private_weapon_sets (
+                "CREATE TABLE extension_test_data (
                      account_id TEXT PRIMARY KEY,
-                     match_id TEXT NOT NULL,
-                     set_json TEXT NOT NULL,
-                     updated_at_ms INTEGER NOT NULL
+                     set_json TEXT NOT NULL
                  );
-                 INSERT INTO private_weapon_sets(account_id, match_id, set_json, updated_at_ms)
-                 VALUES ('account', 'match-1', '{\"set_id\":\"set-1\"}', 0);",
+                 INSERT INTO extension_test_data(account_id, set_json)
+                 VALUES ('account', '{}');",
             )
             .unwrap();
         drop(connection);
@@ -1506,14 +1537,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(measurement_count, 0);
-        let legacy_extension_count: i64 = connection
+        let extension_count: i64 = connection
             .query_row(
-                "SELECT COUNT(*) FROM private_weapon_sets WHERE account_id = 'account'",
+                "SELECT COUNT(*) FROM extension_test_data WHERE account_id = 'account'",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(legacy_extension_count, 0);
+        assert_eq!(extension_count, 0);
         assert!(!export_path.exists());
         assert!(!legacy_path(directory.path(), "account").exists());
         assert!(!legacy_archive.exists());

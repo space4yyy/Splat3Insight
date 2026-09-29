@@ -30,7 +30,9 @@ use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tokio::sync::watch;
 
 pub(crate) mod history_store;
-mod overlay_server;
+#[cfg(feature = "local-extension")]
+mod local_extension;
+pub(crate) mod overlay_server;
 mod sync_orchestrator;
 
 type Registry = AccountRegistry<CachedSecretStore<KeyringSecretStore>>;

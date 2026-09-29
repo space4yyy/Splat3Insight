@@ -292,6 +292,23 @@ pub(super) async fn sync_account_inner(
             ),
         );
     }
+    #[cfg(feature = "local-extension")]
+    crate::local_extension::on_history_synced(
+        history_dir,
+        auth_log_path,
+        account_id,
+        &metadata.display_name,
+    )
+    .map_err(|error| {
+        SyncError::Other(account_auth_error(
+            auth_log_path,
+            "private-extension",
+            &metadata.display_name,
+            account_id,
+            error,
+        ))
+    })?;
+
     if initial_sync || added_battle_count > 0 || x_settlement_update_count > 0 {
         if let Some(overlay_cache) = history_store::load_overlay_cache(history_dir, account_id)
             .map_err(|error| {

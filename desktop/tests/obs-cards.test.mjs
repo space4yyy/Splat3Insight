@@ -3,10 +3,11 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const ui = new URL('../ui/', import.meta.url);
-const [cards, indexHtml, appJs, overlayCss, overlayHtml, tauriConfig] = await Promise.all([
+const [cards, indexHtml, appJs, extensionJs, overlayCss, overlayHtml, tauriConfig] = await Promise.all([
   readFile(new URL('obs-cards.json', ui), 'utf8').then(JSON.parse),
   readFile(new URL('index.html', ui), 'utf8'),
   readFile(new URL('app.js', ui), 'utf8'),
+  readFile(new URL('edition-extension.js', ui), 'utf8'),
   readFile(new URL('overlay-card.css', ui), 'utf8'),
   readFile(new URL('overlay.html', ui), 'utf8'),
   readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8').then(JSON.parse),
@@ -41,6 +42,9 @@ test('public edition excludes private weapon and clock cards', () => {
   assert.deepEqual(cards.map((card) => card.id), ['overlay']);
   assert.doesNotMatch(indexHtml, /私房随武|时钟/);
   assert.doesNotMatch(appJs, /random-weapons|refresh_private_weapons/);
+  assert.match(indexHtml, /id="edition-extension-slot"/);
+  assert.match(indexHtml, /src="\.\/edition-extension\.js"/);
+  assert.doesNotMatch(extensionJs, /random-weapons|私房随武|时钟/);
 });
 
 test('Tauri CSP allows the app to fetch its same-origin card catalog', () => {
