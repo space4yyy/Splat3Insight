@@ -266,9 +266,13 @@
 .salmon-run-card__stats-item {
   display: inline-flex;
   align-items: baseline;
-  gap: 2px;
-  font-size: 12px;
+  gap: 1px;
+  font-size: 11px;
   white-space: nowrap;
+}
+
+.salmon-run-card__stats-item b {
+  font-size: 13px;
 }
 
 .salmon-run-card__stats-item b,
