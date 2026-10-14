@@ -115,7 +115,7 @@ fn should_show_main_window_on_reopen(has_visible_windows: bool) -> bool {
 }
 
 const DEFAULT_WINDOW_WIDTH: f64 = 560.0;
-const DEFAULT_WINDOW_HEIGHT: f64 = 680.0;
+const DEFAULT_WINDOW_HEIGHT: f64 = 570.0;
 const WINDOW_ASPECT_RATIO: f64 = DEFAULT_WINDOW_WIDTH / DEFAULT_WINDOW_HEIGHT;
 
 fn saved_display_from_monitor(monitor: &Monitor) -> SavedDisplay {
@@ -645,6 +645,7 @@ fn load_history_summary(
 fn empty_overlay_state() -> OverlayState {
     OverlayState {
         selected: None,
+        salmon_run: None,
         recent_summary: splat3_widget_core::overlay::RecentSummary {
             sample_size: 0,
             win: 0,

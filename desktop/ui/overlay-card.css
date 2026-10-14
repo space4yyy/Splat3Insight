@@ -169,6 +169,158 @@
   margin-bottom: 2px;
 }
 
+.salmon-run-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: var(--obs-card-width);
+  height: var(--obs-card-height);
+  min-width: 0;
+  overflow: hidden;
+  padding: 7px 9px 8px;
+  border: 1px solid #50544b;
+  border-radius: 7px;
+  color: #f4f0e6;
+  background: #22231f;
+  font-family: "DFP GBZY7", sans-serif;
+  line-height: 1;
+}
+
+.salmon-run-card[hidden] {
+  display: none;
+}
+
+.salmon-run-card__top,
+.salmon-run-card__bottom,
+.salmon-run-card__scales,
+.salmon-run-card__scale,
+.salmon-run-card__stats,
+.salmon-run-card__summary,
+.salmon-run-card__details,
+.salmon-run-card__metadata,
+.salmon-run-card__details-grade,
+.salmon-run-card__details-danger {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.salmon-run-card__top {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.salmon-run-card__stage {
+  min-width: 0;
+  overflow: hidden;
+  color: #f56528;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.salmon-run-card__scales {
+  flex: 0 0 auto;
+  gap: 3px;
+}
+
+.salmon-run-card__scales-label {
+  color: #5af27d;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.salmon-run-card__scale {
+  gap: 1px;
+  white-space: nowrap;
+}
+
+.salmon-run-card__scale-icon {
+  display: block;
+  width: 17px;
+  height: 17px;
+  object-fit: contain;
+}
+
+.salmon-run-card__number {
+  font-family: "BlitzMain", "DFP GBZY7", sans-serif;
+  font-size: 14px;
+  font-synthesis: none;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.salmon-run-card__bottom {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+
+.salmon-run-card__stats {
+  justify-content: space-between;
+  gap: 8px;
+  height: 20px;
+  white-space: nowrap;
+}
+
+.salmon-run-card__stats-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.salmon-run-card__stats-item b,
+.salmon-run-card__summary b,
+.salmon-run-card__details b {
+  font-family: "BlitzMain", "DFP GBZY7", sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  font-synthesis: none;
+  letter-spacing: 0;
+}
+
+.salmon-run-card__details {
+  justify-content: space-between;
+  gap: 8px;
+  height: 20px;
+  white-space: nowrap;
+}
+
+.salmon-run-card__summary,
+.salmon-run-card__details-grade,
+.salmon-run-card__details-danger {
+  gap: 4px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.salmon-run-card__metadata {
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.salmon-run-card__summary {
+  gap: 6px;
+}
+
+.salmon-run-card__summary-clear {
+  color: #5af27d;
+}
+
+.salmon-run-card__summary-failure {
+  color: #f56528;
+}
+
+.salmon-run-card__details-grade b {
+  color: #f56528;
+}
+
+.salmon-run-card__details-danger b {
+  color: #5af27d;
+}
+
 .overlay-card__power-delta.positive {
   color: #eaff3d;
 }
@@ -201,7 +353,7 @@
 .overlay-card__kad span {
   display: flex;
   align-items: baseline;
-  gap: 0;
+  gap: 1px;
   line-height: 1;
 }
 

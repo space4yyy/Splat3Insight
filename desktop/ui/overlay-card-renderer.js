@@ -17,12 +17,28 @@
   });
 
   const mountedCards = new WeakMap();
+  const mountedSalmonCards = new WeakMap();
   const isNumber = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
   const displayNumber = (value, digits = 0) => isNumber(value) ? Number(value).toFixed(digits) : '—';
   const localizeRule = (value) => {
     const label = String(value ?? '').trim();
     return ruleLabels[label] || label || '—';
   };
+
+  const salmonStageLabels = Object.freeze({
+    'Bonerattle Arena': '鲑鱼心脏斗技场',
+    'Gone Fission Hydroplant': '麦年海洋发电所',
+    "Jammin' Salmon Junction": '生筋子系统交流道遗址',
+    "Marooner's Bay": '漂浮落难船',
+    'Salmonid Smokeyard': '时不知鲑烟熏工房',
+    'Sockeye Station': '新卷堡',
+    'Spawning Grounds': '鲑坝'
+  });
+
+  const salmonGradeLabels = Object.freeze({
+    'Eggsecutive VP': '传说',
+    Profreshional: '达人'
+  });
 
   function createCard(root) {
     root.innerHTML = `
@@ -135,5 +151,86 @@
     return true;
   }
 
-  window.Splat3OverlayCard = Object.freeze({ update });
+  function createSalmonRunCard(root) {
+    root.innerHTML = `
+      <section class="salmon-run-card">
+        <div class="salmon-run-card__top">
+          <span class="salmon-run-card__stage" data-salmon-field="stage"></span>
+          <div class="salmon-run-card__scales" aria-label="本期鳞片总计">
+            <span class="salmon-run-card__scales-label">本期总计：</span>
+            <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="gold" alt="金鳞片"><b class="salmon-run-card__number" data-salmon-field="gold-scale"></b></span>
+            <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="silver" alt="银鳞片"><b class="salmon-run-card__number" data-salmon-field="silver-scale"></b></span>
+            <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="bronze" alt="铜鳞片"><b class="salmon-run-card__number" data-salmon-field="bronze-scale"></b></span>
+          </div>
+        </div>
+        <div class="salmon-run-card__bottom">
+          <div class="salmon-run-card__stats">
+            <span class="salmon-run-card__stats-item">巨大鲑鱼 <b data-salmon-field="defeat-enemy-count"></b></span>
+            <span class="salmon-run-card__stats-item">搬蛋 <b data-salmon-field="golden-egg-count"></b></span>
+            <span class="salmon-run-card__stats-item">红蛋 <b data-salmon-field="power-egg-count"></b></span>
+            <span class="salmon-run-card__stats-item">被救 <b data-salmon-field="rescued-count"></b></span>
+            <span class="salmon-run-card__stats-item">救援 <b data-salmon-field="rescue-count"></b></span>
+          </div>
+          <div class="salmon-run-card__details">
+            <div class="salmon-run-card__summary">
+              <span class="salmon-run-card__summary-clear">Clear!! <b data-salmon-field="clear-count"></b></span>
+              <span class="salmon-run-card__summary-failure">Failure <b data-salmon-field="failure-count"></b></span>
+            </div>
+            <div class="salmon-run-card__metadata">
+              <div class="salmon-run-card__details-grade"><span data-salmon-field="grade"></span><b data-salmon-field="grade-point"></b></div>
+              <div class="salmon-run-card__details-danger">危险度 <b data-salmon-field="danger-rate"></b></div>
+            </div>
+          </div>
+        </div>
+      </section>`;
+
+    const card = root.querySelector('.salmon-run-card');
+    const fields = Object.fromEntries(
+      Array.from(card.querySelectorAll('[data-salmon-field]'))
+        .map((element) => [element.dataset.salmonField, element])
+    );
+    for (const image of card.querySelectorAll('[data-salmon-scale]')) {
+      const kind = image.dataset.salmonScale;
+      image.src = new URL(`./images/scale-${kind}.png`, document.baseURI).href;
+    }
+    const refs = { card, fields };
+    mountedSalmonCards.set(root, refs);
+    return refs;
+  }
+
+  function updateSalmonRun(root, state) {
+    const data = state?.salmon_run;
+    let refs = mountedSalmonCards.get(root);
+    if (!data) {
+      if (refs) refs.card.hidden = true;
+      return false;
+    }
+    if (!refs) refs = createSalmonRunCard(root);
+    refs.card.hidden = false;
+
+    const stage = String(data.stage ?? '').trim();
+    refs.fields.stage.textContent = salmonStageLabels[stage] || stage || '—';
+    refs.fields['gold-scale'].textContent = `x${displayNumber(data.gold_scale)}`;
+    refs.fields['silver-scale'].textContent = `x${displayNumber(data.silver_scale)}`;
+    refs.fields['bronze-scale'].textContent = `x${displayNumber(data.bronze_scale)}`;
+    refs.fields['defeat-enemy-count'].textContent = `×${displayNumber(data.defeat_enemy_count)}`;
+    refs.fields['golden-egg-count'].textContent = `×${displayNumber(data.golden_egg_count)}`;
+    refs.fields['power-egg-count'].textContent = `×${displayNumber(data.power_egg_count)}`;
+    refs.fields['rescued-count'].textContent = `×${displayNumber(data.rescued_count)}`;
+    refs.fields['rescue-count'].textContent = `×${displayNumber(data.rescue_count)}`;
+    refs.fields['clear-count'].textContent = `×${displayNumber(data.clear_count)}`;
+    refs.fields['failure-count'].textContent = `×${displayNumber(data.failure_count)}`;
+    const rawGrade = String(data.grade ?? '').trim();
+    refs.fields.grade.textContent = salmonGradeLabels[rawGrade] || rawGrade;
+    refs.fields['grade-point'].textContent = isNumber(data.grade_point) ? displayNumber(data.grade_point) : '';
+    if (isNumber(data.danger_rate)) {
+      const dangerRate = Number(data.danger_rate);
+      refs.fields['danger-rate'].textContent = `${displayNumber(dangerRate < 10 ? dangerRate * 100 : dangerRate, dangerRate < 10 && dangerRate * 100 % 1 ? 1 : 0)}%`;
+    } else {
+      refs.fields['danger-rate'].textContent = '—';
+    }
+    return true;
+  }
+
+  window.Splat3OverlayCard = Object.freeze({ update, updateSalmonRun });
 })();

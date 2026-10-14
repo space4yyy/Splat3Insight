@@ -3,12 +3,13 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const ui = new URL('../ui/', import.meta.url);
-const [cards, indexHtml, appJs, overlayCss, overlayHtml, tauriConfig] = await Promise.all([
+const [cards, indexHtml, appJs, overlayCss, overlayHtml, salmonRunHtml, tauriConfig] = await Promise.all([
   readFile(new URL('obs-cards.json', ui), 'utf8').then(JSON.parse),
   readFile(new URL('index.html', ui), 'utf8'),
   readFile(new URL('app.js', ui), 'utf8'),
   readFile(new URL('overlay-card.css', ui), 'utf8'),
   readFile(new URL('overlay.html', ui), 'utf8'),
+  readFile(new URL('salmon-run.html', ui), 'utf8'),
   readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8').then(JSON.parse),
 ]);
 
@@ -52,7 +53,7 @@ test('Tauri CSP allows the app to fetch its same-origin card catalog', () => {
 test('OBS page templates receive dimensions from the card catalog', () => {
   assert.match(overlayCss, /width: var\(--obs-card-width\)/);
   assert.match(overlayCss, /height: var\(--obs-card-height\)/);
-  for (const page of [overlayHtml]) {
+  for (const page of [overlayHtml, salmonRunHtml]) {
     assert.match(page, /__OBS_CARD_WIDTH__/);
     assert.match(page, /__OBS_CARD_HEIGHT__/);
   }

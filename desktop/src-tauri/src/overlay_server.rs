@@ -17,6 +17,10 @@ pub const OVERLAY_PORT: u16 = 17_353;
 const OBS_CARD_CATALOG: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/obs-cards.json"));
 const OVERLAY_HTML: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/overlay.html"));
+const SALMON_RUN_HTML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/salmon-run.html"
+));
 const OVERLAY_CARD_CSS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/overlay-card.css"
@@ -32,6 +36,18 @@ const DISPLAY_FONT: &[u8] = include_bytes!(concat!(
 const BLITZ_MAIN_FONT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/fonts/BlitzMain.woff2"
+));
+const SCALE_GOLD: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/scale-gold.png"
+));
+const SCALE_SILVER: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/scale-silver.png"
+));
+const SCALE_BRONZE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/scale-bronze.png"
 ));
 const APP_ICON: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/icons/icon.png"));
 const MAX_CONCURRENT_CONNECTIONS: usize = 16;
@@ -68,6 +84,7 @@ fn overlay_url() -> String {
 fn render_card_page(card: &ObsCardDefinition) -> HttpResponse {
     let template = match card.page.as_str() {
         "overlay" => OVERLAY_HTML,
+        "salmon-run" => SALMON_RUN_HTML,
         _ => return not_found(),
     };
     let body = template
@@ -518,6 +535,21 @@ fn route_request(
             status: "200 OK",
             content_type: "font/woff2",
             body: BLITZ_MAIN_FONT.to_vec(),
+        }),
+        "/images/scale-gold.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: SCALE_GOLD.to_vec(),
+        }),
+        "/images/scale-silver.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: SCALE_SILVER.to_vec(),
+        }),
+        "/images/scale-bronze.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: SCALE_BRONZE.to_vec(),
         }),
         "/overlay-card.css" => Ok(HttpResponse {
             status: "200 OK",

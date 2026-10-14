@@ -9,8 +9,9 @@ const loginLink = document.querySelector('#login-link');
 const cancelLoginButton = document.querySelector('#cancel-login');
 const authenticateButton = document.querySelector('#authenticate');
 const overlayPreview = document.querySelector('#overlay-preview');
+const salmonRunPreview = document.querySelector('#salmon-run-preview');
 const syncStatusElement = document.querySelector('#sync-status');
-const overlayServiceStatusElement = document.querySelector('#overlay-service-status');
+const overlayServiceStateElement = document.querySelector('#overlay-service-state');
 const startOverlayServiceButton = document.querySelector('#start-overlay-service');
 const stopOverlayServiceButton = document.querySelector('#stop-overlay-service');
 const backgroundClosePrompt = document.querySelector('#background-close-prompt');
@@ -85,61 +86,46 @@ function setMessage(value, error = false) {
 
 function renderSyncStatus(status) {
   currentSyncStatus = status;
-  if (status?.state === 'idle' && !status.account_id) {
+  if (!status || (status.state === 'idle' && !status.account_id)) {
     syncStatusElement.textContent = '';
+    syncStatusElement.title = '';
     syncStatusElement.hidden = true;
     syncStatusElement.classList.remove('error', 'syncing');
     return;
   }
-  syncStatusElement.hidden = false;
-  if (!status) {
-    syncStatusElement.textContent = '同步状态不可用。';
-    syncStatusElement.classList.add('error');
-    return;
-  }
 
   const busy = ['preparing', 'syncing', 'refreshing'].includes(status.state);
-  const prefix = status.initial ? '首次同步' : '后台同步';
+  let label;
   if (busy) {
-    const progress = status.progress_total > 0
-      ? ` (${status.progress_completed}/${status.progress_total})`
-      : '';
-    const retry = status.retry_attempt > 0
-      ? ` · 重试 ${status.retry_attempt}`
-      : '';
-    syncStatusElement.textContent = `${prefix}：${status.message}${progress}${retry}`;
+    label = '刷新中';
   } else if (status.state === 'completed') {
-    syncStatusElement.textContent = `同步完成：新增 ${status.added_battle_count} 场对战、${status.added_coop_count} 场打工。`;
+    const completedAt = status.completed_at_ms
+      ? new Date(status.completed_at_ms).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+      : '';
+    label = completedAt ? `已刷新 ${completedAt}` : '已刷新';
   } else if (status.state === 'error') {
-    syncStatusElement.textContent = `同步失败：${status.error || status.message}`;
+    label = '刷新失败';
   } else {
-    syncStatusElement.textContent = status.message;
+    label = status.message?.includes('权限') ? '等待授权' : '等待刷新';
   }
-  syncStatusElement.title = syncStatusElement.textContent;
+  syncStatusElement.textContent = label;
+  syncStatusElement.title = label;
+  syncStatusElement.hidden = false;
   syncStatusElement.classList.toggle('syncing', busy);
   syncStatusElement.classList.toggle('error', status.state === 'error');
 }
 
 function renderOverlayServiceStatus(status) {
-  if (!status) {
-    overlayServiceStatusElement.textContent = 'OBS 服务状态不可用。';
-    overlayServiceStatusElement.className = 'service-status error';
-    return;
-  }
-
-  const running = status.state === 'running';
-  const starting = status.state === 'starting';
-  const stopped = status.state === 'stopped';
-  if (status.url) {
+  const running = status?.state === 'running';
+  const starting = status?.state === 'starting';
+  if (status?.url) {
     try {
       overlayServiceUrl = new URL(status.url).origin;
       renderObsCardLinks();
     } catch {}
   }
-  overlayServiceStatusElement.textContent = running
-    ? `● ${status.message}`
-    : `${status.message}${status.error ? `：${status.error}` : ''}`;
-  overlayServiceStatusElement.className = `service-status ${running ? 'running' : starting ? 'starting' : stopped ? 'stopped' : 'error'}`;
+  overlayServiceStateElement.textContent = running || starting ? '运行中' : '已停止';
+  overlayServiceStateElement.className = `overlay-service-state ${running || starting ? 'running' : 'stopped'}`;
   startOverlayServiceButton.hidden = running || starting;
   stopOverlayServiceButton.hidden = !running && !starting;
   startOverlayServiceButton.disabled = starting;
@@ -209,10 +195,10 @@ function renderObsCardLinks() {
   }
 }
 
-function fitOverlayPreview() {
-  const viewport = overlayPreview.querySelector('.overlay-preview__viewport');
-  const scaleElement = overlayPreview.querySelector('.overlay-preview__scale');
-  const card = overlayPreview.querySelector('.overlay-card');
+function fitCardPreview(preview, selector) {
+  const viewport = preview.querySelector('.overlay-preview__viewport');
+  const scaleElement = preview.querySelector('.overlay-preview__scale');
+  const card = preview.querySelector(selector);
   if (!viewport || !scaleElement || !card) {
     return;
   }
@@ -229,25 +215,41 @@ function fitOverlayPreview() {
 }
 
 function renderOverlay(state) {
-  if (!state?.selected) {
+  let battleScaleElement = overlayPreview.querySelector('.overlay-preview__scale');
+  if (state?.selected) {
+    if (!battleScaleElement) {
+      overlayPreview.innerHTML = `
+        <div class="overlay-preview__viewport">
+          <div class="overlay-preview__scale"></div>
+        </div>`;
+      battleScaleElement = overlayPreview.querySelector('.overlay-preview__scale');
+    }
+    window.Splat3OverlayCard.update(battleScaleElement, state);
+    fitCardPreview(overlayPreview, '.overlay-card');
+  } else {
     overlayPreview.innerHTML = '<div class="overlay-empty">没有找到可显示的 X 或蛮颓比赛记录。</div>';
-    return;
   }
 
-  let scaleElement = overlayPreview.querySelector('.overlay-preview__scale');
-  if (!scaleElement) {
-    overlayPreview.innerHTML = `
-      <div class="overlay-preview__viewport">
-        <div class="overlay-preview__scale"></div>
-      </div>`;
-    scaleElement = overlayPreview.querySelector('.overlay-preview__scale');
+  let salmonScaleElement = salmonRunPreview.querySelector('.overlay-preview__scale');
+  if (state?.salmon_run) {
+    if (!salmonScaleElement) {
+      salmonRunPreview.innerHTML = `
+        <div class="overlay-preview__viewport">
+          <div class="overlay-preview__scale"></div>
+        </div>`;
+      salmonScaleElement = salmonRunPreview.querySelector('.overlay-preview__scale');
+    }
+    window.Splat3OverlayCard.updateSalmonRun(salmonScaleElement, state);
+    fitCardPreview(salmonRunPreview, '.salmon-run-card');
+  } else {
+    salmonRunPreview.innerHTML = '<div class="overlay-empty">同步打工历史后显示真实鲑鱼跑数据。</div>';
   }
-
-  window.Splat3OverlayCard.update(scaleElement, state);
-  fitOverlayPreview();
 }
 
-window.addEventListener('resize', fitOverlayPreview);
+window.addEventListener('resize', () => {
+  fitCardPreview(overlayPreview, '.overlay-card');
+  fitCardPreview(salmonRunPreview, '.salmon-run-card');
+});
 
 async function refreshOverlay(accountId = null) {
   try {
@@ -268,7 +270,7 @@ function renderAccountList(items) {
       <div class="account">
         <div class="account-main">
           <strong class="account-name">${escapeHtml(account.display_name)}</strong>
-          <small class="account-history">历史：${account.history_battle_count} 对战 · ${account.history_coop_count} 打工</small>
+          <small class="account-history">${account.history_battle_count} 对战 · ${account.history_coop_count} 打工</small>
         </div>
         <div class="account-actions">
           ${account.active ? '<span class="badge">当前</span>' : `<button class="secondary" data-account="${escapeHtml(account.account_id)}">使用</button>`}
@@ -277,7 +279,7 @@ function renderAccountList(items) {
           ${account.splatnet_ready === false || (account.active && account.splatnet_ready === null) ? `<button class="secondary" data-refresh-account="${escapeHtml(account.account_id)}">获取权限</button>` : ''}
         </div>
       </div>`).join('')
-    : '<p class="status">点击“添加 Nintendo Account”开始。</p>';
+    : '<p class="status">点击“添加账号”开始。</p>';
 
   accounts.querySelectorAll('[data-account]').forEach((button) => {
     button.addEventListener('click', async () => {
@@ -355,7 +357,7 @@ async function refreshAccounts() {
   const result = await invoke('list_accounts');
   renderAccountList(result);
   await refreshOverlay(result.find((account) => account.active)?.account_id || null);
-  setMessage(result.length ? '账号已保存。' : '');
+  setMessage('');
 }
 
 async function refreshSyncStatus() {
@@ -438,7 +440,7 @@ cancelLoginButton.addEventListener('click', async () => {
   loginLink.value = '';
   try {
     await invoke('cancel_nintendo_login');
-    setMessage('已取消添加 Nintendo Account。');
+    setMessage('已取消添加账号。');
   } catch (error) {
     setMessage(`取消添加账号失败：${String(error)}`, true);
   }

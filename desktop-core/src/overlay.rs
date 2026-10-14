@@ -8,6 +8,26 @@ use crate::history::{ArchivedBattle, BattleRecord, HistoryCache};
 pub struct OverlayState {
     pub selected: Option<OverlayBattle>,
     pub recent_summary: RecentSummary,
+    #[serde(default)]
+    pub salmon_run: Option<SalmonRunCard>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SalmonRunCard {
+    pub stage: Option<String>,
+    pub gold_scale: Option<i64>,
+    pub silver_scale: Option<i64>,
+    pub bronze_scale: Option<i64>,
+    pub defeat_enemy_count: Option<i64>,
+    pub golden_egg_count: Option<i64>,
+    pub power_egg_count: Option<i64>,
+    pub rescued_count: Option<i64>,
+    pub rescue_count: Option<i64>,
+    pub clear_count: usize,
+    pub failure_count: usize,
+    pub grade: Option<String>,
+    pub grade_point: Option<i64>,
+    pub danger_rate: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -63,6 +83,7 @@ impl OverlayState {
             selected: battles
                 .first()
                 .map(|item| to_overlay_battle(item, &battles[1..])),
+            salmon_run: None,
             recent_summary: RecentSummary {
                 sample_size,
                 win,

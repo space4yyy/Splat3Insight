@@ -10,7 +10,9 @@ use splat3_widget_core::history::{
 };
 #[cfg(test)]
 use splat3_widget_core::history::{ArchivedCoop, CoopRecord};
-use splat3_widget_core::overlay::{archived_battle_power_track_key, OverlayState, RecentSummary};
+use splat3_widget_core::overlay::{
+    archived_battle_power_track_key, OverlayState, RecentSummary, SalmonRunCard,
+};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
@@ -440,6 +442,172 @@ pub(crate) fn load_overlay_cache(
     }))
 }
 
+fn load_salmon_run_card(
+    history_dir: &Path,
+    account_id: &str,
+) -> Result<Option<SalmonRunCard>, String> {
+    const ROTATION_WINDOW_HOURS: i64 = 40;
+    const RECENT_COOP_LIMIT: i64 = 50;
+
+    let connection = open_database(history_dir)?;
+    let rows = {
+        let mut statement = connection
+            .prepare(
+                "SELECT played_time, record_json, raw_json, raw_encoding
+                 FROM history_records
+                 WHERE account_id = ?1 AND record_type = 'coop'
+                 ORDER BY played_time IS NULL, played_time DESC, rowid DESC
+                 LIMIT ?2",
+            )
+            .map_err(|error| format!("准备鲑鱼跑卡片查询失败：{error}"))?;
+        let rows = statement
+            .query_map(params![account_id, RECENT_COOP_LIMIT], |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|error| format!("读取鲑鱼跑卡片失败：{error}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("读取鲑鱼跑卡片行失败：{error}"))?
+    };
+    let Some((latest_played_time, latest_record_json, latest_raw_bytes, latest_encoding)) =
+        rows.first()
+    else {
+        return Ok(None);
+    };
+
+    let latest_record: Value = serde_json::from_str(latest_record_json)
+        .map_err(|error| format!("解析鲑鱼跑卡片记录失败：{error}"))?;
+    let latest_raw = decode_raw_json(latest_raw_bytes, latest_encoding).unwrap_or(Value::Null);
+    let stage = latest_record
+        .get("stage")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let latest_time = latest_played_time
+        .as_deref()
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok());
+    let rotation_window = chrono::Duration::hours(ROTATION_WINDOW_HOURS);
+
+    let mut gold_scale = 0;
+    let mut silver_scale = 0;
+    let mut bronze_scale = 0;
+    let mut has_gold_scale = false;
+    let mut has_silver_scale = false;
+    let mut has_bronze_scale = false;
+    let mut clear_count = 0;
+    let mut failure_count = 0;
+
+    for (played_time, record_json, raw_bytes, encoding) in &rows {
+        let record: Value = match serde_json::from_str(record_json) {
+            Ok(record) => record,
+            Err(_) => continue,
+        };
+        if record.get("stage").and_then(Value::as_str) != stage.as_deref() {
+            continue;
+        }
+        if let (Some(latest), Some(candidate)) = (
+            latest_time,
+            played_time
+                .as_deref()
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok()),
+        ) {
+            let elapsed = latest.signed_duration_since(candidate);
+            if elapsed < chrono::Duration::zero() || elapsed > rotation_window {
+                continue;
+            }
+        } else if record.get("id") != latest_record.get("id") {
+            continue;
+        }
+
+        let clear_waves = record.get("clear_waves").and_then(Value::as_i64);
+        if let Some(clear_waves) = clear_waves {
+            if clear_waves >= 3 {
+                clear_count += 1;
+            } else {
+                failure_count += 1;
+            }
+        }
+
+        if let Ok(raw) = decode_raw_json(raw_bytes, encoding) {
+            if let Some(scale) = raw.get("scale") {
+                add_scale(scale, "gold", &mut gold_scale, &mut has_gold_scale);
+                add_scale(scale, "silver", &mut silver_scale, &mut has_silver_scale);
+                add_scale(scale, "bronze", &mut bronze_scale, &mut has_bronze_scale);
+            }
+        }
+    }
+
+    let my_result = latest_raw.get("myResult").unwrap_or(&Value::Null);
+    let latest_scales = latest_raw.get("scale").unwrap_or(&Value::Null);
+    let record_i64 = |key: &str| latest_record.get(key).and_then(Value::as_i64);
+    let my_result_i64 = |keys: &[&str]| -> Option<i64> {
+        keys.iter()
+            .find_map(|key| my_result.get(*key).and_then(Value::as_i64))
+    };
+    let scale_count = |key: &str, accumulated: i64, has_accumulated: bool| {
+        has_accumulated
+            .then_some(accumulated)
+            .or_else(|| latest_scales.get(key).and_then(Value::as_i64))
+    };
+    let grade_point = latest_record
+        .get("after_grade_point")
+        .and_then(value_as_i64)
+        .or_else(|| latest_raw.get("afterGradePoint").and_then(value_as_i64));
+    let danger_rate = latest_record
+        .get("danger_rate")
+        .and_then(Value::as_f64)
+        .or_else(|| latest_raw.get("dangerRate").and_then(Value::as_f64));
+
+    Ok(Some(SalmonRunCard {
+        stage,
+        gold_scale: scale_count("gold", gold_scale, has_gold_scale),
+        silver_scale: scale_count("silver", silver_scale, has_silver_scale),
+        bronze_scale: scale_count("bronze", bronze_scale, has_bronze_scale),
+        defeat_enemy_count: my_result_i64(&["defeatEnemyCount"]),
+        golden_egg_count: my_result_i64(&["goldenDeliverCount", "goldenEggs", "goldenEgg"])
+            .or_else(|| record_i64("golden_eggs")),
+        power_egg_count: my_result_i64(&["deliverCount", "powerEggs", "powerEgg"])
+            .or_else(|| record_i64("power_eggs")),
+        rescued_count: my_result_i64(&["rescuedCount", "rescued"])
+            .or_else(|| record_i64("rescued")),
+        rescue_count: my_result_i64(&["rescueCount", "rescuedByOthers"])
+            .or_else(|| record_i64("rescued_by_others")),
+        clear_count,
+        failure_count,
+        grade: latest_record
+            .get("after_grade")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                latest_raw
+                    .pointer("/afterGrade/name")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            }),
+        grade_point,
+        danger_rate,
+    }))
+}
+
+fn add_scale(scale: &Value, key: &str, total: &mut i64, found: &mut bool) {
+    if let Some(value) = scale.get(key).and_then(Value::as_i64) {
+        *total += value;
+        *found = true;
+    }
+}
+
+fn value_as_i64(value: &Value) -> Option<i64> {
+    value.as_i64().or_else(|| {
+        value
+            .as_f64()
+            .filter(|number| number.fract() == 0.0)
+            .map(|n| n as i64)
+    })
+}
+
 pub(crate) fn load_overlay_state(
     history_dir: &Path,
     account_id: &str,
@@ -481,7 +649,8 @@ pub(crate) fn load_overlay_state(
                 params![account_id, MODE_DELTA_MIGRATION],
             )
             .map_err(|error| format!("保存模式差分卡片数据版本失败：{error}"))?;
-        return Ok(state);
+        drop(connection);
+        return attach_salmon_run_card(history_dir, account_id, state);
     }
     let mode_delta_version = connection
         .query_row(
@@ -509,7 +678,8 @@ pub(crate) fn load_overlay_state(
                 params![account_id, MODE_DELTA_MIGRATION],
             )
             .map_err(|error| format!("保存模式差分卡片数据版本失败：{error}"))?;
-        return Ok(state);
+        drop(connection);
+        return attach_salmon_run_card(history_dir, account_id, state);
     }
     let snapshot = connection
         .query_row(
@@ -521,7 +691,10 @@ pub(crate) fn load_overlay_state(
         .map_err(|error| format!("读取卡片缓存失败：{error}"))?;
     if let Some(snapshot) = snapshot {
         match serde_json::from_str(&snapshot) {
-            Ok(state) => return Ok(state),
+            Ok(state) => {
+                drop(connection);
+                return attach_salmon_run_card(history_dir, account_id, state);
+            }
             Err(_) => {
                 connection
                     .execute(
@@ -538,6 +711,7 @@ pub(crate) fn load_overlay_state(
         Some(cache) => OverlayState::from_history(&cache),
         None => OverlayState {
             selected: None,
+            salmon_run: None,
             recent_summary: RecentSummary {
                 sample_size: 0,
                 win: 0,
@@ -547,12 +721,22 @@ pub(crate) fn load_overlay_state(
         },
     };
     save_overlay_state(history_dir, account_id, &state)?;
+    attach_salmon_run_card(history_dir, account_id, state)
+}
+
+fn attach_salmon_run_card(
+    history_dir: &Path,
+    account_id: &str,
+    mut state: OverlayState,
+) -> Result<OverlayState, String> {
+    state.salmon_run = load_salmon_run_card(history_dir, account_id)?;
     Ok(state)
 }
 
 fn empty_overlay_state() -> OverlayState {
     OverlayState {
         selected: None,
+        salmon_run: None,
         recent_summary: RecentSummary {
             sample_size: 0,
             win: 0,
@@ -1824,6 +2008,61 @@ mod tests {
         );
 
         assert_eq!(reparsed.battles[0].raw, archived_raw);
+    }
+
+    #[test]
+    fn salmon_run_overlay_uses_native_scale_counts_and_latest_match_stats() {
+        let directory = tempdir().unwrap();
+        let mut cache = sample_cache();
+        let mut latest = sample_coop("coop-latest", "2026-09-22T02:00:00Z".to_owned());
+        latest.record.stage = Some("Gone Fission Hydroplant".to_owned());
+        latest.record.clear_waves = Some(3);
+        latest.record.after_grade = Some("Eggsecutive VP".to_owned());
+        latest.record.after_grade_point = Some(440.0);
+        latest.record.danger_rate = Some(2.49);
+        latest.raw = json!({
+            "scale": { "gold": 1, "silver": 2, "bronze": 3 },
+            "myResult": {
+                "defeatEnemyCount": 29,
+                "goldenDeliverCount": 27,
+                "deliverCount": 1309,
+                "rescuedCount": 1,
+                "rescueCount": 1
+            }
+        });
+
+        let mut earlier_clear = sample_coop("coop-clear", "2026-09-22T01:00:00Z".to_owned());
+        earlier_clear.record.stage = Some("Gone Fission Hydroplant".to_owned());
+        earlier_clear.record.clear_waves = Some(3);
+        earlier_clear.raw = json!({ "scale": { "gold": 2, "silver": 0, "bronze": 5 } });
+
+        let mut earlier_failure = sample_coop("coop-failure", "2026-09-22T00:00:00Z".to_owned());
+        earlier_failure.record.stage = Some("Gone Fission Hydroplant".to_owned());
+        earlier_failure.record.clear_waves = Some(2);
+        earlier_failure.raw = json!({ "scale": { "gold": 0, "silver": 4, "bronze": 7 } });
+
+        let mut outside_rotation = sample_coop("coop-old", "2026-09-20T00:00:00Z".to_owned());
+        outside_rotation.record.stage = Some("Gone Fission Hydroplant".to_owned());
+        outside_rotation.record.clear_waves = Some(3);
+        outside_rotation.raw = json!({ "scale": { "gold": 50, "silver": 50, "bronze": 50 } });
+
+        cache.coop = vec![latest, earlier_clear, earlier_failure, outside_rotation];
+        save_cache(directory.path(), "account", &cache).unwrap();
+
+        let state = load_overlay_state(directory.path(), "account").unwrap();
+        let salmon = state.salmon_run.unwrap();
+        assert_eq!(salmon.gold_scale, Some(3));
+        assert_eq!(salmon.silver_scale, Some(6));
+        assert_eq!(salmon.bronze_scale, Some(15));
+        assert_eq!(salmon.defeat_enemy_count, Some(29));
+        assert_eq!(salmon.golden_egg_count, Some(27));
+        assert_eq!(salmon.power_egg_count, Some(1309));
+        assert_eq!(salmon.rescued_count, Some(1));
+        assert_eq!(salmon.rescue_count, Some(1));
+        assert_eq!(salmon.clear_count, 2);
+        assert_eq!(salmon.failure_count, 1);
+        assert_eq!(salmon.grade_point, Some(440));
+        assert_eq!(salmon.danger_rate, Some(2.49));
     }
 
     #[test]

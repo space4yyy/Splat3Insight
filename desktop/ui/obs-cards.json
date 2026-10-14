@@ -7,5 +7,14 @@
     "sizeLabel": "OBS 尺寸推荐",
     "width": 300,
     "height": 80
+  },
+  {
+    "id": "salmon-run",
+    "route": "/salmon-run",
+    "page": "salmon-run",
+    "name": "鲑鱼跑数据卡片",
+    "sizeLabel": "OBS 尺寸推荐",
+    "width": 360,
+    "height": 84
   }
 ]
