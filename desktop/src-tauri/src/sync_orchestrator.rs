@@ -292,19 +292,6 @@ pub(super) async fn sync_account_inner(
             ),
         );
     }
-    #[cfg(feature = "local-extension")]
-    report_extension_hook_result(
-        auth_log_path,
-        &metadata.display_name,
-        account_id,
-        crate::local_extension::on_history_synced(
-            history_dir,
-            auth_log_path,
-            account_id,
-            &metadata.display_name,
-        ),
-    );
-
     if initial_sync || added_battle_count > 0 || x_settlement_update_count > 0 {
         if let Some(overlay_cache) = history_store::load_overlay_cache(history_dir, account_id)
             .map_err(|error| {
@@ -369,58 +356,4 @@ pub(super) async fn sync_account_inner(
         ),
     );
     Ok(summary)
-}
-
-#[cfg(any(feature = "local-extension", test))]
-fn report_extension_hook_result(
-    auth_log_path: &Path,
-    display_name: &str,
-    account_id: &str,
-    result: Result<(), String>,
-) {
-    if let Err(error) = result {
-        // Extension work is retried on the next successful history poll. Keep its
-        // failure visible without blocking shared overlay updates or sync completion.
-        let _ = account_auth_error(
-            auth_log_path,
-            "private-extension",
-            display_name,
-            account_id,
-            error,
-        );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::report_extension_hook_result;
-    use std::fs;
-    use tempfile::tempdir;
-
-    #[test]
-    fn extension_sync_failure_is_logged_without_becoming_a_sync_error() {
-        let directory = tempdir().unwrap();
-        let log_path = directory.path().join("auth.log");
-
-        report_extension_hook_result(
-            &log_path,
-            "Space4",
-            "account-1",
-            Err("模拟随机武器存储失败".to_owned()),
-        );
-
-        let log = fs::read_to_string(log_path).unwrap();
-        assert!(log.contains("账号“Space4”（ID: account-1）"));
-        assert!(log.contains("模拟随机武器存储失败"));
-    }
-
-    #[test]
-    fn successful_extension_sync_does_not_create_an_error_log() {
-        let directory = tempdir().unwrap();
-        let log_path = directory.path().join("auth.log");
-
-        report_extension_hook_result(&log_path, "Space4", "account-1", Ok(()));
-
-        assert!(!log_path.exists());
-    }
 }

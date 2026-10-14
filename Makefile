@@ -1,4 +1,4 @@
-.PHONY: install dev build test fmt-check check clean clean-private
+.PHONY: install dev build test fmt-check check clean
 
 install:
 	npm --prefix desktop install
@@ -25,6 +25,3 @@ check:
 clean:
 	cargo clean --manifest-path desktop-core/Cargo.toml
 	cargo clean --manifest-path desktop/src-tauri/Cargo.toml
-
-clean-private:
-	CARGO_TARGET_DIR=.private-build/target cargo clean --manifest-path desktop/src-tauri/Cargo.toml

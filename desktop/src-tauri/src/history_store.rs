@@ -1291,7 +1291,7 @@ mod tests {
     }
 
     #[test]
-    fn public_database_schema_does_not_create_private_weapon_storage() {
+    fn database_schema_does_not_create_legacy_random_weapon_storage() {
         let directory = tempdir().unwrap();
         let connection = open_database(directory.path()).unwrap();
         let table_count: i64 = connection

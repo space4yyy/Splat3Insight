@@ -5,7 +5,7 @@
     "page": "overlay",
     "name": "数据卡片",
     "sizeLabel": "OBS 尺寸推荐",
-    "width": 560,
-    "height": 100
+    "width": 300,
+    "height": 80
   }
 ]

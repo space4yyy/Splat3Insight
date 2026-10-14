@@ -29,11 +29,7 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tokio::sync::watch;
 
-#[cfg(feature = "local-extension")]
-mod extension_host;
 pub(crate) mod history_store;
-#[cfg(feature = "local-extension")]
-mod local_extension;
 pub(crate) mod overlay_server;
 mod sync_orchestrator;
 
@@ -856,6 +852,9 @@ fn start_background_sync(
     sync_trigger: Arc<tokio::sync::Notify>,
 ) {
     tauri::async_runtime::spawn(async move {
+        // Let the main webview paint before the first Keychain lookup can
+        // display a macOS authorization prompt.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         loop {
             let next_sync_at = tokio::time::Instant::now()
                 + std::time::Duration::from_secs(BACKGROUND_SYNC_INTERVAL_SECS);
@@ -913,12 +912,6 @@ fn build_account_views<S: SecretStore>(
     registry: &mut AccountRegistry<S>,
     history_dir: &Path,
 ) -> Result<Vec<AccountView>, String> {
-    if let Some(active_id) = registry.active_account_id().map(ToOwned::to_owned) {
-        if !registry.is_account_deletion_pending(&active_id) {
-            // Only inspect the active account. Other credentials stay untouched until selected.
-            let _ = ensure_account_readiness(registry, &active_id);
-        }
-    }
     let active_id = registry.active_account_id();
     registry
         .accounts()
@@ -1699,6 +1692,12 @@ pub fn run() {
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = (size.width, size.height);
             }
 
+            overlay_service.start().map_err(std::io::Error::other)?;
+
+            build_tray(app, preferences_path, &preferences)?;
+            if !launch_in_background {
+                main_window.show()?;
+            }
             start_background_sync(
                 registry,
                 history_dir,
@@ -1706,13 +1705,6 @@ pub fn run() {
                 sync_runtime,
                 sync_trigger,
             );
-
-            overlay_service.start().map_err(std::io::Error::other)?;
-
-            build_tray(app, preferences_path, &preferences)?;
-            if !launch_in_background {
-                main_window.show()?;
-            }
 
             Ok(())
         })
@@ -1951,7 +1943,7 @@ mod tests {
     }
 
     #[test]
-    fn listing_legacy_accounts_reads_only_the_active_credential() {
+    fn listing_legacy_accounts_does_not_read_credentials() {
         let directory = tempdir().unwrap();
         let read_count = Arc::new(AtomicUsize::new(0));
         let store = ReadCountingStore {
@@ -1979,8 +1971,8 @@ mod tests {
 
         let views = build_account_views(&mut registry, directory.path()).unwrap();
 
-        assert_eq!(read_count.load(Ordering::Relaxed), 1);
-        assert_eq!(views[0].splatnet_ready, Some(true));
+        assert_eq!(read_count.load(Ordering::Relaxed), 0);
+        assert_eq!(views[0].splatnet_ready, None);
         assert_eq!(views[1].splatnet_ready, None);
     }
 

@@ -6,6 +6,14 @@
   font-display: block;
 }
 
+@font-face {
+  font-family: "BlitzMain";
+  src: url("./fonts/BlitzMain.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   font-family: "DFP GBZY7", Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
 }
@@ -15,6 +23,9 @@
 }
 
 .overlay-card {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
   width: var(--obs-card-width);
   height: var(--obs-card-height);
   min-width: 0;
@@ -38,6 +49,8 @@
 .overlay-card__bottom {
   display: flex;
   align-items: baseline;
+  width: min(100%, 420px);
+  margin-inline: auto;
   gap: 10px;
 }
 
@@ -46,7 +59,8 @@
   align-items: flex-end;
   gap: 6px;
   color: #f5f5f2;
-  font-size: 21px;
+  font-size: 19px;
+  font-size: clamp(16px, 3.8cqi, 21px);
   line-height: .9;
   letter-spacing: .04em;
 }
@@ -79,10 +93,12 @@
 .overlay-card__summary {
   display: flex;
   align-items: baseline;
-  gap: 14px;
+  gap: 10px;
   margin-left: auto;
   color: #f5f5f2;
-  font-size: 20px;
+  font-family: "BlitzMain", "DFP GBZY7", sans-serif;
+  font-size: 16px;
+  line-height: 1;
   letter-spacing: .02em;
   white-space: nowrap;
 }
@@ -100,21 +116,22 @@
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: flex-end;
   gap: 10px;
-  margin-top: 18px;
+  margin-top: 10px;
   padding-top: 0;
 }
 
 .overlay-card__power {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
-  min-height: 44px;
+  min-height: 36px;
   overflow: hidden;
   white-space: nowrap;
-  font-size: 60px;
-  line-height: .82;
-  letter-spacing: -.08em;
+  font-family: "BlitzMain", "DFP GBZY7", sans-serif;
+  font-size: 34px;
+  line-height: .9;
+  letter-spacing: -.04em;
 }
 
 .overlay-card__power-value {
@@ -128,8 +145,8 @@
   min-width: 0;
   overflow: hidden;
   margin-bottom: 0;
-  font-size: 22px;
-  line-height: .82;
+  font-size: 16px;
+  line-height: .9;
   letter-spacing: -.04em;
   white-space: nowrap;
 }
@@ -143,12 +160,12 @@
 }
 
 .overlay-card__power-value.is-placeholder {
-  font-size: 37px;
+  font-size: 34px;
   margin-bottom: 8px;
 }
 
 .overlay-card__power-delta.is-placeholder {
-  font-size: 18px;
+  font-size: 16px;
   margin-bottom: 2px;
 }
 
@@ -170,11 +187,14 @@
 .overlay-card__kad {
   display: flex;
   flex: 0 0 auto;
-  gap: 6px;
+  gap: 5px;
   color: #f5f5f2;
-  font-family: inherit;
-  font-size: 28px;
-  font-weight: 800;
+  font-family: "BlitzMain", "DFP GBZY7", sans-serif;
+  font-size: 24px;
+  font-size: clamp(16px, 4.2cqi, 24px);
+  font-weight: 400;
+  font-synthesis: none;
+  line-height: 1;
   white-space: nowrap;
 }
 
@@ -182,6 +202,7 @@
   display: flex;
   align-items: baseline;
   gap: 0;
+  line-height: 1;
 }
 
 .overlay-card__kad span:first-child {
@@ -190,7 +211,10 @@
 
 .overlay-card__kad small {
   color: #bdbdbd;
-  font-size: 15px;
+  font-family: "DFP GBZY7", sans-serif;
+  font-size: 13px;
+  font-size: clamp(10px, 2.4cqi, 13px);
+  line-height: 1;
   letter-spacing: .04em;
 }
 
@@ -201,12 +225,12 @@
 }
 
 .overlay-card__power-value.is-placeholder {
-  font-size: 37px;
+  font-size: 34px;
   margin-bottom: 8px;
 }
 
 .overlay-card__power-delta.is-placeholder {
-  font-size: 18px;
+  font-size: 16px;
   margin-bottom: 2px;
 }
 

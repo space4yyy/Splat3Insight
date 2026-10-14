@@ -53,8 +53,9 @@
         }
       }
 
-      // 字体完成加载后浏览器会自行重绘，无需重建卡片 DOM。
+      // 数字字体和中文字体完成加载后浏览器会自行重绘，无需重建卡片 DOM。
       document.fonts.load('16px "DFP GBZY7"').catch(() => {});
+      document.fonts.load('16px "BlitzMain"').catch(() => {});
       update();
       window.addEventListener('resize', fitOverlay);
       window.setInterval(update, 5000);

@@ -29,6 +29,10 @@ const DISPLAY_FONT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/fonts/DFP_GBZY7.ttf"
 ));
+const BLITZ_MAIN_FONT: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/fonts/BlitzMain.woff2"
+));
 const APP_ICON: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/icons/icon.png"));
 const MAX_CONCURRENT_CONNECTIONS: usize = 16;
 const MAX_REQUEST_HEADER_BYTES: usize = 8 * 1024;
@@ -475,22 +479,6 @@ fn route_request(
     path: &str,
     config: &OverlayServerConfig,
 ) -> Result<HttpResponse, String> {
-    #[cfg(feature = "local-extension")]
-    if let Some(response) = crate::local_extension::route_request(
-        method,
-        path,
-        &crate::extension_host::ExtensionContext {
-            accounts_path: config.accounts_path.clone(),
-            history_dir: config.history_dir.clone(),
-        },
-    )? {
-        return Ok(HttpResponse {
-            status: response.status,
-            content_type: response.content_type,
-            body: response.body,
-        });
-    }
-
     if method != "GET" {
         return Ok(HttpResponse {
             status: "405 Method Not Allowed",
@@ -525,6 +513,11 @@ fn route_request(
             status: "200 OK",
             content_type: "font/ttf",
             body: DISPLAY_FONT.to_vec(),
+        }),
+        "/fonts/BlitzMain.woff2" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "font/woff2",
+            body: BLITZ_MAIN_FONT.to_vec(),
         }),
         "/overlay-card.css" => Ok(HttpResponse {
             status: "200 OK",
@@ -795,6 +788,23 @@ mod tests {
     }
 
     #[test]
+    fn serves_the_embedded_blitz_main_font() {
+        let directory = tempdir().unwrap();
+        let response = route_request(
+            "GET",
+            "/fonts/BlitzMain.woff2",
+            &OverlayServerConfig {
+                accounts_path: directory.path().join("accounts.json"),
+                history_dir: directory.path().join("history"),
+            },
+        )
+        .unwrap();
+        assert_eq!(response.status, "200 OK");
+        assert_eq!(response.content_type, "font/woff2");
+        assert_eq!(response.body, BLITZ_MAIN_FONT);
+    }
+
+    #[test]
     fn serves_the_app_icon_as_favicon() {
         let directory = tempdir().unwrap();
         let response = route_request(
@@ -877,8 +887,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "local-extension"))]
-    fn public_server_does_not_serve_private_cards_or_weapon_endpoints() {
+    fn unavailable_routes_return_not_found() {
         let directory = tempdir().unwrap();
         let config = OverlayServerConfig {
             accounts_path: directory.path().join("accounts.json"),

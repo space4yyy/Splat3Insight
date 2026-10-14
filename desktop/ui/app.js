@@ -251,7 +251,10 @@ window.addEventListener('resize', fitOverlayPreview);
 
 async function refreshOverlay(accountId = null) {
   try {
-    await document.fonts.load('16px "DFP GBZY7"');
+    await Promise.all([
+      document.fonts.load('16px "DFP GBZY7"').catch(() => {}),
+      document.fonts.load('16px "BlitzMain"').catch(() => {})
+    ]);
     const state = await invoke('get_overlay_state', { accountId });
     renderOverlay(state);
   } catch (error) {
