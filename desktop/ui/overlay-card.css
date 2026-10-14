@@ -211,7 +211,7 @@
 
 .overlay-card__kad small {
   color: #bdbdbd;
-  font-family: "DFP GBZY7", sans-serif;
+  font-family: "BlitzMain", "DFP GBZY7", sans-serif;
   font-size: 13px;
   font-size: clamp(10px, 2.4cqi, 13px);
   line-height: 1;
