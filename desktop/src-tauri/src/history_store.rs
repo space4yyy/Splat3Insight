@@ -446,50 +446,52 @@ fn load_salmon_run_card(
     history_dir: &Path,
     account_id: &str,
 ) -> Result<Option<SalmonRunCard>, String> {
-    const ROTATION_WINDOW_HOURS: i64 = 40;
-    const RECENT_COOP_LIMIT: i64 = 50;
-
     let connection = open_database(history_dir)?;
-    let rows = {
-        let mut statement = connection
-            .prepare(
-                "SELECT played_time, record_json, raw_json, raw_encoding
-                 FROM history_records
-                 WHERE account_id = ?1 AND record_type = 'coop'
-                 ORDER BY played_time IS NULL, played_time DESC, rowid DESC
-                 LIMIT ?2",
-            )
-            .map_err(|error| format!("准备鲑鱼跑卡片查询失败：{error}"))?;
-        let rows = statement
-            .query_map(params![account_id, RECENT_COOP_LIMIT], |row| {
-                Ok((
-                    row.get::<_, Option<String>>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Vec<u8>>(2)?,
-                    row.get::<_, String>(3)?,
-                ))
-            })
-            .map_err(|error| format!("读取鲑鱼跑卡片失败：{error}"))?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("读取鲑鱼跑卡片行失败：{error}"))?
-    };
-    let Some((latest_played_time, latest_record_json, latest_raw_bytes, latest_encoding)) =
-        rows.first()
+    let mut statement = connection
+        .prepare(
+            "SELECT played_time, record_json, raw_json, raw_encoding
+             FROM history_records
+             WHERE account_id = ?1 AND record_type = 'coop'
+             ORDER BY played_time IS NULL, played_time DESC, rowid DESC",
+        )
+        .map_err(|error| format!("准备鲑鱼跑卡片查询失败：{error}"))?;
+    let mut rows = statement
+        .query_map(params![account_id], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|error| format!("读取鲑鱼跑卡片失败：{error}"))?;
+    let mut latest = None;
+    for row in rows.by_ref() {
+        let (played_time, record_json, raw_bytes, encoding) =
+            row.map_err(|error| format!("读取鲑鱼跑卡片行失败：{error}"))?;
+        let record: Value = match serde_json::from_str(&record_json) {
+            Ok(record) => record,
+            Err(_) => continue,
+        };
+        if record.get("rule").and_then(Value::as_str) != Some("REGULAR") {
+            continue;
+        }
+        latest = Some(((played_time, raw_bytes, encoding), record));
+        break;
+    }
+    let Some(((latest_played_time, latest_raw_bytes, latest_encoding), latest_record)) = latest
     else {
         return Ok(None);
     };
-
-    let latest_record: Value = serde_json::from_str(latest_record_json)
-        .map_err(|error| format!("解析鲑鱼跑卡片记录失败：{error}"))?;
-    let latest_raw = decode_raw_json(latest_raw_bytes, latest_encoding).unwrap_or(Value::Null);
+    let latest_raw = decode_raw_json(&latest_raw_bytes, &latest_encoding).unwrap_or(Value::Null);
     let stage = latest_record
         .get("stage")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    let latest_time = latest_played_time
+    let latest_time_is_valid = latest_played_time
         .as_deref()
-        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok());
-    let rotation_window = chrono::Duration::hours(ROTATION_WINDOW_HOURS);
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .is_some();
 
     let mut gold_scale = 0;
     let mut silver_scale = 0;
@@ -500,28 +502,7 @@ fn load_salmon_run_card(
     let mut clear_count = 0;
     let mut failure_count = 0;
 
-    for (played_time, record_json, raw_bytes, encoding) in &rows {
-        let record: Value = match serde_json::from_str(record_json) {
-            Ok(record) => record,
-            Err(_) => continue,
-        };
-        if record.get("stage").and_then(Value::as_str) != stage.as_deref() {
-            continue;
-        }
-        if let (Some(latest), Some(candidate)) = (
-            latest_time,
-            played_time
-                .as_deref()
-                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok()),
-        ) {
-            let elapsed = latest.signed_duration_since(candidate);
-            if elapsed < chrono::Duration::zero() || elapsed > rotation_window {
-                continue;
-            }
-        } else if record.get("id") != latest_record.get("id") {
-            continue;
-        }
-
+    let mut accumulate_record = |record: &Value, raw_bytes: &[u8], encoding: &str| {
         let clear_waves = record.get("clear_waves").and_then(Value::as_i64);
         if let Some(clear_waves) = clear_waves {
             if clear_waves >= 3 {
@@ -538,9 +519,37 @@ fn load_salmon_run_card(
                 add_scale(scale, "bronze", &mut bronze_scale, &mut has_bronze_scale);
             }
         }
+    };
+    accumulate_record(&latest_record, &latest_raw_bytes, &latest_encoding);
+
+    if stage.is_some() && latest_time_is_valid {
+        for record_row in rows {
+            let (played_time, record_json, raw_bytes, encoding) =
+                record_row.map_err(|error| format!("读取鲑鱼跑卡片行失败：{error}"))?;
+            let Some(played_time) = played_time else {
+                break;
+            };
+            if chrono::DateTime::parse_from_rfc3339(&played_time).is_err() {
+                break;
+            }
+            let record: Value = match serde_json::from_str(&record_json) {
+                Ok(record) => record,
+                Err(_) => break,
+            };
+            if record.get("rule").and_then(Value::as_str) != Some("REGULAR")
+                || record.get("stage").and_then(Value::as_str) != stage.as_deref()
+            {
+                break;
+            }
+            accumulate_record(&record, &raw_bytes, &encoding);
+        }
     }
 
     let my_result = latest_raw.get("myResult").unwrap_or(&Value::Null);
+    let species = latest_raw
+        .pointer("/myResult/player/species")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
     let latest_scales = latest_raw.get("scale").unwrap_or(&Value::Null);
     let record_i64 = |key: &str| latest_record.get(key).and_then(Value::as_i64);
     let my_result_i64 = |keys: &[&str]| -> Option<i64> {
@@ -562,7 +571,9 @@ fn load_salmon_run_card(
         .or_else(|| latest_raw.get("dangerRate").and_then(Value::as_f64));
 
     Ok(Some(SalmonRunCard {
+        played_time: latest_played_time.clone(),
         stage,
+        species,
         gold_scale: scale_count("gold", gold_scale, has_gold_scale),
         silver_scale: scale_count("silver", silver_scale, has_silver_scale),
         bronze_scale: scale_count("bronze", bronze_scale, has_bronze_scale),
@@ -1436,7 +1447,7 @@ mod tests {
             record: CoopRecord {
                 id: id.to_owned(),
                 played_time: Some(played_time),
-                rule: None,
+                rule: Some("REGULAR".to_owned()),
                 stage: None,
                 result_wave: None,
                 clear_waves: None,
@@ -2041,12 +2052,23 @@ mod tests {
         earlier_failure.record.clear_waves = Some(2);
         earlier_failure.raw = json!({ "scale": { "gold": 0, "silver": 4, "bronze": 7 } });
 
+        let mut rotation_boundary =
+            sample_coop("coop-next-stage", "2026-09-21T00:00:00Z".to_owned());
+        rotation_boundary.record.stage = Some("Sockeye Station".to_owned());
+        rotation_boundary.record.clear_waves = Some(3);
+
         let mut outside_rotation = sample_coop("coop-old", "2026-09-20T00:00:00Z".to_owned());
         outside_rotation.record.stage = Some("Gone Fission Hydroplant".to_owned());
         outside_rotation.record.clear_waves = Some(3);
         outside_rotation.raw = json!({ "scale": { "gold": 50, "silver": 50, "bronze": 50 } });
 
-        cache.coop = vec![latest, earlier_clear, earlier_failure, outside_rotation];
+        cache.coop = vec![
+            latest,
+            earlier_clear,
+            earlier_failure,
+            rotation_boundary,
+            outside_rotation,
+        ];
         save_cache(directory.path(), "account", &cache).unwrap();
 
         let state = load_overlay_state(directory.path(), "account").unwrap();

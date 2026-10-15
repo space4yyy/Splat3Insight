@@ -3,18 +3,20 @@
     "id": "overlay",
     "route": "/overlay",
     "page": "overlay",
-    "name": "数据卡片",
+    "name": "自动数据卡片",
+    "description": "自动显示最近更新的对战或鲑鱼跑数据，按较大卡片尺寸推荐。",
     "sizeLabel": "OBS 尺寸推荐",
-    "width": 300,
-    "height": 80
+    "width": 320,
+    "height": 84
   },
   {
     "id": "salmon-run",
-    "route": "/salmon-run",
-    "page": "salmon-run",
+    "route": "/overlay?salmonrun",
+    "page": "overlay",
     "name": "鲑鱼跑数据卡片",
+    "description": "固定显示鲑鱼跑数据，不随最近活动切换。",
     "sizeLabel": "OBS 尺寸推荐",
-    "width": 360,
+    "width": 320,
     "height": 84
   }
 ]

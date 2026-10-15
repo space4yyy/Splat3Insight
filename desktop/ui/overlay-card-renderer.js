@@ -18,6 +18,7 @@
 
   const mountedCards = new WeakMap();
   const mountedSalmonCards = new WeakMap();
+  const mountedCardTypes = new WeakMap();
   const isNumber = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
   const displayNumber = (value, digits = 0) => isNumber(value) ? Number(value).toFixed(digits) : '—';
   const localizeRule = (value) => {
@@ -39,6 +40,27 @@
     'Eggsecutive VP': '传说',
     Profreshional: '达人'
   });
+
+  function prepareCardType(root, type) {
+    const currentType = mountedCardTypes.get(root);
+    if (currentType && currentType !== type) {
+      mountedCards.delete(root);
+      mountedSalmonCards.delete(root);
+      root.replaceChildren();
+    }
+    mountedCardTypes.set(root, type);
+  }
+
+  function autoCardType(state) {
+    if (!state?.salmon_run) return 'overlay';
+    if (!state.selected) return 'salmon-run';
+    const salmonRunTime = Date.parse(state.salmon_run.played_time ?? '');
+    const battleTime = Date.parse(state.selected.played_time ?? '');
+    return Number.isFinite(salmonRunTime)
+      && (!Number.isFinite(battleTime) || salmonRunTime > battleTime)
+      ? 'salmon-run'
+      : 'overlay';
+  }
 
   function createCard(root) {
     root.innerHTML = `
@@ -98,6 +120,7 @@
   }
 
   function update(root, state) {
+    prepareCardType(root, 'overlay');
     const battle = state?.selected;
     let refs = mountedCards.get(root);
 
@@ -156,29 +179,28 @@
       <section class="salmon-run-card">
         <div class="salmon-run-card__top">
           <span class="salmon-run-card__stage" data-salmon-field="stage"></span>
-          <div class="salmon-run-card__scales" aria-label="本期鳞片总计">
-            <span class="salmon-run-card__scales-label">本期总计：</span>
-            <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="gold" alt="金鳞片"><b class="salmon-run-card__number" data-salmon-field="gold-scale"></b></span>
-            <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="silver" alt="银鳞片"><b class="salmon-run-card__number" data-salmon-field="silver-scale"></b></span>
-            <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="bronze" alt="铜鳞片"><b class="salmon-run-card__number" data-salmon-field="bronze-scale"></b></span>
+          <div class="salmon-run-card__metadata">
+            <div class="salmon-run-card__details-grade"><span data-salmon-field="grade"></span><b data-salmon-field="grade-point"></b></div>
+            <div class="salmon-run-card__details-danger">危险度 <b data-salmon-field="danger-rate"></b></div>
           </div>
         </div>
         <div class="salmon-run-card__bottom">
           <div class="salmon-run-card__stats">
             <span class="salmon-run-card__stats-item">巨大鲑鱼 <b data-salmon-field="defeat-enemy-count"></b></span>
-            <span class="salmon-run-card__stats-item">搬蛋 <b data-salmon-field="golden-egg-count"></b></span>
-            <span class="salmon-run-card__stats-item">红蛋 <b data-salmon-field="power-egg-count"></b></span>
-            <span class="salmon-run-card__stats-item">被救 <b data-salmon-field="rescued-count"></b></span>
-            <span class="salmon-run-card__stats-item">救援 <b data-salmon-field="rescue-count"></b></span>
+            <span class="salmon-run-card__stats-item"><img class="salmon-run-card__stats-icon" data-salmon-stat-icon="golden-egg" alt="搬蛋"><b data-salmon-field="golden-egg-count"></b></span>
+            <span class="salmon-run-card__stats-item"><img class="salmon-run-card__stats-icon" data-salmon-stat-icon="power-egg" alt="红蛋"><b data-salmon-field="power-egg-count"></b></span>
+            <span class="salmon-run-card__stats-item"><img class="salmon-run-card__stats-icon" data-salmon-stat-icon="rescue" alt="救援"><b data-salmon-field="rescue-count"></b></span>
+            <span class="salmon-run-card__stats-item"><img class="salmon-run-card__stats-icon" data-salmon-stat-icon="rescued" alt="被救"><b data-salmon-field="rescued-count"></b></span>
           </div>
           <div class="salmon-run-card__details">
-            <div class="salmon-run-card__summary">
-              <span class="salmon-run-card__summary-clear">Clear!! <b data-salmon-field="clear-count"></b></span>
-              <span class="salmon-run-card__summary-failure">Failure <b data-salmon-field="failure-count"></b></span>
+            <div class="salmon-run-card__scales" aria-label="鳞片总计">
+              <span class="salmon-run-card__scales-label">总计：</span>
+              <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="gold" alt="金鳞片"><b class="salmon-run-card__number" data-salmon-field="gold-scale"></b></span>
+              <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="silver" alt="银鳞片"><b class="salmon-run-card__number" data-salmon-field="silver-scale"></b></span>
+              <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="bronze" alt="铜鳞片"><b class="salmon-run-card__number" data-salmon-field="bronze-scale"></b></span>
             </div>
-            <div class="salmon-run-card__metadata">
-              <div class="salmon-run-card__details-grade"><span data-salmon-field="grade"></span><b data-salmon-field="grade-point"></b></div>
-              <div class="salmon-run-card__details-danger">危险度 <b data-salmon-field="danger-rate"></b></div>
+            <div class="salmon-run-card__summary">
+              <span>场次 <b data-salmon-field="total-count"></b><span class="salmon-run-card__summary-failure">(<b data-salmon-field="failure-count"></b>)</span></span>
             </div>
           </div>
         </div>
@@ -193,12 +215,17 @@
       const kind = image.dataset.salmonScale;
       image.src = new URL(`./images/scale-${kind}.png`, document.baseURI).href;
     }
+    for (const image of card.querySelectorAll('[data-salmon-stat-icon]')) {
+      const kind = image.dataset.salmonStatIcon;
+      image.src = new URL(`./images/salmon-run-${kind}.png`, document.baseURI).href;
+    }
     const refs = { card, fields };
     mountedSalmonCards.set(root, refs);
     return refs;
   }
 
   function updateSalmonRun(root, state) {
+    prepareCardType(root, 'salmon-run');
     const data = state?.salmon_run;
     let refs = mountedSalmonCards.get(root);
     if (!data) {
@@ -207,6 +234,16 @@
     }
     if (!refs) refs = createSalmonRunCard(root);
     refs.card.hidden = false;
+
+    const species = String(data.species ?? '').trim().toUpperCase();
+    const speciesVariant = species === 'INKLING' ? '-inkling' : '';
+    for (const image of refs.card.querySelectorAll('[data-salmon-stat-icon="rescue"], [data-salmon-stat-icon="rescued"]')) {
+      const kind = image.dataset.salmonStatIcon;
+      const imageSpecies = species === 'INKLING' ? 'INKLING' : 'OCTOLING';
+      image.dataset.salmonSpecies = imageSpecies;
+      const imageUrl = new URL(`./images/salmon-run-${kind}${speciesVariant}.png`, document.baseURI).href;
+      if (image.src !== imageUrl) image.src = imageUrl;
+    }
 
     const stage = String(data.stage ?? '').trim();
     refs.fields.stage.textContent = salmonStageLabels[stage] || stage || '—';
@@ -218,19 +255,32 @@
     refs.fields['power-egg-count'].textContent = `×${displayNumber(data.power_egg_count)}`;
     refs.fields['rescued-count'].textContent = `×${displayNumber(data.rescued_count)}`;
     refs.fields['rescue-count'].textContent = `×${displayNumber(data.rescue_count)}`;
-    refs.fields['clear-count'].textContent = `×${displayNumber(data.clear_count)}`;
-    refs.fields['failure-count'].textContent = `×${displayNumber(data.failure_count)}`;
+    refs.fields['total-count'].textContent = isNumber(data.clear_count) && isNumber(data.failure_count)
+      ? `x${displayNumber(Number(data.clear_count) + Number(data.failure_count))}`
+      : '—';
+    refs.fields['failure-count'].textContent = displayNumber(data.failure_count);
     const rawGrade = String(data.grade ?? '').trim();
     refs.fields.grade.textContent = salmonGradeLabels[rawGrade] || rawGrade;
     refs.fields['grade-point'].textContent = isNumber(data.grade_point) ? displayNumber(data.grade_point) : '';
     if (isNumber(data.danger_rate)) {
       const dangerRate = Number(data.danger_rate);
-      refs.fields['danger-rate'].textContent = `${displayNumber(dangerRate < 10 ? dangerRate * 100 : dangerRate, dangerRate < 10 && dangerRate * 100 % 1 ? 1 : 0)}%`;
+      const dangerPercent = dangerRate < 10 ? dangerRate * 100 : dangerRate;
+      refs.fields['danger-rate'].textContent = `${Number(dangerPercent.toFixed(1))}%`;
     } else {
       refs.fields['danger-rate'].textContent = '—';
     }
     return true;
   }
 
-  window.Splat3OverlayCard = Object.freeze({ update, updateSalmonRun });
+  function updateAuto(root, state) {
+    const type = autoCardType(state);
+    if (type === 'salmon-run') {
+      updateSalmonRun(root, state);
+    } else {
+      update(root, state);
+    }
+    return type;
+  }
+
+  window.Splat3OverlayCard = Object.freeze({ update, updateAuto, updateSalmonRun });
 })();

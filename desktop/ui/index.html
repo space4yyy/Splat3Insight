@@ -44,7 +44,10 @@
       .overlay-service-state { color: #9d9aa8; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
       .overlay-service-state.running { color: #62e6ad; }
       .overlay-service-state.stopped { color: #aaa8b5; }
-      .overlay-details { display: grid; gap: 2px; margin-top: 6px; }
+      .obs-card-groups { display: grid; margin-top: 8px; }
+      .obs-card-group { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); align-items: center; gap: 18px; padding: 14px 0; border-top: 1px solid #35343e; }
+      .obs-card-group:first-child { padding-top: 10px; border-top: 0; }
+      .obs-card-group__details { min-width: 0; }
       .error { color: #ff668a !important; }
       .auth-note { margin: 8px 0 0; font-size: 12px; color: #8e8b9a; }
       #paste-panel { display: none; margin-top: 18px; }
@@ -56,13 +59,13 @@
       .overlay-url-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 10px; min-height: 20px; }
       .overlay-url-row code { min-width: 0; flex: 1; overflow: hidden; color: #aaa8b5; font-size: 13px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
       .overlay-url-row button { flex: 0 0 auto; min-height: 26px; padding: 5px 10px; font-size: 12px; line-height: 1; }
-      .obs-help { min-height: 20px; margin: 0; color: #aaa8b5; font-size: 13px; line-height: 20px; }
-      .overlay-preview { margin-top: 14px; padding: 8px 0 2px; overflow: hidden; }
-      .obs-card-preview-title { margin: 10px 0 -6px; color: #c7c4d0; font-size: 12px; font-weight: 600; }
+      .obs-help { margin: 6px 0 0; color: #aaa8b5; font-size: 13px; line-height: 20px; }
+      .overlay-preview { min-width: 0; margin-top: 0; padding: 4px 0 2px; overflow: hidden; }
+      .obs-card-preview-title { display: block; margin: 0 0 7px; color: #c7c4d0; font-size: 13px; font-weight: 600; }
       .overlay-preview__viewport { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; width: 100%; }
       .overlay-preview__scale { width: max-content; transform-origin: top center; }
-      .overlay-preview__scale > .overlay-card { border-radius: 6px; }
-      .overlay-preview__scale > .salmon-run-card { border-radius: 6px; }
+      .overlay-preview__scale > .overlay-card { --obs-card-width: 300px; --obs-card-height: 80px; border-radius: 6px; }
+      .overlay-preview__scale > .salmon-run-card { --obs-card-width: 320px; --obs-card-height: 84px; border-radius: 6px; }
       .overlay-empty { padding: 24px 0; color: #9d9aa8; text-align: center; }
       #background-close-prompt { width: min(420px, calc(100% - 32px)); border: 1px solid #4b4857; border-radius: 18px; padding: 22px; color: #f5f5f2; background: #1b1a23; box-shadow: 0 24px 80px #0009; }
       #background-close-prompt::backdrop { background: #09090dbb; }
@@ -73,7 +76,7 @@
       @media (max-width: 700px) {
         main { width: calc(100% - 20px); padding-top: 20px; }
         .panel { padding: 16px; }
-        .overlay-preview { margin-top: 14px; }
+        .obs-card-group { grid-template-columns: minmax(0, 1fr); gap: 4px; }
       }
     </style>
   </head>
@@ -110,29 +113,35 @@
             <button id="stop-overlay-service" class="overlay-primary-action" hidden>停止服务</button>
           </div>
         </div>
-        <div class="overlay-details">
-          <strong class="obs-card-preview-title">对战数据卡片</strong>
-          <div class="overlay-url-row">
-            <code data-obs-card-url="overlay"></code>
-            <button data-obs-card-copy="overlay" class="secondary">复制</button>
-          </div>
-          <div class="obs-help">
-            <span data-obs-card-size="overlay"></span>
-          </div>
-          <strong class="obs-card-preview-title">鲑鱼跑数据卡片</strong>
-          <div class="overlay-url-row">
-            <code data-obs-card-url="salmon-run"></code>
-            <button data-obs-card-copy="salmon-run" class="secondary">复制</button>
-          </div>
-          <div class="obs-help">
-            <span data-obs-card-size="salmon-run"></span>
-          </div>
-        </div>
-        <div id="overlay-preview" class="overlay-preview">
-          <div class="overlay-empty">登录并同步历史后显示真实对战数据。</div>
-        </div>
-        <div id="salmon-run-preview" class="overlay-preview">
-          <div class="overlay-empty">同步打工历史后显示真实鲑鱼跑数据。</div>
+        <div class="obs-card-groups">
+          <article class="obs-card-group">
+            <div class="obs-card-group__details">
+              <strong class="obs-card-preview-title">自动显示最近数据</strong>
+              <div class="overlay-url-row">
+                <code data-obs-card-url="overlay"></code>
+                <button data-obs-card-copy="overlay" class="secondary">复制</button>
+              </div>
+              <p class="obs-help" data-obs-card-description="overlay"></p>
+              <p class="obs-help" data-obs-card-size="overlay"></p>
+            </div>
+            <div id="overlay-preview" class="overlay-preview">
+              <div class="overlay-empty">登录并同步历史后显示最近活动对应的数据卡片。</div>
+            </div>
+          </article>
+          <article class="obs-card-group">
+            <div class="obs-card-group__details">
+              <strong class="obs-card-preview-title">仅显示鲑鱼跑</strong>
+              <div class="overlay-url-row">
+                <code data-obs-card-url="salmon-run"></code>
+                <button data-obs-card-copy="salmon-run" class="secondary">复制</button>
+              </div>
+              <p class="obs-help" data-obs-card-description="salmon-run"></p>
+              <p class="obs-help" data-obs-card-size="salmon-run"></p>
+            </div>
+            <div id="salmon-run-preview" class="overlay-preview">
+              <div class="overlay-empty">同步打工历史后显示鲑鱼跑数据。</div>
+            </div>
+          </article>
         </div>
       </section>
     </main>

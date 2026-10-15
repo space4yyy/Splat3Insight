@@ -49,6 +49,30 @@ const SCALE_BRONZE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/images/scale-bronze.png"
 ));
+const SALMON_RUN_GOLDEN_EGG: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/salmon-run-golden-egg.png"
+));
+const SALMON_RUN_POWER_EGG: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/salmon-run-power-egg.png"
+));
+const SALMON_RUN_RESCUE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/salmon-run-rescue.png"
+));
+const SALMON_RUN_RESCUED: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/salmon-run-rescued.png"
+));
+const SALMON_RUN_RESCUE_INKLING: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/salmon-run-rescue-inkling.png"
+));
+const SALMON_RUN_RESCUED_INKLING: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/salmon-run-rescued-inkling.png"
+));
 const APP_ICON: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/icons/icon.png"));
 const MAX_CONCURRENT_CONNECTIONS: usize = 16;
 const MAX_REQUEST_HEADER_BYTES: usize = 8 * 1024;
@@ -451,9 +475,7 @@ fn handle_connection_with_timeout(
         .split_whitespace();
     let method = parts.next().unwrap_or_default();
     let raw_path = parts.next().unwrap_or_default();
-    let path = raw_path.split('?').next().unwrap_or(raw_path);
-
-    let response = route_request(method, path, config)?;
+    let response = route_request(method, raw_path, config)?;
     if let Err(error) = write_response(
         &mut stream,
         response.status,
@@ -493,7 +515,7 @@ fn read_request_headers(reader: &mut impl Read) -> Result<Option<Vec<u8>>, Strin
 
 fn route_request(
     method: &str,
-    path: &str,
+    request_target: &str,
     config: &OverlayServerConfig,
 ) -> Result<HttpResponse, String> {
     if method != "GET" {
@@ -504,6 +526,15 @@ fn route_request(
         });
     }
 
+    let path = request_target.split('?').next().unwrap_or(request_target);
+
+    if let Some(card) = obs_card_catalog()
+        .iter()
+        .find(|card| card.route == request_target)
+    {
+        return Ok(render_card_page(card));
+    }
+
     if path == "/" {
         let card = obs_card_catalog()
             .iter()
@@ -511,6 +542,22 @@ fn route_request(
             .expect("OBS card catalog must include the overlay card");
         return Ok(render_card_page(card));
     }
+
+    if path == "/salmon-run" {
+        let card = obs_card_catalog()
+            .iter()
+            .find(|card| card.id == "salmon-run")
+            .expect("OBS card catalog must include the salmon run card");
+        let body = SALMON_RUN_HTML
+            .replace("__OBS_CARD_WIDTH__", &card.width.to_string())
+            .replace("__OBS_CARD_HEIGHT__", &card.height.to_string());
+        return Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "text/html; charset=utf-8",
+            body: body.into_bytes(),
+        });
+    }
+
     if let Some(card) = obs_card_catalog().iter().find(|card| card.route == path) {
         return Ok(render_card_page(card));
     }
@@ -550,6 +597,36 @@ fn route_request(
             status: "200 OK",
             content_type: "image/png",
             body: SCALE_BRONZE.to_vec(),
+        }),
+        "/images/salmon-run-golden-egg.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: SALMON_RUN_GOLDEN_EGG.to_vec(),
+        }),
+        "/images/salmon-run-power-egg.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: SALMON_RUN_POWER_EGG.to_vec(),
+        }),
+        "/images/salmon-run-rescue.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: SALMON_RUN_RESCUE.to_vec(),
+        }),
+        "/images/salmon-run-rescued.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: SALMON_RUN_RESCUED.to_vec(),
+        }),
+        "/images/salmon-run-rescue-inkling.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: SALMON_RUN_RESCUE_INKLING.to_vec(),
+        }),
+        "/images/salmon-run-rescued-inkling.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: SALMON_RUN_RESCUED_INKLING.to_vec(),
         }),
         "/overlay-card.css" => Ok(HttpResponse {
             status: "200 OK",

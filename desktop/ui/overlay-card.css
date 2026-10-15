@@ -170,6 +170,7 @@
 }
 
 .salmon-run-card {
+  --salmon-run-secondary-font-size: 12px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -226,7 +227,7 @@
 
 .salmon-run-card__scales-label {
   color: #5af27d;
-  font-size: 10px;
+  font-size: var(--salmon-run-secondary-font-size);
   white-space: nowrap;
 }
 
@@ -244,7 +245,7 @@
 
 .salmon-run-card__number {
   font-family: "BlitzMain", "DFP GBZY7", sans-serif;
-  font-size: 14px;
+  font-size: var(--salmon-run-secondary-font-size);
   font-synthesis: none;
   letter-spacing: 0;
   white-space: nowrap;
@@ -258,35 +259,67 @@
 
 .salmon-run-card__stats {
   justify-content: space-between;
-  gap: 8px;
+  gap: 4px;
   height: 20px;
   white-space: nowrap;
 }
 
 .salmon-run-card__stats-item {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 1px;
-  font-size: 11px;
+  font-size: var(--salmon-run-secondary-font-size);
   white-space: nowrap;
 }
 
-.salmon-run-card__stats-item b {
-  font-size: 13px;
+.salmon-run-card__stats-icon {
+  display: block;
+  height: 16px;
+  width: 22px;
+  margin-right: 0;
+  object-fit: contain;
+}
+
+.salmon-run-card__stats-icon[data-salmon-stat-icon="golden-egg"] {
+  width: 14px;
+  height: 20px;
+  object-fit: cover;
+}
+
+.salmon-run-card__stats-icon[data-salmon-stat-icon="rescue"] {
+  width: 32px;
+  height: 16px;
+  object-fit: cover;
+}
+
+.salmon-run-card__stats-icon[data-salmon-stat-icon="rescue"][data-salmon-species="INKLING"] {
+  width: 40px;
+  object-fit: contain;
+}
+
+.salmon-run-card__stats-icon[data-salmon-stat-icon="rescued"] {
+  width: 30px;
+  height: 16px;
+  object-fit: cover;
+}
+
+.salmon-run-card__stats-icon[data-salmon-stat-icon="rescued"][data-salmon-species="INKLING"] {
+  width: 40px;
+  object-fit: contain;
 }
 
 .salmon-run-card__stats-item b,
 .salmon-run-card__summary b,
 .salmon-run-card__details b {
   font-family: "BlitzMain", "DFP GBZY7", sans-serif;
-  font-size: 14px;
+  font-size: var(--salmon-run-secondary-font-size);
   font-weight: 400;
   font-synthesis: none;
   letter-spacing: 0;
 }
 
 .salmon-run-card__details {
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   height: 20px;
   white-space: nowrap;
@@ -296,25 +329,21 @@
 .salmon-run-card__details-grade,
 .salmon-run-card__details-danger {
   gap: 4px;
-  font-size: 13px;
+  font-size: var(--salmon-run-secondary-font-size);
   white-space: nowrap;
 }
 
 .salmon-run-card__metadata {
   flex: 0 0 auto;
-  gap: 8px;
+  gap: 5px;
 }
 
 .salmon-run-card__summary {
-  gap: 6px;
-}
-
-.salmon-run-card__summary-clear {
-  color: #5af27d;
+  gap: 4px;
 }
 
 .salmon-run-card__summary-failure {
-  color: #f56528;
+  color: #9699a3;
 }
 
 .salmon-run-card__details-grade b {

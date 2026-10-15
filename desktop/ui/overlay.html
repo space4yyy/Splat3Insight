@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/overlay-card.css" />
     <style>
       :root { --obs-card-width: __OBS_CARD_WIDTH__px; --obs-card-height: __OBS_CARD_HEIGHT__px; }
+      #root > .overlay-card { --obs-card-width: 300px; --obs-card-height: 80px; }
       html, body { margin: 0; background: transparent; overflow: hidden; }
       #root { width: var(--obs-card-width); height: var(--obs-card-height); }
     </style>
@@ -17,10 +18,11 @@
     <script src="/overlay-card-renderer.js"></script>
     <script>
       const root = document.querySelector('#root');
+      const salmonRunOnly = new URLSearchParams(window.location.search).has('salmonrun');
       function fitOverlay() {
         const viewportWidth = window.innerWidth;
         const viewportHeight = window.innerHeight;
-        const card = root.querySelector('.overlay-card');
+        const card = root.querySelector('.overlay-card, .salmon-run-card');
         if (!card) return;
         const cardWidth = card.offsetWidth;
         const cardHeight = card.offsetHeight;
@@ -34,11 +36,6 @@
         root.style.height = `${cardHeight * safeScale}px`;
       }
 
-      function render(state) {
-        window.Splat3OverlayCard.update(root, state);
-        fitOverlay();
-      }
-
       async function update() {
         try {
           const response = await fetch('/api/overlay', { cache: 'no-store' });
@@ -47,7 +44,12 @@
           }
           const state = await response.json();
           if (state?.error) throw new Error(state.error);
-          render(state);
+          if (salmonRunOnly) {
+            window.Splat3OverlayCard.updateSalmonRun(root, state);
+          } else {
+            window.Splat3OverlayCard.updateAuto(root, state);
+          }
+          fitOverlay();
         } catch (_) {
           // 保留上一次有效卡片，等待下一轮轮询恢复，避免短暂请求失败导致 OBS 闪烁。
         }

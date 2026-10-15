@@ -186,6 +186,9 @@ function renderObsCardLinks() {
     document.querySelectorAll(`[data-obs-card-size="${id}"]`).forEach((element) => {
       element.textContent = `OBS 推荐尺寸：${card.width} x ${card.height}`;
     });
+    document.querySelectorAll(`[data-obs-card-description="${id}"]`).forEach((element) => {
+      element.textContent = card.description || '';
+    });
     document.querySelectorAll(`[data-obs-card-preview="${id}"]`).forEach((frame) => {
       frame.style.width = `${card.width}px`;
       frame.style.height = `${card.height}px`;
@@ -215,19 +218,20 @@ function fitCardPreview(preview, selector) {
 }
 
 function renderOverlay(state) {
-  let battleScaleElement = overlayPreview.querySelector('.overlay-preview__scale');
-  if (state?.selected) {
-    if (!battleScaleElement) {
-      overlayPreview.innerHTML = `
-        <div class="overlay-preview__viewport">
-          <div class="overlay-preview__scale"></div>
-        </div>`;
-      battleScaleElement = overlayPreview.querySelector('.overlay-preview__scale');
-    }
-    window.Splat3OverlayCard.update(battleScaleElement, state);
-    fitCardPreview(overlayPreview, '.overlay-card');
+  let autoScaleElement = overlayPreview.querySelector('.overlay-preview__scale');
+  if (!autoScaleElement) {
+    overlayPreview.innerHTML = `
+      <div class="overlay-preview__viewport">
+        <div class="overlay-preview__scale"></div>
+      </div>`;
+    autoScaleElement = overlayPreview.querySelector('.overlay-preview__scale');
+  }
+  const autoType = window.Splat3OverlayCard.updateAuto(autoScaleElement, state);
+  const autoCardSelector = autoType === 'salmon-run' ? '.salmon-run-card' : '.overlay-card';
+  if (autoScaleElement.querySelector(autoCardSelector)) {
+    fitCardPreview(overlayPreview, autoCardSelector);
   } else {
-    overlayPreview.innerHTML = '<div class="overlay-empty">没有找到可显示的 X 或蛮颓比赛记录。</div>';
+    overlayPreview.innerHTML = '<div class="overlay-empty">登录并同步历史后显示最近活动对应的数据卡片。</div>';
   }
 
   let salmonScaleElement = salmonRunPreview.querySelector('.overlay-preview__scale');
@@ -247,7 +251,7 @@ function renderOverlay(state) {
 }
 
 window.addEventListener('resize', () => {
-  fitCardPreview(overlayPreview, '.overlay-card');
+  fitCardPreview(overlayPreview, '.overlay-card, .salmon-run-card');
   fitCardPreview(salmonRunPreview, '.salmon-run-card');
 });
 

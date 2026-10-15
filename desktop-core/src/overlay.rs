@@ -14,7 +14,11 @@ pub struct OverlayState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SalmonRunCard {
+    #[serde(default)]
+    pub played_time: Option<String>,
     pub stage: Option<String>,
+    #[serde(default)]
+    pub species: Option<String>,
     pub gold_scale: Option<i64>,
     pub silver_scale: Option<i64>,
     pub bronze_scale: Option<i64>,
