@@ -194,13 +194,13 @@
           </div>
           <div class="salmon-run-card__details">
             <div class="salmon-run-card__scales" aria-label="鳞片总计">
-              <span class="salmon-run-card__scales-label">总计：</span>
+              <span class="salmon-run-card__scales-label">总计:</span>
               <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="gold" alt="金鳞片"><b class="salmon-run-card__number" data-salmon-field="gold-scale"></b></span>
               <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="silver" alt="银鳞片"><b class="salmon-run-card__number" data-salmon-field="silver-scale"></b></span>
               <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="bronze" alt="铜鳞片"><b class="salmon-run-card__number" data-salmon-field="bronze-scale"></b></span>
             </div>
             <div class="salmon-run-card__summary">
-              <span>场次 <b data-salmon-field="total-count"></b><span class="salmon-run-card__summary-failure">(<b data-salmon-field="failure-count"></b>)</span></span>
+              <span>场次<b data-salmon-field="total-count"></b><span class="salmon-run-card__summary-failure">(<b data-salmon-field="failure-count"></b>)</span></span>
             </div>
           </div>
         </div>
@@ -250,11 +250,11 @@
     refs.fields['gold-scale'].textContent = `x${displayNumber(data.gold_scale)}`;
     refs.fields['silver-scale'].textContent = `x${displayNumber(data.silver_scale)}`;
     refs.fields['bronze-scale'].textContent = `x${displayNumber(data.bronze_scale)}`;
-    refs.fields['defeat-enemy-count'].textContent = `×${displayNumber(data.defeat_enemy_count)}`;
-    refs.fields['golden-egg-count'].textContent = `×${displayNumber(data.golden_egg_count)}`;
-    refs.fields['power-egg-count'].textContent = `×${displayNumber(data.power_egg_count)}`;
-    refs.fields['rescued-count'].textContent = `×${displayNumber(data.rescued_count)}`;
-    refs.fields['rescue-count'].textContent = `×${displayNumber(data.rescue_count)}`;
+    refs.fields['defeat-enemy-count'].textContent = `x${displayNumber(data.defeat_enemy_count)}`;
+    refs.fields['golden-egg-count'].textContent = `x${displayNumber(data.golden_egg_count)}`;
+    refs.fields['power-egg-count'].textContent = `x${displayNumber(data.power_egg_count)}`;
+    refs.fields['rescued-count'].textContent = `x${displayNumber(data.rescued_count)}`;
+    refs.fields['rescue-count'].textContent = `x${displayNumber(data.rescue_count)}`;
     refs.fields['total-count'].textContent = isNumber(data.clear_count) && isNumber(data.failure_count)
       ? `x${displayNumber(Number(data.clear_count) + Number(data.failure_count))}`
       : '—';

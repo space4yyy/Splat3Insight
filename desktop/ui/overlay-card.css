@@ -310,12 +310,22 @@
 
 .salmon-run-card__stats-item b,
 .salmon-run-card__summary b,
-.salmon-run-card__details b {
+.salmon-run-card__details b,
+.salmon-run-card__metadata b {
   font-family: "BlitzMain", "DFP GBZY7", sans-serif;
   font-size: var(--salmon-run-secondary-font-size);
   font-weight: 400;
   font-synthesis: none;
   letter-spacing: 0;
+}
+
+.salmon-run-card__stats-item b,
+.salmon-run-card__number {
+  margin-left: 1px;
+}
+
+.salmon-run-card__summary [data-salmon-field="total-count"] {
+  margin-left: 2px;
 }
 
 .salmon-run-card__details {
@@ -343,6 +353,7 @@
 }
 
 .salmon-run-card__summary-failure {
+  margin-left: 2px;
   color: #9699a3;
 }
 
