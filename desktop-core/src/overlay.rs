@@ -59,12 +59,36 @@ pub struct RecentSummary {
     pub win_rate: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayMatchCategory {
+    XMatch,
+    NonXMatch,
+}
+
 impl OverlayState {
     pub fn from_history(cache: &HistoryCache) -> Self {
+        Self::from_history_filtered(cache, None)
+    }
+
+    pub fn from_history_for_match_category(
+        cache: &HistoryCache,
+        category: OverlayMatchCategory,
+    ) -> Self {
+        Self::from_history_filtered(cache, Some(category))
+    }
+
+    fn from_history_filtered(cache: &HistoryCache, category: Option<OverlayMatchCategory>) -> Self {
         let mut battles: Vec<&ArchivedBattle> = cache
             .battles
             .iter()
-            .filter(|item| is_overlay_battle(&item.record))
+            .filter(|item| {
+                is_overlay_battle(&item.record)
+                    && match category {
+                        Some(OverlayMatchCategory::XMatch) => item.record.mode == "X_MATCH",
+                        Some(OverlayMatchCategory::NonXMatch) => item.record.mode != "X_MATCH",
+                        None => true,
+                    }
+            })
             .collect();
         battles.sort_by(|left, right| right.record.played_time.cmp(&left.record.played_time));
 

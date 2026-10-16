@@ -217,7 +217,8 @@
     }
     for (const image of card.querySelectorAll('[data-salmon-stat-icon]')) {
       const kind = image.dataset.salmonStatIcon;
-      image.src = new URL(`./images/salmon-run-${kind}.png`, document.baseURI).href;
+      const filename = kind === 'golden-egg' ? 'gold-ikura.svg' : 'ikura.svg';
+      image.src = new URL(`./images/${filename}`, document.baseURI).href;
     }
     const refs = { card, fields };
     mountedSalmonCards.set(root, refs);
@@ -236,12 +237,13 @@
     refs.card.hidden = false;
 
     const species = String(data.species ?? '').trim().toUpperCase();
-    const speciesVariant = species === 'INKLING' ? '-inkling' : '';
+    const speciesAsset = species === 'INKLING' ? 'squid' : 'octo';
     for (const image of refs.card.querySelectorAll('[data-salmon-stat-icon="rescue"], [data-salmon-stat-icon="rescued"]')) {
       const kind = image.dataset.salmonStatIcon;
       const imageSpecies = species === 'INKLING' ? 'INKLING' : 'OCTOLING';
       image.dataset.salmonSpecies = imageSpecies;
-      const imageUrl = new URL(`./images/salmon-run-${kind}${speciesVariant}.png`, document.baseURI).href;
+      const assetPrefix = kind === 'rescue' ? 'helpen' : 'helped';
+      const imageUrl = new URL(`./images/${assetPrefix}-${speciesAsset}.svg`, document.baseURI).href;
       if (image.src !== imageUrl) image.src = imageUrl;
     }
 

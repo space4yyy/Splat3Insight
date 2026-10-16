@@ -18,7 +18,13 @@
     <script src="/overlay-card-renderer.js"></script>
     <script>
       const root = document.querySelector('#root');
-      const salmonRunOnly = new URLSearchParams(window.location.search).has('salmonrun');
+      const params = new URLSearchParams(window.location.search);
+      const salmonRunOnly = params.has('salmonrun');
+      const matchType = params.has('xmatch')
+        ? 'xmatch'
+        : params.has('nonxmatch')
+          ? 'nonxmatch'
+          : null;
       function fitOverlay() {
         const viewportWidth = window.innerWidth;
         const viewportHeight = window.innerHeight;
@@ -38,7 +44,8 @@
 
       async function update() {
         try {
-          const response = await fetch('/api/overlay', { cache: 'no-store' });
+          const apiUrl = matchType ? `/api/overlay?${matchType}` : '/api/overlay';
+          const response = await fetch(apiUrl, { cache: 'no-store' });
           if (!response.ok) {
             throw new Error(`Overlay 数据请求失败（HTTP ${response.status}）`);
           }
@@ -46,6 +53,8 @@
           if (state?.error) throw new Error(state.error);
           if (salmonRunOnly) {
             window.Splat3OverlayCard.updateSalmonRun(root, state);
+          } else if (matchType) {
+            window.Splat3OverlayCard.update(root, state);
           } else {
             window.Splat3OverlayCard.updateAuto(root, state);
           }

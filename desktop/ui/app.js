@@ -10,6 +10,8 @@ const cancelLoginButton = document.querySelector('#cancel-login');
 const authenticateButton = document.querySelector('#authenticate');
 const overlayPreview = document.querySelector('#overlay-preview');
 const salmonRunPreview = document.querySelector('#salmon-run-preview');
+const xMatchPreview = document.querySelector('#x-match-preview');
+const nonXMatchPreview = document.querySelector('#non-x-match-preview');
 const syncStatusElement = document.querySelector('#sync-status');
 const overlayServiceStateElement = document.querySelector('#overlay-service-state');
 const startOverlayServiceButton = document.querySelector('#start-overlay-service');
@@ -208,7 +210,7 @@ function fitCardPreview(preview, selector) {
 
   const naturalWidth = card.offsetWidth;
   const naturalHeight = card.offsetHeight;
-  const availableWidth = overlayPreview.clientWidth;
+  const availableWidth = preview.clientWidth;
   const scale = naturalWidth > 0 && availableWidth > 0
     ? Math.min(1, availableWidth / naturalWidth)
     : 1;
@@ -217,7 +219,23 @@ function fitCardPreview(preview, selector) {
   viewport.style.height = `${Math.ceil(naturalHeight * scale)}px`;
 }
 
-function renderOverlay(state) {
+function renderBattlePreview(preview, state, emptyMessage) {
+  let scaleElement = preview.querySelector('.overlay-preview__scale');
+  if (!scaleElement) {
+    preview.innerHTML = `
+      <div class="overlay-preview__viewport">
+        <div class="overlay-preview__scale"></div>
+      </div>`;
+    scaleElement = preview.querySelector('.overlay-preview__scale');
+  }
+  if (window.Splat3OverlayCard.update(scaleElement, state)) {
+    fitCardPreview(preview, '.overlay-card');
+  } else {
+    preview.innerHTML = `<div class="overlay-empty">${emptyMessage}</div>`;
+  }
+}
+
+function renderOverlay(state, matchStates) {
   let autoScaleElement = overlayPreview.querySelector('.overlay-preview__scale');
   if (!autoScaleElement) {
     overlayPreview.innerHTML = `
@@ -248,11 +266,16 @@ function renderOverlay(state) {
   } else {
     salmonRunPreview.innerHTML = '<div class="overlay-empty">同步打工历史后显示真实鲑鱼跑数据。</div>';
   }
+
+  renderBattlePreview(xMatchPreview, matchStates.xMatch, '同步对战历史后显示最近 X 赛数据。');
+  renderBattlePreview(nonXMatchPreview, matchStates.nonXMatch, '同步对战历史后显示最近非 X 赛数据。');
 }
 
 window.addEventListener('resize', () => {
   fitCardPreview(overlayPreview, '.overlay-card, .salmon-run-card');
   fitCardPreview(salmonRunPreview, '.salmon-run-card');
+  fitCardPreview(xMatchPreview, '.overlay-card');
+  fitCardPreview(nonXMatchPreview, '.overlay-card');
 });
 
 async function refreshOverlay(accountId = null) {
@@ -262,7 +285,9 @@ async function refreshOverlay(accountId = null) {
       document.fonts.load('16px "BlitzMain"').catch(() => {})
     ]);
     const state = await invoke('get_overlay_state', { accountId });
-    renderOverlay(state);
+    const xMatchState = await invoke('get_overlay_state', { accountId, matchType: 'xmatch' });
+    const nonXMatchState = await invoke('get_overlay_state', { accountId, matchType: 'nonxmatch' });
+    renderOverlay(state, { xMatch: xMatchState, nonXMatch: nonXMatchState });
   } catch (error) {
     overlayPreview.innerHTML = `<div class="overlay-empty">${escapeHtml(String(error))}</div>`;
   }

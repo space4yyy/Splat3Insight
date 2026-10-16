@@ -18,5 +18,25 @@
     "sizeLabel": "OBS 尺寸推荐",
     "width": 320,
     "height": 84
+  },
+  {
+    "id": "x-match",
+    "route": "/overlay?xmatch",
+    "page": "overlay",
+    "name": "X 赛数据卡片",
+    "description": "固定显示最近一场 X 赛及 X 赛近期胜率。",
+    "sizeLabel": "OBS 尺寸推荐",
+    "width": 320,
+    "height": 84
+  },
+  {
+    "id": "non-x-match",
+    "route": "/overlay?nonxmatch",
+    "page": "overlay",
+    "name": "非 X 赛数据卡片",
+    "description": "固定显示最近一场非 X 赛及非 X 赛近期胜率。",
+    "sizeLabel": "OBS 尺寸推荐",
+    "width": 320,
+    "height": 84
   }
 ]

@@ -12,7 +12,7 @@ use splat3_widget_core::{
     nintendo_auth::{
         begin_login, exchange_session_token, refresh_identity, LoginAttempt, NintendoIdentityError,
     },
-    overlay::OverlayState,
+    overlay::{OverlayMatchCategory, OverlayState},
     splatnet_auth::{exchange_splatnet_tokens, SplatNetAuthConfig, NXAPI_F_GENERATION_URL},
     AccountMetadata, AccountRegistry, AccountSecret, CachedSecretStore, KeyringSecretStore,
     SecretStore,
@@ -1067,6 +1067,7 @@ fn stop_overlay_service(
 #[tauri::command]
 fn get_overlay_state(
     account_id: Option<String>,
+    match_type: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<OverlayState, String> {
     let account_id = {
@@ -1090,7 +1091,20 @@ fn get_overlay_state(
         account_id
     };
 
-    history_store::load_overlay_state(&state.history_dir, &account_id)
+    match match_type.as_deref() {
+        Some("xmatch") => history_store::load_overlay_state_for_match_category(
+            &state.history_dir,
+            &account_id,
+            OverlayMatchCategory::XMatch,
+        ),
+        Some("nonxmatch") => history_store::load_overlay_state_for_match_category(
+            &state.history_dir,
+            &account_id,
+            OverlayMatchCategory::NonXMatch,
+        ),
+        Some(_) => Err("不支持的对战卡片类型".to_owned()),
+        None => history_store::load_overlay_state(&state.history_dir, &account_id),
+    }
 }
 
 #[tauri::command]

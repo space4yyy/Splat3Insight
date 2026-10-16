@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use splat3_widget_core::overlay::OverlayState;
+use splat3_widget_core::overlay::{OverlayMatchCategory, OverlayState};
 
 pub const OVERLAY_HOST: &str = "127.0.0.1";
 pub const OVERLAY_PORT: u16 = 17_353;
@@ -72,6 +72,30 @@ const SALMON_RUN_RESCUE_INKLING: &[u8] = include_bytes!(concat!(
 const SALMON_RUN_RESCUED_INKLING: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/images/salmon-run-rescued-inkling.png"
+));
+const IKURA: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/ikura.svg"
+));
+const GOLD_IKURA: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/gold-ikura.svg"
+));
+const HELPEN_SQUID: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/helpen-squid.svg"
+));
+const HELPEN_OCTO: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/helpen-octo.svg"
+));
+const HELPED_SQUID: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/helped-squid.svg"
+));
+const HELPED_OCTO: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/helped-octo.svg"
 ));
 const APP_ICON: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/icons/icon.png"));
 const MAX_CONCURRENT_CONNECTIONS: usize = 16;
@@ -628,6 +652,36 @@ fn route_request(
             content_type: "image/png",
             body: SALMON_RUN_RESCUED_INKLING.to_vec(),
         }),
+        "/images/ikura.svg" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/svg+xml",
+            body: IKURA.to_vec(),
+        }),
+        "/images/gold-ikura.svg" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/svg+xml",
+            body: GOLD_IKURA.to_vec(),
+        }),
+        "/images/helpen-squid.svg" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/svg+xml",
+            body: HELPEN_SQUID.to_vec(),
+        }),
+        "/images/helpen-octo.svg" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/svg+xml",
+            body: HELPEN_OCTO.to_vec(),
+        }),
+        "/images/helped-squid.svg" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/svg+xml",
+            body: HELPED_SQUID.to_vec(),
+        }),
+        "/images/helped-octo.svg" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/svg+xml",
+            body: HELPED_OCTO.to_vec(),
+        }),
         "/overlay-card.css" => Ok(HttpResponse {
             status: "200 OK",
             content_type: "text/css; charset=utf-8",
@@ -638,24 +692,26 @@ fn route_request(
             content_type: "text/javascript; charset=utf-8",
             body: OVERLAY_CARD_RENDERER.as_bytes().to_vec(),
         }),
-        "/api/overlay" => match load_overlay_state(config) {
-            Ok(state) => Ok(HttpResponse {
-                status: "200 OK",
-                content_type: "application/json; charset=utf-8",
-                body: serde_json::to_vec(&state).map_err(|error| error.to_string())?,
-            }),
-            Err(error) => {
-                let message = format!("Overlay 数据请求失败: {error}");
-                write_log(config, &message);
-                crate::log_console_error("overlay", &message);
-                Ok(HttpResponse {
-                    status: "500 Internal Server Error",
+        "/api/overlay" => {
+            match load_overlay_state(config, overlay_match_category(request_target)) {
+                Ok(state) => Ok(HttpResponse {
+                    status: "200 OK",
                     content_type: "application/json; charset=utf-8",
-                    body: serde_json::to_vec(&json!({ "error": error }))
-                        .map_err(|error| error.to_string())?,
-                })
+                    body: serde_json::to_vec(&state).map_err(|error| error.to_string())?,
+                }),
+                Err(error) => {
+                    let message = format!("Overlay 数据请求失败: {error}");
+                    write_log(config, &message);
+                    crate::log_console_error("overlay", &message);
+                    Ok(HttpResponse {
+                        status: "500 Internal Server Error",
+                        content_type: "application/json; charset=utf-8",
+                        body: serde_json::to_vec(&json!({ "error": error }))
+                            .map_err(|error| error.to_string())?,
+                    })
+                }
             }
-        },
+        }
         "/healthz" => Ok(HttpResponse {
             status: "200 OK",
             content_type: "application/json; charset=utf-8",
@@ -693,7 +749,18 @@ fn write_response(
         .map_err(|error| format!("写入响应失败: {error}"))
 }
 
-fn load_overlay_state(config: &OverlayServerConfig) -> Result<OverlayState, String> {
+fn overlay_match_category(request_target: &str) -> Option<OverlayMatchCategory> {
+    match request_target.split_once('?').map(|(_, query)| query) {
+        Some("xmatch") => Some(OverlayMatchCategory::XMatch),
+        Some("nonxmatch") => Some(OverlayMatchCategory::NonXMatch),
+        _ => None,
+    }
+}
+
+fn load_overlay_state(
+    config: &OverlayServerConfig,
+    category: Option<OverlayMatchCategory>,
+) -> Result<OverlayState, String> {
     let registry = match fs::read_to_string(&config.accounts_path) {
         Ok(registry) => registry,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -717,7 +784,14 @@ fn load_overlay_state(config: &OverlayServerConfig) -> Result<OverlayState, Stri
         return Ok(crate::empty_overlay_state());
     }
 
-    crate::history_store::load_overlay_state(&config.history_dir, &account_id)
+    match category {
+        Some(category) => crate::history_store::load_overlay_state_for_match_category(
+            &config.history_dir,
+            &account_id,
+            category,
+        ),
+        None => crate::history_store::load_overlay_state(&config.history_dir, &account_id),
+    }
 }
 
 fn is_safe_account_id(value: &str) -> bool {

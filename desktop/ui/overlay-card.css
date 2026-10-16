@@ -281,30 +281,23 @@
 }
 
 .salmon-run-card__stats-icon[data-salmon-stat-icon="golden-egg"] {
-  width: 14px;
-  height: 20px;
-  object-fit: cover;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  object-fit: contain;
 }
 
 .salmon-run-card__stats-icon[data-salmon-stat-icon="rescue"] {
   width: 32px;
   height: 16px;
-  object-fit: cover;
-}
-
-.salmon-run-card__stats-icon[data-salmon-stat-icon="rescue"][data-salmon-species="INKLING"] {
-  width: 40px;
+  flex: 0 0 auto;
   object-fit: contain;
 }
 
 .salmon-run-card__stats-icon[data-salmon-stat-icon="rescued"] {
-  width: 30px;
+  width: 32px;
   height: 16px;
-  object-fit: cover;
-}
-
-.salmon-run-card__stats-icon[data-salmon-stat-icon="rescued"][data-salmon-species="INKLING"] {
-  width: 40px;
+  flex: 0 0 auto;
   object-fit: contain;
 }
 
@@ -358,11 +351,11 @@
 }
 
 .salmon-run-card__details-grade b {
-  color: #f56528;
+  color: #5af27d;
 }
 
 .salmon-run-card__details-danger b {
-  color: #5af27d;
+  color: #f56528;
 }
 
 .overlay-card__power-delta.positive {

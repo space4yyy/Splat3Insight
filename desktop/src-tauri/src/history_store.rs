@@ -11,7 +11,8 @@ use splat3_widget_core::history::{
 #[cfg(test)]
 use splat3_widget_core::history::{ArchivedCoop, CoopRecord};
 use splat3_widget_core::overlay::{
-    archived_battle_power_track_key, OverlayState, RecentSummary, SalmonRunCard,
+    archived_battle_power_track_key, OverlayMatchCategory, OverlayState, RecentSummary,
+    SalmonRunCard,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -733,6 +734,20 @@ pub(crate) fn load_overlay_state(
     };
     save_overlay_state(history_dir, account_id, &state)?;
     attach_salmon_run_card(history_dir, account_id, state)
+}
+
+pub(crate) fn load_overlay_state_for_match_category(
+    history_dir: &Path,
+    account_id: &str,
+    category: OverlayMatchCategory,
+) -> Result<OverlayState, String> {
+    let current_state = load_overlay_state(history_dir, account_id)?;
+    let mut state = match load_overlay_cache(history_dir, account_id)? {
+        Some(cache) => OverlayState::from_history_for_match_category(&cache, category),
+        None => empty_overlay_state(),
+    };
+    state.salmon_run = current_state.salmon_run;
+    Ok(state)
 }
 
 fn attach_salmon_run_card(
