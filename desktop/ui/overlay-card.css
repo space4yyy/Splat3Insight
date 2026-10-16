@@ -197,6 +197,7 @@
 .salmon-run-card__scale,
 .salmon-run-card__stats,
 .salmon-run-card__summary,
+.salmon-run-card__boss,
 .salmon-run-card__details,
 .salmon-run-card__metadata,
 .salmon-run-card__details-grade,
@@ -323,9 +324,72 @@
 
 .salmon-run-card__details {
   justify-content: flex-start;
-  gap: 8px;
+  gap: 5px;
   height: 20px;
   white-space: nowrap;
+}
+
+.salmon-run-card__boss {
+  flex: 0 0 auto;
+  gap: 2px;
+  font-size: var(--salmon-run-secondary-font-size);
+  white-space: nowrap;
+}
+
+.salmon-run-card__boss[hidden] {
+  display: none;
+}
+
+.salmon-run-card__boss-undefeated {
+  color: #9699a3;
+}
+
+.salmon-run-card__boss-gauge {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  overflow: hidden;
+  background: #837a72;
+  -webkit-mask-image: var(--boss-image);
+  mask-image: var(--boss-image);
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+.salmon-run-card__boss-gauge-fill {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: var(--boss-fill, 0%);
+  background-color: transparent;
+  background-image: url("./images/wave.svg");
+  background-position: 0 0;
+  background-repeat: repeat-x;
+  background-size: 300% 200%;
+  animation: salmon-run-boss-wave-scroll 4.5s linear infinite;
+}
+
+.salmon-run-card__boss-gauge[data-boss-progress="5"] .salmon-run-card__boss-gauge-fill {
+  height: 100%;
+  background-color: #f56528;
+  background-image: none;
+  animation: none;
+}
+
+@keyframes salmon-run-boss-wave-scroll {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: -48px 0;
+  }
 }
 
 .salmon-run-card__summary,

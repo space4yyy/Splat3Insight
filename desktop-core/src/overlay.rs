@@ -19,6 +19,14 @@ pub struct SalmonRunCard {
     pub stage: Option<String>,
     #[serde(default)]
     pub species: Option<String>,
+    #[serde(default)]
+    pub boss_enemy_id: Option<i64>,
+    #[serde(default)]
+    pub boss_progress: Option<i64>,
+    #[serde(default)]
+    pub boss_encounter_count: Option<usize>,
+    #[serde(default)]
+    pub boss_undefeated_count: Option<usize>,
     pub gold_scale: Option<i64>,
     pub silver_scale: Option<i64>,
     pub bronze_scale: Option<i64>,

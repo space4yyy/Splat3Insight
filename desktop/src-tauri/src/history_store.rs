@@ -485,6 +485,13 @@ fn load_salmon_run_card(
         return Ok(None);
     };
     let latest_raw = decode_raw_json(&latest_raw_bytes, &latest_encoding).unwrap_or(Value::Null);
+    let boss_enemy_id = latest_raw
+        .pointer("/boss/coopEnemyId")
+        .and_then(Value::as_i64)
+        .filter(|id| matches!(id, 23 | 24 | 25));
+    let boss_progress = boss_enemy_id
+        .and_then(|_| latest_raw.get("smellMeter").and_then(Value::as_i64))
+        .map(|value| value.saturating_add(1).clamp(1, 5));
     let stage = latest_record
         .get("stage")
         .and_then(Value::as_str)
@@ -502,6 +509,8 @@ fn load_salmon_run_card(
     let mut has_bronze_scale = false;
     let mut clear_count = 0;
     let mut failure_count = 0;
+    let mut boss_encounter_count = 0;
+    let mut boss_undefeated_count = 0;
 
     let mut accumulate_record = |record: &Value, raw_bytes: &[u8], encoding: &str| {
         let clear_waves = record.get("clear_waves").and_then(Value::as_i64);
@@ -518,6 +527,21 @@ fn load_salmon_run_card(
                 add_scale(scale, "gold", &mut gold_scale, &mut has_gold_scale);
                 add_scale(scale, "silver", &mut silver_scale, &mut has_silver_scale);
                 add_scale(scale, "bronze", &mut bronze_scale, &mut has_bronze_scale);
+            }
+            if let Some(boss_enemy_id) = boss_enemy_id {
+                let matching_boss =
+                    raw.pointer("/boss/coopEnemyId").and_then(Value::as_i64) == Some(boss_enemy_id);
+                if matching_boss {
+                    if let Some(boss_result) =
+                        raw.get("bossResult").filter(|value| value.is_object())
+                    {
+                        boss_encounter_count += 1;
+                        if boss_result.get("hasDefeatBoss").and_then(Value::as_bool) == Some(false)
+                        {
+                            boss_undefeated_count += 1;
+                        }
+                    }
+                }
             }
         }
     };
@@ -575,6 +599,10 @@ fn load_salmon_run_card(
         played_time: latest_played_time.clone(),
         stage,
         species,
+        boss_enemy_id,
+        boss_progress,
+        boss_encounter_count: boss_enemy_id.map(|_| boss_encounter_count),
+        boss_undefeated_count: boss_enemy_id.map(|_| boss_undefeated_count),
         gold_scale: scale_count("gold", gold_scale, has_gold_scale),
         silver_scale: scale_count("silver", silver_scale, has_silver_scale),
         bronze_scale: scale_count("bronze", bronze_scale, has_bronze_scale),

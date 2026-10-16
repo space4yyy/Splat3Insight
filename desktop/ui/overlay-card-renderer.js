@@ -199,6 +199,13 @@
               <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="silver" alt="银鳞片"><b class="salmon-run-card__number" data-salmon-field="silver-scale"></b></span>
               <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="bronze" alt="铜鳞片"><b class="salmon-run-card__number" data-salmon-field="bronze-scale"></b></span>
             </div>
+            <div class="salmon-run-card__boss" data-salmon-boss hidden>
+              <span class="salmon-run-card__boss-gauge" data-salmon-boss-gauge role="img">
+                <span class="salmon-run-card__boss-gauge-fill"></span>
+              </span>
+              <b data-salmon-field="boss-encounter-count"></b>
+              <b class="salmon-run-card__boss-undefeated" data-salmon-field="boss-undefeated-count"></b>
+            </div>
             <div class="salmon-run-card__summary">
               <span>场次<b data-salmon-field="total-count"></b><span class="salmon-run-card__summary-failure">(<b data-salmon-field="failure-count"></b>)</span></span>
             </div>
@@ -261,6 +268,23 @@
       ? `x${displayNumber(Number(data.clear_count) + Number(data.failure_count))}`
       : '—';
     refs.fields['failure-count'].textContent = displayNumber(data.failure_count);
+    const bossIcons = { 23: 'boss1.png', 24: 'boss2.png', 25: 'boss3.png' };
+    const bossFilename = bossIcons[Number(data.boss_enemy_id)];
+    const bossCountAvailable = isNumber(data.boss_encounter_count) && isNumber(data.boss_undefeated_count);
+    const bossWidget = refs.card.querySelector('[data-salmon-boss]');
+    if (bossFilename && bossCountAvailable) {
+      const gauge = refs.card.querySelector('[data-salmon-boss-gauge]');
+      const progress = isNumber(data.boss_progress) ? Math.max(0, Math.min(5, Number(data.boss_progress))) : 0;
+      gauge.style.setProperty('--boss-image', `url("./images/${bossFilename}")`);
+      gauge.style.setProperty('--boss-fill', `${(progress / 5) * 100}%`);
+      gauge.dataset.bossProgress = String(progress);
+      gauge.setAttribute('aria-label', `头目出现进度 ${progress}/5`);
+      refs.fields['boss-encounter-count'].textContent = `x${displayNumber(data.boss_encounter_count)}`;
+      refs.fields['boss-undefeated-count'].textContent = `(${displayNumber(data.boss_undefeated_count)})`;
+      bossWidget.hidden = false;
+    } else {
+      bossWidget.hidden = true;
+    }
     const rawGrade = String(data.grade ?? '').trim();
     refs.fields.grade.textContent = salmonGradeLabels[rawGrade] || rawGrade;
     refs.fields['grade-point'].textContent = isNumber(data.grade_point) ? displayNumber(data.grade_point) : '';
