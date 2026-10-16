@@ -186,7 +186,7 @@ function renderObsCardLinks() {
       element.textContent = url;
     });
     document.querySelectorAll(`[data-obs-card-size="${id}"]`).forEach((element) => {
-      element.textContent = `OBS 推荐尺寸：${card.width} x ${card.height}`;
+      element.textContent = `OBS 浏览器源尺寸：${card.width} × ${card.height} px`;
     });
     document.querySelectorAll(`[data-obs-card-description="${id}"]`).forEach((element) => {
       element.textContent = card.description || '';

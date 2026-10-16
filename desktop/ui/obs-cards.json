@@ -4,10 +4,10 @@
     "route": "/overlay",
     "page": "overlay",
     "name": "自动数据卡片",
-    "description": "自动显示最近更新的对战或鲑鱼跑数据，按较大卡片尺寸推荐。",
+    "description": "自动显示最近更新的对战或鲑鱼跑数据。",
     "sizeLabel": "OBS 尺寸推荐",
     "width": 320,
-    "height": 84
+    "height": 80
   },
   {
     "id": "salmon-run",
@@ -17,7 +17,7 @@
     "description": "固定显示鲑鱼跑数据，不随最近活动切换。",
     "sizeLabel": "OBS 尺寸推荐",
     "width": 320,
-    "height": 84
+    "height": 80
   },
   {
     "id": "x-match",
@@ -27,7 +27,7 @@
     "description": "固定显示最近一场 X 赛及 X 赛近期胜率。",
     "sizeLabel": "OBS 尺寸推荐",
     "width": 320,
-    "height": 84
+    "height": 80
   },
   {
     "id": "non-x-match",
@@ -37,6 +37,6 @@
     "description": "固定显示最近一场非 X 赛及非 X 赛近期胜率。",
     "sizeLabel": "OBS 尺寸推荐",
     "width": 320,
-    "height": 84
+    "height": 80
   }
 ]
