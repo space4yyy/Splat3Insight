@@ -8,10 +8,9 @@ const pastePanel = document.querySelector('#paste-panel');
 const loginLink = document.querySelector('#login-link');
 const cancelLoginButton = document.querySelector('#cancel-login');
 const authenticateButton = document.querySelector('#authenticate');
-const overlayPreview = document.querySelector('#overlay-preview');
-const salmonRunPreview = document.querySelector('#salmon-run-preview');
-const xMatchPreview = document.querySelector('#x-match-preview');
-const nonXMatchPreview = document.querySelector('#non-x-match-preview');
+const obsCardOptions = document.querySelector('#obs-card-options');
+const obsCardUrls = document.querySelector('#obs-card-urls');
+const obsCardPreviews = document.querySelector('#obs-card-previews');
 const syncStatusElement = document.querySelector('#sync-status');
 const overlayServiceStateElement = document.querySelector('#overlay-service-state');
 const startOverlayServiceButton = document.querySelector('#start-overlay-service');
@@ -26,6 +25,10 @@ let lastCompletedSyncAt = null;
 let closePromptAcknowledged = false;
 let obsCardCatalog = new Map();
 let overlayServiceUrl = null;
+let copiedObsUrl = null;
+let activeObsPreviewCardId = 'overlay';
+let latestOverlayState = null;
+let latestMatchStates = { xMatch: null, bankaraMatch: null };
 
 try {
   closePromptAcknowledged = localStorage.getItem('splat3-close-prompt-acknowledged') === 'true';
@@ -140,7 +143,7 @@ async function loadObsCardCatalog() {
     throw new Error(`读取 OBS 卡片配置失败（HTTP ${response.status}）`);
   }
   const cards = await response.json();
-  if (!Array.isArray(cards) || cards.some((card) => !card.id || !card.route || !card.width || !card.height)) {
+  if (!Array.isArray(cards) || cards.some((card) => !card.id || !card.optionLabel || !card.route || !card.width || !card.height)) {
     throw new Error('OBS 卡片配置无效');
   }
   obsCardCatalog = new Map(cards.map((card) => [card.id, card]));
@@ -150,54 +153,39 @@ async function loadObsCardCatalog() {
     document.documentElement.style.setProperty('--obs-card-height', `${overlayCard.height}px`);
   }
   renderObsCardLinks();
-
-  document.querySelectorAll('[data-obs-card-copy]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const card = obsCardCatalog.get(button.dataset.obsCardCopy);
-      if (!card || !overlayServiceUrl) return;
-      const url = new URL(card.route, overlayServiceUrl).href;
-      try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(url);
-        } else {
-          const input = document.createElement('textarea');
-          input.value = url;
-          input.style.position = 'fixed';
-          input.style.opacity = '0';
-          document.body.appendChild(input);
-          input.focus();
-          input.select();
-          document.execCommand('copy');
-          input.remove();
-        }
-        setMessage(`${card.name} OBS 地址已复制。`);
-      } catch (error) {
-        setMessage(`复制${card.name} OBS 地址失败：${String(error)}`, true);
-      }
-    });
-  });
+  renderObsCardPreviews();
 }
 
 function renderObsCardLinks() {
   if (!obsCardCatalog.size) return;
-  for (const [id, card] of obsCardCatalog) {
-    const url = overlayServiceUrl ? new URL(card.route, overlayServiceUrl).href : card.route;
-    document.querySelectorAll(`[data-obs-card-url="${id}"]`).forEach((element) => {
-      element.textContent = url;
-    });
-    document.querySelectorAll(`[data-obs-card-size="${id}"]`).forEach((element) => {
-      element.textContent = `OBS 浏览器源尺寸：${card.width} × ${card.height} px`;
-    });
-    document.querySelectorAll(`[data-obs-card-description="${id}"]`).forEach((element) => {
-      element.textContent = card.description || '';
-    });
-    document.querySelectorAll(`[data-obs-card-preview="${id}"]`).forEach((frame) => {
-      frame.style.width = `${card.width}px`;
-      frame.style.height = `${card.height}px`;
-      const previewUrl = `${url}${card.previewQuery || ''}`;
-      if (frame.src !== previewUrl) frame.src = previewUrl;
-    });
+  const cards = selectedObsCards();
+  if (!cards.length) {
+    obsCardUrls.innerHTML = '<div class="obs-card-empty">勾选卡片类型后生成 OBS 地址。</div>';
+    return;
   }
+  const route = selectedObsRoute(cards);
+  const url = overlayServiceUrl ? new URL(route, overlayServiceUrl).href : route;
+  obsCardUrls.innerHTML = `
+      <div class="obs-card-url">
+        <strong class="obs-card-url__name">OBS 地址</strong>
+        <div class="overlay-url-row">
+          <code>${escapeHtml(url)}</code>
+          <button data-copy-overlay-url class="secondary${copiedObsUrl === url ? ' copied' : ''}" ${overlayServiceUrl ? '' : 'disabled'}>${copiedObsUrl === url ? '已复制' : '复制'}</button>
+        </div>
+      </div>`;
+}
+
+function selectedObsCards() {
+  return Array.from(obsCardOptions.querySelectorAll('[data-obs-card-option]:checked'))
+    .map((option) => obsCardCatalog.get(option.value))
+    .filter(Boolean);
+}
+
+function selectedObsRoute(cards = selectedObsCards()) {
+  const parameters = cards
+    .filter((card) => card.id !== 'overlay')
+    .flatMap((card) => Array.from(new URL(card.route, 'http://localhost').searchParams.keys()));
+  return parameters.length ? `/overlay?${parameters.join('&')}` : '/overlay';
 }
 
 function fitCardPreview(preview, selector) {
@@ -219,7 +207,44 @@ function fitCardPreview(preview, selector) {
   viewport.style.height = `${Math.ceil(naturalHeight * scale)}px`;
 }
 
-function renderBattlePreview(preview, state, emptyMessage) {
+function previewEmptyMessage(cardId) {
+  return {
+    overlay: '登录并同步历史后显示最近活动卡片。',
+    'bankara-match': '同步蛮颓开放或挑战记录后显示最近比赛。',
+    'x-match': '同步 X 比赛记录后显示最近比赛。',
+    'salmon-run': '同步打工历史后显示鲑鱼跑卡片。'
+  }[cardId] || '同步历史后显示卡片预览。';
+}
+
+function renderObsCardPreviews() {
+  if (!obsCardCatalog.size) return;
+  const cards = selectedObsCards();
+  if (!cards.length) {
+    activeObsPreviewCardId = null;
+    obsCardPreviews.innerHTML = '<div class="obs-card-empty">勾选卡片类型后，这里会显示预览。</div>';
+    return;
+  }
+  const card = cards.find((selected) => selected.id === activeObsPreviewCardId) || cards[0];
+  activeObsPreviewCardId = card.id;
+  obsCardPreviews.innerHTML = `
+    <article class="obs-card-preview">
+      <div class="obs-card-preview__heading">
+        <strong class="obs-card-preview-title">${escapeHtml(card.optionLabel)}</strong>
+        <span class="obs-card-preview__size">${card.width} × ${card.height} px</span>
+      </div>
+      <div class="overlay-preview" data-obs-preview="${escapeHtml(card.id)}">
+        <div class="overlay-empty">${previewEmptyMessage(card.id)}</div>
+      </div>
+    </article>`;
+  updateObsCardPreviews();
+}
+
+function updateObsCardPreviews() {
+  const card = selectedObsCards().find((selected) => selected.id === activeObsPreviewCardId);
+  if (!card) return;
+  const preview = obsCardPreviews.querySelector(`[data-obs-preview="${card.id}"]`);
+  if (!preview) return;
+
   let scaleElement = preview.querySelector('.overlay-preview__scale');
   if (!scaleElement) {
     preview.innerHTML = `
@@ -228,54 +253,86 @@ function renderBattlePreview(preview, state, emptyMessage) {
       </div>`;
     scaleElement = preview.querySelector('.overlay-preview__scale');
   }
-  if (window.Splat3OverlayCard.update(scaleElement, state)) {
-    fitCardPreview(preview, '.overlay-card');
-  } else {
-    preview.innerHTML = `<div class="overlay-empty">${emptyMessage}</div>`;
+
+  let hasData = false;
+  if (card.id === 'overlay') {
+    const type = window.Splat3OverlayCard.updateAuto(scaleElement, latestOverlayState);
+    hasData = type === 'salmon-run' ? Boolean(latestOverlayState?.salmon_run) : Boolean(latestOverlayState?.selected);
+  } else if (card.id === 'salmon-run') {
+    hasData = window.Splat3OverlayCard.updateSalmonRun(scaleElement, latestOverlayState);
+  } else if (card.id === 'x-match') {
+    hasData = window.Splat3OverlayCard.update(scaleElement, latestMatchStates.xMatch);
+  } else if (card.id === 'bankara-match') {
+    hasData = window.Splat3OverlayCard.update(scaleElement, latestMatchStates.bankaraMatch);
   }
+
+  if (!hasData) {
+    preview.innerHTML = `<div class="overlay-empty">${previewEmptyMessage(card.id)}</div>`;
+    return;
+  }
+  fitCardPreview(preview, '.overlay-card, .salmon-run-card');
 }
 
 function renderOverlay(state, matchStates) {
-  let autoScaleElement = overlayPreview.querySelector('.overlay-preview__scale');
-  if (!autoScaleElement) {
-    overlayPreview.innerHTML = `
-      <div class="overlay-preview__viewport">
-        <div class="overlay-preview__scale"></div>
-      </div>`;
-    autoScaleElement = overlayPreview.querySelector('.overlay-preview__scale');
-  }
-  const autoType = window.Splat3OverlayCard.updateAuto(autoScaleElement, state);
-  const autoCardSelector = autoType === 'salmon-run' ? '.salmon-run-card' : '.overlay-card';
-  if (autoScaleElement.querySelector(autoCardSelector)) {
-    fitCardPreview(overlayPreview, autoCardSelector);
-  } else {
-    overlayPreview.innerHTML = '<div class="overlay-empty">登录并同步历史后显示最近活动对应的数据卡片。</div>';
-  }
-
-  let salmonScaleElement = salmonRunPreview.querySelector('.overlay-preview__scale');
-  if (state?.salmon_run) {
-    if (!salmonScaleElement) {
-      salmonRunPreview.innerHTML = `
-        <div class="overlay-preview__viewport">
-          <div class="overlay-preview__scale"></div>
-        </div>`;
-      salmonScaleElement = salmonRunPreview.querySelector('.overlay-preview__scale');
-    }
-    window.Splat3OverlayCard.updateSalmonRun(salmonScaleElement, state);
-    fitCardPreview(salmonRunPreview, '.salmon-run-card');
-  } else {
-    salmonRunPreview.innerHTML = '<div class="overlay-empty">同步打工历史后显示真实鲑鱼跑数据。</div>';
-  }
-
-  renderBattlePreview(xMatchPreview, matchStates.xMatch, '同步对战历史后显示最近 X 赛数据。');
-  renderBattlePreview(nonXMatchPreview, matchStates.nonXMatch, '同步对战历史后显示最近非 X 赛数据。');
+  latestOverlayState = state;
+  latestMatchStates = matchStates;
+  updateObsCardPreviews();
 }
 
+obsCardOptions.addEventListener('change', (event) => {
+  const changedOption = event.target.closest('[data-obs-card-option]');
+  if (changedOption?.checked) {
+    if (changedOption.value === 'overlay') {
+      obsCardOptions.querySelectorAll('[data-obs-card-option]').forEach((option) => {
+        if (option !== changedOption) option.checked = false;
+      });
+    } else {
+      const automaticOption = obsCardOptions.querySelector('[data-obs-card-option][value="overlay"]');
+      if (automaticOption) automaticOption.checked = false;
+    }
+    activeObsPreviewCardId = changedOption.value;
+  } else if (changedOption?.value === activeObsPreviewCardId) {
+    activeObsPreviewCardId = selectedObsCards()[0]?.id || null;
+  }
+  obsCardOptions.querySelectorAll('.obs-card-option').forEach((label) => {
+    label.classList.toggle('selected', label.querySelector('[data-obs-card-option]').checked);
+  });
+  copiedObsUrl = null;
+  renderObsCardLinks();
+  renderObsCardPreviews();
+});
+
+obsCardUrls.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-copy-overlay-url]');
+  if (!button) return;
+  if (!overlayServiceUrl) return;
+  const url = new URL(selectedObsRoute(), overlayServiceUrl).href;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+    } else {
+      const input = document.createElement('textarea');
+      input.value = url;
+      input.style.position = 'fixed';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+      input.focus();
+      input.select();
+      document.execCommand('copy');
+      input.remove();
+    }
+    copiedObsUrl = url;
+    button.textContent = '已复制';
+    button.classList.add('copied');
+  } catch (error) {
+    setMessage(`复制 OBS 地址失败：${String(error)}`, true);
+  }
+});
+
 window.addEventListener('resize', () => {
-  fitCardPreview(overlayPreview, '.overlay-card, .salmon-run-card');
-  fitCardPreview(salmonRunPreview, '.salmon-run-card');
-  fitCardPreview(xMatchPreview, '.overlay-card');
-  fitCardPreview(nonXMatchPreview, '.overlay-card');
+  obsCardPreviews.querySelectorAll('.overlay-preview').forEach((preview) => {
+    fitCardPreview(preview, '.overlay-card, .salmon-run-card');
+  });
 });
 
 async function refreshOverlay(accountId = null) {
@@ -284,12 +341,14 @@ async function refreshOverlay(accountId = null) {
       document.fonts.load('16px "DFP GBZY7"').catch(() => {}),
       document.fonts.load('16px "BlitzMain"').catch(() => {})
     ]);
-    const state = await invoke('get_overlay_state', { accountId });
-    const xMatchState = await invoke('get_overlay_state', { accountId, matchType: 'xmatch' });
-    const nonXMatchState = await invoke('get_overlay_state', { accountId, matchType: 'nonxmatch' });
-    renderOverlay(state, { xMatch: xMatchState, nonXMatch: nonXMatchState });
-  } catch (error) {
-    overlayPreview.innerHTML = `<div class="overlay-empty">${escapeHtml(String(error))}</div>`;
+    const [state, xMatchState, bankaraMatchState] = await Promise.all([
+      invoke('get_overlay_state', { accountId }),
+      invoke('get_overlay_state', { accountId, matchType: 'xmatch' }),
+      invoke('get_overlay_state', { accountId, matchType: 'bankaramatch' })
+    ]);
+    renderOverlay(state, { xMatch: xMatchState, bankaraMatch: bankaraMatchState });
+  } catch {
+    // 保留最近一次成功渲染的预览，避免偶发请求失败导致卡片闪烁。
   }
 }
 

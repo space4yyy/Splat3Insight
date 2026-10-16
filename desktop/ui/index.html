@@ -44,10 +44,22 @@
       .overlay-service-state { color: #9d9aa8; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
       .overlay-service-state.running { color: #62e6ad; }
       .overlay-service-state.stopped { color: #aaa8b5; }
-      .obs-card-groups { display: grid; margin-top: 8px; }
-      .obs-card-group { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); align-items: center; gap: 18px; padding: 14px 0; border-top: 1px solid #35343e; }
-      .obs-card-group:first-child { padding-top: 10px; border-top: 0; }
-      .obs-card-group__details { min-width: 0; }
+      .obs-card-picker { display: grid; gap: 12px; margin-top: 12px; }
+      .obs-card-picker__hint { margin: 0; color: #aaa8b5; font-size: 12px; }
+      .obs-card-options { display: flex; flex-wrap: wrap; gap: 8px; }
+      .obs-card-option { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 6px 10px; border: 1px solid #4b4857; border-radius: 9px; color: #d8d6df; background: #23222b; font-size: 13px; cursor: pointer; user-select: none; }
+      .obs-card-option.selected { border-color: #ecff20; color: #f5f5f2; background: #30301f; }
+      .obs-card-option input { width: 14px; height: 14px; margin: 0; accent-color: #ecff20; }
+      .obs-card-urls { display: grid; gap: 6px; }
+      .obs-card-url { display: grid; grid-template-columns: 78px minmax(0, 1fr); align-items: center; gap: 8px; padding-top: 7px; border-top: 1px solid #35343e; }
+      .obs-card-url__name { color: #c7c4d0; font-size: 12px; white-space: nowrap; }
+      .obs-card-url .overlay-url-row { min-width: 0; }
+      .obs-card-empty { padding: 8px 0; color: #8e8b9a; font-size: 12px; }
+      .obs-card-previews { display: grid; gap: 10px; }
+      .obs-card-preview { min-width: 0; padding-top: 9px; border-top: 1px solid #35343e; }
+      .obs-card-preview__heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
+      .obs-card-preview-title { color: #c7c4d0; font-size: 12px; font-weight: 600; }
+      .obs-card-preview__size { color: #8e8b9a; font-size: 11px; white-space: nowrap; }
       .error { color: #ff668a !important; }
       .auth-note { margin: 8px 0 0; font-size: 12px; color: #8e8b9a; }
       #paste-panel { display: none; margin-top: 18px; }
@@ -59,9 +71,9 @@
       .overlay-url-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 10px; min-height: 20px; }
       .overlay-url-row code { min-width: 0; flex: 1; overflow: hidden; color: #aaa8b5; font-size: 13px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
       .overlay-url-row button { flex: 0 0 auto; min-height: 26px; padding: 5px 10px; font-size: 12px; line-height: 1; }
+      .overlay-url-row button.copied { color: #10251d; background: #62e6ad; }
       .obs-help { margin: 6px 0 0; color: #aaa8b5; font-size: 13px; line-height: 20px; }
       .overlay-preview { min-width: 0; margin-top: 0; padding: 4px 0 2px; overflow: hidden; }
-      .obs-card-preview-title { display: block; margin: 0 0 7px; color: #c7c4d0; font-size: 13px; font-weight: 600; }
       .overlay-preview__viewport { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; width: 100%; }
       .overlay-preview__scale { width: max-content; transform-origin: top center; }
       .overlay-preview__scale > .overlay-card { --obs-card-width: 320px; --obs-card-height: 80px; border-radius: 6px; }
@@ -76,7 +88,7 @@
       @media (max-width: 700px) {
         main { width: calc(100% - 20px); padding-top: 20px; }
         .panel { padding: 16px; }
-        .obs-card-group { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+        .obs-card-url { grid-template-columns: 68px minmax(0, 1fr); }
       }
     </style>
   </head>
@@ -113,63 +125,16 @@
             <button id="stop-overlay-service" class="overlay-primary-action" hidden>停止服务</button>
           </div>
         </div>
-        <div class="obs-card-groups">
-          <article class="obs-card-group">
-            <div class="obs-card-group__details">
-              <strong class="obs-card-preview-title">自动显示最近数据</strong>
-              <div class="overlay-url-row">
-                <code data-obs-card-url="overlay"></code>
-                <button data-obs-card-copy="overlay" class="secondary">复制</button>
-              </div>
-              <p class="obs-help" data-obs-card-description="overlay"></p>
-              <p class="obs-help" data-obs-card-size="overlay"></p>
-            </div>
-            <div id="overlay-preview" class="overlay-preview">
-              <div class="overlay-empty">登录并同步历史后显示最近活动对应的数据卡片。</div>
-            </div>
-          </article>
-          <article class="obs-card-group">
-            <div class="obs-card-group__details">
-              <strong class="obs-card-preview-title">仅显示鲑鱼跑</strong>
-              <div class="overlay-url-row">
-                <code data-obs-card-url="salmon-run"></code>
-                <button data-obs-card-copy="salmon-run" class="secondary">复制</button>
-              </div>
-              <p class="obs-help" data-obs-card-description="salmon-run"></p>
-              <p class="obs-help" data-obs-card-size="salmon-run"></p>
-            </div>
-            <div id="salmon-run-preview" class="overlay-preview">
-              <div class="overlay-empty">同步打工历史后显示鲑鱼跑数据。</div>
-            </div>
-          </article>
-          <article class="obs-card-group">
-            <div class="obs-card-group__details">
-              <strong class="obs-card-preview-title">仅显示 X 赛</strong>
-              <div class="overlay-url-row">
-                <code data-obs-card-url="x-match"></code>
-                <button data-obs-card-copy="x-match" class="secondary">复制</button>
-              </div>
-              <p class="obs-help" data-obs-card-description="x-match"></p>
-              <p class="obs-help" data-obs-card-size="x-match"></p>
-            </div>
-            <div id="x-match-preview" class="overlay-preview">
-              <div class="overlay-empty">同步对战历史后显示最近 X 赛数据。</div>
-            </div>
-          </article>
-          <article class="obs-card-group">
-            <div class="obs-card-group__details">
-              <strong class="obs-card-preview-title">仅显示非 X 赛</strong>
-              <div class="overlay-url-row">
-                <code data-obs-card-url="non-x-match"></code>
-                <button data-obs-card-copy="non-x-match" class="secondary">复制</button>
-              </div>
-              <p class="obs-help" data-obs-card-description="non-x-match"></p>
-              <p class="obs-help" data-obs-card-size="non-x-match"></p>
-            </div>
-            <div id="non-x-match-preview" class="overlay-preview">
-              <div class="overlay-empty">同步对战历史后显示最近非 X 赛数据。</div>
-            </div>
-          </article>
+        <div class="obs-card-picker">
+          <p class="obs-card-picker__hint">自动与指定类型互斥，指定类型可多选。</p>
+          <div id="obs-card-options" class="obs-card-options" role="group" aria-label="OBS 卡片类型">
+            <label class="obs-card-option selected"><input type="checkbox" value="overlay" data-obs-card-option checked><span>自动</span></label>
+            <label class="obs-card-option"><input type="checkbox" value="bankara-match" data-obs-card-option><span>蛮颓比赛</span></label>
+            <label class="obs-card-option"><input type="checkbox" value="x-match" data-obs-card-option><span>X比赛</span></label>
+            <label class="obs-card-option"><input type="checkbox" value="salmon-run" data-obs-card-option><span>鲑鱼跑</span></label>
+          </div>
+          <div id="obs-card-urls" class="obs-card-urls" aria-live="polite"></div>
+          <div id="obs-card-previews" class="obs-card-previews"></div>
         </div>
       </section>
     </main>

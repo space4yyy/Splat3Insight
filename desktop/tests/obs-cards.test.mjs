@@ -24,12 +24,14 @@ test('OBS card catalog has unique routes and positive integer dimensions', () =>
   }
 });
 
-test('OBS card links, size labels, and copy buttons use catalog IDs', () => {
+test('OBS card checkboxes generate catalog-based URLs and copy actions', () => {
   for (const card of cards) {
-    assert.ok(indexHtml.includes(`data-obs-card-url="${card.id}"`), `${card.id} URL`);
-    assert.ok(indexHtml.includes(`data-obs-card-size="${card.id}"`), `${card.id} dimensions`);
-    assert.ok(indexHtml.includes(`data-obs-card-copy="${card.id}"`), `${card.id} copy action`);
+    assert.ok(indexHtml.includes(`value="${card.id}" data-obs-card-option`), `${card.id} checkbox`);
   }
+  assert.ok(indexHtml.includes('id="obs-card-urls"'));
+  assert.ok(indexHtml.includes('id="obs-card-previews"'));
+  assert.match(appJs, /selectedObsRoute\(cards\)/);
+  assert.match(appJs, /data-copy-overlay-url/);
   assert.match(appJs, /fetch\('\.\/obs-cards\.json'/);
   assert.doesNotMatch(appJs, /http:\/\/127\.0\.0\.1:17353\//);
   assert.doesNotMatch(indexHtml, /http:\/\/127\.0\.0\.1:17353\//);

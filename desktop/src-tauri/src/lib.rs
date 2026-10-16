@@ -1097,10 +1097,10 @@ fn get_overlay_state(
             &account_id,
             OverlayMatchCategory::XMatch,
         ),
-        Some("nonxmatch") => history_store::load_overlay_state_for_match_category(
+        Some("bankaramatch") => history_store::load_overlay_state_for_match_category(
             &state.history_dir,
             &account_id,
-            OverlayMatchCategory::NonXMatch,
+            OverlayMatchCategory::BankaraMatch,
         ),
         Some(_) => Err("不支持的对战卡片类型".to_owned()),
         None => history_store::load_overlay_state(&state.history_dir, &account_id),

@@ -22,8 +22,8 @@
       const salmonRunOnly = params.has('salmonrun');
       const matchType = params.has('xmatch')
         ? 'xmatch'
-        : params.has('nonxmatch')
-          ? 'nonxmatch'
+        : params.has('bankaramatch')
+          ? 'bankaramatch'
           : null;
       function fitOverlay() {
         const viewportWidth = window.innerWidth;

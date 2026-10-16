@@ -833,7 +833,7 @@ fn write_response(
 fn overlay_match_category(request_target: &str) -> Option<OverlayMatchCategory> {
     match request_target.split_once('?').map(|(_, query)| query) {
         Some("xmatch") => Some(OverlayMatchCategory::XMatch),
-        Some("nonxmatch") => Some(OverlayMatchCategory::NonXMatch),
+        Some("bankaramatch") => Some(OverlayMatchCategory::BankaraMatch),
         _ => None,
     }
 }

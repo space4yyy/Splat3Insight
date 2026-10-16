@@ -70,7 +70,7 @@ pub struct RecentSummary {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayMatchCategory {
     XMatch,
-    NonXMatch,
+    BankaraMatch,
 }
 
 impl OverlayState {
@@ -93,7 +93,7 @@ impl OverlayState {
                 is_overlay_battle(&item.record)
                     && match category {
                         Some(OverlayMatchCategory::XMatch) => item.record.mode == "X_MATCH",
-                        Some(OverlayMatchCategory::NonXMatch) => item.record.mode != "X_MATCH",
+                        Some(OverlayMatchCategory::BankaraMatch) => item.record.mode == "BANKARA",
                         None => true,
                     }
             })
