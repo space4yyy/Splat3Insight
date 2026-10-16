@@ -351,7 +351,7 @@
   width: 16px;
   height: 16px;
   overflow: hidden;
-  background: #837a72;
+  background: #000;
   -webkit-mask-image: var(--boss-image);
   mask-image: var(--boss-image);
   -webkit-mask-position: center;
@@ -362,33 +362,58 @@
   mask-size: contain;
 }
 
+.salmon-run-card__boss-gauge::after {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  content: "";
+  background-image: var(--boss-color-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  mix-blend-mode: overlay;
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 .salmon-run-card__boss-gauge-fill {
   position: absolute;
   right: 0;
   bottom: 0;
   left: 0;
-  height: var(--boss-fill, 0%);
+  height: 100%;
   background-color: transparent;
-  background-image: url("./images/wave.svg");
-  background-position: 0 0;
-  background-repeat: repeat-x;
-  background-size: 300% 200%;
-  animation: salmon-run-boss-wave-scroll 4.5s linear infinite;
 }
 
-.salmon-run-card__boss-gauge[data-boss-progress="5"] .salmon-run-card__boss-gauge-fill {
-  height: 100%;
-  background-color: #f56528;
-  background-image: none;
-  animation: none;
+.salmon-run-card__boss-gauge-fill::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 600%;
+  content: "";
+  background-image: url("./images/wave.svg");
+  background-position: 0 100%;
+  background-repeat: repeat-x;
+  background-size: 50% var(--boss-wave-y-scale, 100%);
+  animation: salmon-run-boss-wave-scroll 12s linear infinite;
+  opacity: 0.8;
+}
+
+.salmon-run-card__boss-gauge[data-boss-progress="0"] .salmon-run-card__boss-gauge-fill {
+  display: none;
+}
+
+.salmon-run-card__boss-gauge[data-boss-progress="5"] .salmon-run-card__boss-gauge-fill::before {
+  background-position: 0 0;
 }
 
 @keyframes salmon-run-boss-wave-scroll {
   from {
-    background-position: 0 0;
+    transform: translateX(0);
   }
   to {
-    background-position: -48px 0;
+    transform: translateX(-50%);
   }
 }
 

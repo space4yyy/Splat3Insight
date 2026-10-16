@@ -61,6 +61,26 @@ const BOSS_3: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/images/boss3.png"
 ));
+const BOSS_1_COLOR: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/boss1_color.png"
+));
+const BOSS_2_COLOR: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/boss2_color.png"
+));
+const BOSS_3_COLOR: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/boss3_color.png"
+));
+const BOSS_ALL: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/boss_all.png"
+));
+const BOSS_ALL_COLOR: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/images/boss_all_color.png"
+));
 const BOSS_WAVE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/images/wave.svg"
@@ -652,6 +672,31 @@ fn route_request(
             status: "200 OK",
             content_type: "image/png",
             body: BOSS_3.to_vec(),
+        }),
+        "/images/boss1_color.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: BOSS_1_COLOR.to_vec(),
+        }),
+        "/images/boss2_color.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: BOSS_2_COLOR.to_vec(),
+        }),
+        "/images/boss3_color.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: BOSS_3_COLOR.to_vec(),
+        }),
+        "/images/boss_all.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: BOSS_ALL.to_vec(),
+        }),
+        "/images/boss_all_color.png" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "image/png",
+            body: BOSS_ALL_COLOR.to_vec(),
         }),
         "/images/wave.svg" => Ok(HttpResponse {
             status: "200 OK",

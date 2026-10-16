@@ -488,10 +488,21 @@ fn load_salmon_run_card(
     let boss_enemy_id = latest_raw
         .pointer("/boss/coopEnemyId")
         .and_then(Value::as_i64)
-        .filter(|id| matches!(id, 23 | 24 | 25));
-    let boss_progress = boss_enemy_id
-        .and_then(|_| latest_raw.get("smellMeter").and_then(Value::as_i64))
-        .map(|value| value.saturating_add(1).clamp(1, 5));
+        .filter(|id| matches!(id, 23 | 24 | 25 | 30));
+    let boss_progress = boss_enemy_id.and_then(|_| {
+        if latest_raw
+            .pointer("/bossResult/hasDefeatBoss")
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            Some(0)
+        } else {
+            latest_raw
+                .get("smellMeter")
+                .and_then(Value::as_i64)
+                .map(|value| value.saturating_add(1).clamp(1, 5))
+        }
+    });
     let stage = latest_record
         .get("stage")
         .and_then(Value::as_str)

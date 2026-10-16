@@ -268,15 +268,22 @@
       ? `x${displayNumber(Number(data.clear_count) + Number(data.failure_count))}`
       : '—';
     refs.fields['failure-count'].textContent = displayNumber(data.failure_count);
-    const bossIcons = { 23: 'boss1.png', 24: 'boss2.png', 25: 'boss3.png' };
-    const bossFilename = bossIcons[Number(data.boss_enemy_id)];
+    const bossIcons = {
+      23: { mask: 'boss1.png', color: 'boss1_color.png' },
+      24: { mask: 'boss2.png', color: 'boss2_color.png' },
+      25: { mask: 'boss3.png', color: 'boss3_color.png' },
+      30: { mask: 'boss_all.png', color: 'boss_all_color.png' },
+    };
+    const bossAsset = bossIcons[Number(data.boss_enemy_id)];
     const bossCountAvailable = isNumber(data.boss_encounter_count) && isNumber(data.boss_undefeated_count);
     const bossWidget = refs.card.querySelector('[data-salmon-boss]');
-    if (bossFilename && bossCountAvailable) {
+    if (bossAsset && bossCountAvailable) {
       const gauge = refs.card.querySelector('[data-salmon-boss-gauge]');
       const progress = isNumber(data.boss_progress) ? Math.max(0, Math.min(5, Number(data.boss_progress))) : 0;
-      gauge.style.setProperty('--boss-image', `url("./images/${bossFilename}")`);
-      gauge.style.setProperty('--boss-fill', `${(progress / 5) * 100}%`);
+      const waveYScale = [0, 0.2, 0.4, 0.6, 0.8, 2][progress];
+      gauge.style.setProperty('--boss-image', `url("./images/${bossAsset.mask}")`);
+      gauge.style.setProperty('--boss-color-image', `url("./images/${bossAsset.color}")`);
+      gauge.style.setProperty('--boss-wave-y-scale', `${waveYScale * 100}%`);
       gauge.dataset.bossProgress = String(progress);
       gauge.setAttribute('aria-label', `头目出现进度 ${progress}/5`);
       refs.fields['boss-encounter-count'].textContent = `x${displayNumber(data.boss_encounter_count)}`;
