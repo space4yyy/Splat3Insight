@@ -661,44 +661,47 @@ fn update_sync_status(
 fn active_account_sync_state<S: SecretStore>(
     registry: &Arc<Mutex<AccountRegistry<S>>>,
 ) -> Result<Option<(String, bool)>, String> {
-    let mut registry = registry.lock().map_err(|_| "account registry is locked")?;
-    let Some(account) = registry.active_account().cloned() else {
-        return Ok(None);
+    let (account_id, known, secret_store) = {
+        let registry = registry.lock().map_err(|_| "account registry is locked")?;
+        let Some(account) = registry.active_account() else {
+            return Ok(None);
+        };
+        if registry.is_account_deletion_pending(&account.account_id) {
+            return Ok(None);
+        }
+        (
+            account.account_id.clone(),
+            account.splatnet_ready,
+            registry.secret_store(),
+        )
     };
-    let account_id = account.account_id;
-    if registry.is_account_deletion_pending(&account_id) {
+    if let Some(ready) = known {
+        return Ok(Some((account_id, ready)));
+    }
+
+    // A Keychain lookup can wait on a macOS authorization prompt; the registry
+    // stays unlocked meanwhile so the rest of the app keeps working.
+    let lookup = secret_store.get(&account_id);
+    let mut registry = registry.lock().map_err(|_| "account registry is locked")?;
+    // The account may have been switched or deleted while the lookup waited.
+    if registry.active_account_id() != Some(account_id.as_str())
+        || registry.is_account_deletion_pending(&account_id)
+    {
         return Ok(None);
     }
-    let ready = ensure_account_readiness(&mut registry, &account_id)?;
-    Ok(Some((account_id, ready)))
-}
-
-fn ensure_account_readiness<S: SecretStore>(
-    registry: &mut AccountRegistry<S>,
-    account_id: &str,
-) -> Result<bool, String> {
-    if let Some(ready) = registry
-        .accounts()
-        .iter()
-        .find(|account| account.account_id == account_id)
-        .and_then(|account| account.splatnet_ready)
-    {
-        return Ok(ready);
-    }
-
-    let secret = match registry.get_secret(account_id) {
+    let secret = match lookup {
         Ok(secret) => secret,
         Err(error) => {
             // Don't retry a denied/locked Keychain lookup on every poll. The
             // account can retry explicitly through its permission action.
-            registry.set_splatnet_ready(account_id, false)?;
+            registry.set_splatnet_ready(&account_id, false)?;
             return Err(error);
         }
     };
     let ready = secret
         .is_some_and(|secret| secret.game_web_token.is_some() && secret.bullet_token.is_some());
-    registry.set_splatnet_ready(account_id, ready)?;
-    Ok(ready)
+    registry.set_splatnet_ready(&account_id, ready)?;
+    Ok(Some((account_id, ready)))
 }
 
 async fn sync_account(
@@ -1295,7 +1298,7 @@ async fn refresh_splatnet_tokens_for_account(
     registry: &Arc<Mutex<Registry>>,
     auth_log_path: &Path,
 ) -> Result<(), TokenRefreshFailure> {
-    let (metadata, session_token) = {
+    let (metadata, secret_store) = {
         let registry = registry.lock().map_err(|_| "account registry is locked")?;
         let metadata = registry
             .accounts()
@@ -1303,11 +1306,14 @@ async fn refresh_splatnet_tokens_for_account(
             .find(|account| account.account_id == account_id)
             .cloned()
             .ok_or_else(|| format!("unknown account: {account_id}"))?;
-        let secret = registry
-            .get_secret(account_id)?
-            .ok_or_else(|| "该账号没有保存 Nintendo session token".to_owned())?;
-        (metadata, secret.session_token)
+        (metadata, registry.secret_store())
     };
+    // Read the Keychain outside the registry lock: it may wait on a macOS
+    // authorization prompt.
+    let session_token = secret_store
+        .get(account_id)?
+        .ok_or_else(|| "该账号没有保存 Nintendo session token".to_owned())?
+        .session_token;
 
     write_account_log(
         auth_log_path,
@@ -2226,6 +2232,81 @@ mod tests {
             Some(("a".to_owned(), false))
         );
         assert_eq!(read_count.load(Ordering::Relaxed), 1);
+    }
+
+    /// A Keychain read that waits until the test releases it, like an
+    /// authorization prompt nobody has answered yet.
+    struct WaitingStore {
+        started: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
+        release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+        secret: AccountSecret,
+    }
+
+    impl SecretStore for WaitingStore {
+        fn put(&self, _account_id: &str, _secret: &AccountSecret) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn get(&self, _account_id: &str) -> Result<Option<AccountSecret>, String> {
+            self.started.lock().unwrap().send(()).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+            Ok(Some(self.secret.clone()))
+        }
+
+        fn delete(&self, _account_id: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_waiting_keychain_read_leaves_the_account_registry_usable() {
+        let directory = tempdir().unwrap();
+        let (started_sender, started) = std::sync::mpsc::channel();
+        let (release, release_receiver) = std::sync::mpsc::channel();
+        let store = WaitingStore {
+            started: std::sync::Mutex::new(started_sender),
+            release: std::sync::Mutex::new(release_receiver),
+            secret: AccountSecret {
+                session_token: "test-session".to_owned(),
+                game_web_token: Some("test-web".to_owned()),
+                bullet_token: Some("test-bullet".to_owned()),
+            },
+        };
+        let metadata_path = directory.path().join("accounts.json");
+        fs::write(
+            &metadata_path,
+            r#"{
+                "active_account_id":"a",
+                "accounts":[{"account_id":"a","display_name":"Alice","created_at_ms":1,"last_used_at_ms":1}]
+            }"#,
+        )
+        .unwrap();
+        let registry = AccountRegistry::load(&metadata_path, store).unwrap();
+        let registry = Arc::new(std::sync::Mutex::new(registry));
+
+        let poll = {
+            let registry = Arc::clone(&registry);
+            std::thread::spawn(move || active_account_sync_state(&registry))
+        };
+        started
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        // While the Keychain read waits, other code can still use the registry.
+        let names: Vec<String> = registry
+            .try_lock()
+            .expect("the registry stays unlocked during a Keychain read")
+            .accounts()
+            .iter()
+            .map(|account| account.display_name.clone())
+            .collect();
+        assert_eq!(names, ["Alice"]);
+
+        release.send(()).unwrap();
+        assert_eq!(poll.join().unwrap().unwrap(), Some(("a".to_owned(), true)));
+        assert_eq!(
+            registry.lock().unwrap().accounts()[0].splatnet_ready,
+            Some(true)
+        );
     }
 
     #[cfg(target_os = "macos")]

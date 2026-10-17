@@ -7,9 +7,18 @@ use splat3_widget_core::history::{
     HistorySyncSummary, SplatNetDataClient, SplatNetDataConfig,
 };
 use splat3_widget_core::overlay::OverlayState;
+use splat3_widget_core::SecretStore;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+
+fn mark_not_ready(registry: &Arc<Mutex<Registry>>, account_id: &str) -> Result<(), SyncError> {
+    registry
+        .lock()
+        .map_err(|_| "account registry is locked")?
+        .set_splatnet_ready(account_id, false)
+        .map_err(SyncError::Other)
+}
 
 pub(super) async fn sync_account_inner(
     account_id: &str,
@@ -18,8 +27,8 @@ pub(super) async fn sync_account_inner(
     auth_log_path: &Path,
     sync_runtime: &Arc<SyncRuntime>,
 ) -> Result<HistorySyncSummary, SyncError> {
-    let (metadata, secret) = {
-        let mut registry = registry.lock().map_err(|_| "account registry is locked")?;
+    let (metadata, secret_store) = {
+        let registry = registry.lock().map_err(|_| "account registry is locked")?;
         let metadata = registry
             .accounts()
             .iter()
@@ -31,22 +40,20 @@ pub(super) async fn sync_account_inner(
                 "该账号正在完成删除，请稍后重试".to_owned(),
             ));
         }
-        let secret = match registry.get_secret(account_id) {
-            Ok(Some(secret)) => secret,
-            Ok(None) => {
-                registry
-                    .set_splatnet_ready(account_id, false)
-                    .map_err(SyncError::Other)?;
-                return Err(SyncError::Other("该账号没有保存登录信息".to_owned()));
-            }
-            Err(error) => {
-                registry
-                    .set_splatnet_ready(account_id, false)
-                    .map_err(SyncError::Other)?;
-                return Err(SyncError::Other(error));
-            }
-        };
-        (metadata, secret)
+        (metadata, registry.secret_store())
+    };
+    // Read the Keychain outside the registry lock: it may wait on a macOS
+    // authorization prompt. The account cannot be deleted while it syncs.
+    let secret = match secret_store.get(account_id) {
+        Ok(Some(secret)) => secret,
+        Ok(None) => {
+            mark_not_ready(registry, account_id)?;
+            return Err(SyncError::Other("该账号没有保存登录信息".to_owned()));
+        }
+        Err(error) => {
+            mark_not_ready(registry, account_id)?;
+            return Err(SyncError::Other(error));
+        }
     };
     let game_web_token = secret
         .game_web_token

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub mod dashboard;
 pub mod history;
@@ -170,7 +171,7 @@ fn is_missing_credential(error: &keyring::Error) -> bool {
 /// a SecretStore. The metadata file never contains session or web tokens.
 pub struct AccountRegistry<S> {
     metadata_path: PathBuf,
-    secret_store: S,
+    secret_store: Arc<S>,
     file: RegistryFile,
 }
 
@@ -186,9 +187,16 @@ impl<S: SecretStore> AccountRegistry<S> {
 
         Ok(Self {
             metadata_path,
-            secret_store,
+            secret_store: Arc::new(secret_store),
             file,
         })
+    }
+
+    /// The secret store, shared so callers can read credentials after
+    /// releasing whatever lock guards the registry: a platform credential
+    /// lookup may wait on a system authorization prompt.
+    pub fn secret_store(&self) -> Arc<S> {
+        Arc::clone(&self.secret_store)
     }
 
     pub fn accounts(&self) -> &[AccountMetadata] {
@@ -421,6 +429,9 @@ mod tests {
         assert_eq!(registry.get_secret("a").unwrap(), Some(secret("a")));
         assert_eq!(registry.get_secret("b").unwrap(), Some(secret("b")));
         assert_eq!(registry.get_secret("missing").unwrap(), None);
+        let store = registry.secret_store();
+        drop(registry);
+        assert_eq!(store.get("a").unwrap(), Some(secret("a")));
     }
 
     #[test]
