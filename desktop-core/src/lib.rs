@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 pub mod dashboard;
 pub mod history;
+pub mod images;
 pub mod nintendo_auth;
 pub mod overlay;
 pub mod splatnet_auth;

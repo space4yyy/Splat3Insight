@@ -24,6 +24,7 @@
         <nav class="nav" id="nav">
           <div class="nav-label">数据分析</div>
           <button type="button" data-view="overview" aria-current="page">总览</button>
+          <button type="button" data-view="log">对战记录</button>
           <div class="nav-label">附加功能</div>
           <button type="button" data-view="obs">其他工具</button>
           <button type="button" data-view="accounts">账号管理</button>
@@ -187,6 +188,18 @@
           </div>
         </section>
 
+        <section class="view" id="view-log" aria-label="对战记录" hidden>
+          <div class="overview-status" id="log-status" hidden></div>
+          <div class="view" id="log-content" hidden>
+            <div class="log-toolbar" id="log-filters" role="group" aria-label="记录筛选"></div>
+            <div class="log-summary" id="log-summary"></div>
+            <article class="card">
+              <div id="log-table"></div>
+              <div class="log-pager" id="log-pager"></div>
+            </article>
+          </div>
+        </section>
+
         <section class="view" id="view-obs" aria-label="其他工具" hidden>
           <article class="card obs-panel">
             <div class="card-head">
@@ -284,12 +297,16 @@
         <button type="button" class="button-danger" id="delete-account-confirm">删除账号</button>
       </div>
     </dialog>
+    <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+    <aside class="drawer" id="record-drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden></aside>
     <div class="tip" id="tip" role="status" hidden></div>
 
     <script src="./overlay-card-renderer.js"></script>
     <script src="./game-names.js"></script>
     <script src="./dashboard-data.js"></script>
     <script src="./dashboard.js"></script>
+    <script src="./record-detail.js"></script>
+    <script src="./records.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

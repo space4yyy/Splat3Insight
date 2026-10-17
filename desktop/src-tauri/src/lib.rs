@@ -29,6 +29,7 @@ use tokio::sync::watch;
 
 pub(crate) mod dashboard_store;
 pub(crate) mod history_store;
+pub(crate) mod image_cache;
 pub(crate) mod overlay_server;
 mod sync_orchestrator;
 
@@ -1149,6 +1150,23 @@ async fn get_dashboard_facts(
     .map_err(|error| format!("读取面板数据失败：{error}"))?
 }
 
+/// 对战记录页的详情：读取一条记录归档的原始 JSON（只读）。
+#[tauri::command]
+async fn get_history_record(
+    account_id: Option<String>,
+    record_type: String,
+    record_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<serde_json::Value>, String> {
+    let account_id = resolve_account_id(&state.registry, account_id)?;
+    let history_dir = state.history_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        history_store::load_record_raw(&history_dir, &account_id, &record_type, &record_id)
+    })
+    .await
+    .map_err(|error| format!("读取记录详情失败：{error}"))?
+}
+
 /// Indexes existing archives in the background so the dashboard opens quickly.
 fn warm_up_dashboard_facts(history_dir: PathBuf, account_ids: Vec<String>) {
     let spawned = std::thread::Builder::new()
@@ -1656,6 +1674,41 @@ fn build_tray(
 
 pub fn run() {
     tauri::Builder::default()
+        // 记录详情里的图片：splat3img://localhost/<路径>?src=<原链接>，按图片本身缓存在本地。
+        .register_asynchronous_uri_scheme_protocol(
+            image_cache::SCHEME,
+            |ctx, request, responder| {
+                let Some(cache) = ctx
+                    .app_handle()
+                    .try_state::<Arc<image_cache::ImageCache>>()
+                    .map(|state| Arc::clone(&state))
+                else {
+                    responder.respond(
+                        tauri::http::Response::builder()
+                            .status(503)
+                            .body(Vec::new())
+                            .unwrap_or_default(),
+                    );
+                    return;
+                };
+                let path = request.uri().path().to_owned();
+                let query = request.uri().query().map(ToOwned::to_owned);
+                tauri::async_runtime::spawn(async move {
+                    let (status, content_type, body) =
+                        image_cache::respond(&cache, &path, query.as_deref()).await;
+                    let response = tauri::http::Response::builder()
+                        .status(status)
+                        .header(tauri::http::header::CONTENT_TYPE, content_type)
+                        .header(
+                            tauri::http::header::CACHE_CONTROL,
+                            "max-age=31536000, immutable",
+                        )
+                        .body(body)
+                        .unwrap_or_default();
+                    responder.respond(response);
+                });
+            },
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_autostart::Builder::new()
@@ -1734,6 +1787,20 @@ pub fn run() {
                 log_console_error("history", &error);
             }
             warm_up_dashboard_facts(history_dir.clone(), fact_account_ids);
+            match splat3_widget_core::images::ImageClient::new() {
+                Ok(client) => {
+                    let image_cache = Arc::new(image_cache::ImageCache {
+                        dir: config_dir.join("image-cache"),
+                        client,
+                    });
+                    tauri::async_runtime::spawn(image_cache::run_warm_up(
+                        history_dir.clone(),
+                        Arc::clone(&image_cache),
+                    ));
+                    app.manage(image_cache);
+                }
+                Err(error) => log_console_error("image-cache", &error),
+            }
             let overlay_service = overlay_server::OverlayServiceController::new(
                 overlay_server::OverlayServerConfig {
                     accounts_path: metadata_path,
@@ -1794,6 +1861,7 @@ pub fn run() {
             stop_overlay_service,
             get_overlay_state,
             get_dashboard_facts,
+            get_history_record,
             begin_nintendo_login,
             cancel_nintendo_login,
             complete_nintendo_login,

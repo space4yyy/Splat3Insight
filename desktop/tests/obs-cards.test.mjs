@@ -99,11 +99,33 @@ test('deleting an account keeps local data unless the user opts in, and offers a
 test('the overview current shift reuses the OBS Salmon Run totals row', () => {
   // 同一期工在后端判断，面板直接用卡片第三行的总计，不再自己按连续同场地计算。
   assert.match(rendererJs, /\$\{SALMON_TOTALS_HTML\}/);
-  assert.match(rendererJs, /updateSalmonTotals, newestCardType/);
+  assert.match(rendererJs, /updateSalmonTotals,\n    newestCardType,/);
   assert.match(dashboardJs, /Splat3OverlayCard\?\.updateSalmonTotals\(totals, \{ salmon_run: salmonRun \}\)/);
   assert.match(appJs, /dashboard\.setSalmonRun\(overlay\?\.salmon_run\)/);
   assert.match(indexHtml, /<p class="subhead">当前打工<\/p>/);
   assert.doesNotMatch(dashboardJs, /口径/);
+});
+
+test('the record log page loads after the dashboard and reads raw records on demand', () => {
+  assert.match(indexHtml, /<button type="button" data-view="log">对战记录<\/button>/);
+  const order = ['dashboard.js', 'record-detail.js', 'records.js', 'app.js'].map((name) => indexHtml.indexOf(`src="./${name}"`));
+  assert.ok(order.every((at, index) => at > 0 && (index === 0 || at > order[index - 1])), String(order));
+  assert.ok(indexHtml.includes('id="record-drawer"'));
+  assert.match(appJs, /log: \['对战记录'/);
+});
+
+test('record images load through the local image cache protocol', async () => {
+  const imageSource = tauriConfig.app.security.csp
+    .split(';')
+    .map((directive) => directive.trim())
+    .find((directive) => directive.startsWith('img-src '));
+  assert.match(imageSource, /(?:^|\s)splat3img:(?:\s|$)/);
+  assert.match(imageSource, /http:\/\/splat3img\.localhost/);
+  // 不直接加载任天堂的图片链接：链接约三个月后失效，统一走本地缓存。
+  assert.doesNotMatch(imageSource, /nintendo/);
+  const recordsJs = await readFile(new URL('records.js', ui), 'utf8');
+  assert.match(recordsJs, /'splat3img:\/\/localhost\/'/);
+  assert.match(recordsJs, /\?src=\$\{encodeURIComponent\(url\)\}/);
 });
 
 test('the main window accepts the click that activates it on macOS', () => {

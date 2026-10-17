@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::history::{BattleRecord, CoopRecord};
 
 /// Bump when the extraction below changes so stored facts are rebuilt.
-pub const DASHBOARD_FACTS_VERSION: i64 = 1;
+pub const DASHBOARD_FACTS_VERSION: i64 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BattleFact {
@@ -24,6 +24,8 @@ pub struct BattleFact {
     pub stage_name: Option<String>,
     pub weapon_id: Option<String>,
     pub weapon_name: Option<String>,
+    /// 我这场用的武器图片（带签名的原链接，桌面端按图片本身缓存）。
+    pub weapon_image: Option<String>,
     pub judgement: Option<String>,
     pub knockout: Option<String>,
     pub duration_seconds: Option<i64>,
@@ -85,6 +87,7 @@ pub fn battle_fact(record: &BattleRecord, raw: &Value) -> BattleFact {
         stage_name: record.stage.clone(),
         weapon_id: player.and_then(|player| text(player, "/weapon/id")),
         weapon_name: record.weapon.clone(),
+        weapon_image: player.and_then(|player| text(player, "/weapon/image/url")),
         judgement: record.judgement.clone(),
         knockout: text(raw, "/knockout"),
         duration_seconds: integer(raw, "/duration"),
@@ -243,6 +246,8 @@ mod tests {
             power_eggs: None,
             rescued: Some(1),
             rescued_by_others: Some(2),
+            rotation_start_time: None,
+            rotation_end_time: None,
         }
     }
 
@@ -255,7 +260,7 @@ mod tests {
             "duration": 214,
             "myTeam": { "players": [
                 { "isMyself": false, "weapon": { "id": "other" } },
-                { "isMyself": true, "weapon": { "id": "V2VhcG9uLTQw", "name": "斯普拉机动枪" } }
+                { "isMyself": true, "weapon": { "id": "V2VhcG9uLTQw", "name": "斯普拉机动枪", "image": { "url": "https://example.test/w.png" } } }
             ] }
         });
         let fact = battle_fact(&battle_record(), &raw);
@@ -263,6 +268,10 @@ mod tests {
         assert_eq!(fact.rule_name.as_deref(), Some("真格区域"));
         assert_eq!(fact.stage_id.as_deref(), Some("VnNTdGFnZS0x"));
         assert_eq!(fact.weapon_id.as_deref(), Some("V2VhcG9uLTQw"));
+        assert_eq!(
+            fact.weapon_image.as_deref(),
+            Some("https://example.test/w.png")
+        );
         assert_eq!(fact.knockout.as_deref(), Some("WIN"));
         assert_eq!(fact.duration_seconds, Some(214));
         assert_eq!(fact.power, Some(1987.4));

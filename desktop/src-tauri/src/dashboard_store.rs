@@ -37,6 +37,7 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
                  stage_name TEXT,
                  weapon_id TEXT,
                  weapon_name TEXT,
+                 weapon_image TEXT,
                  judgement TEXT,
                  knockout TEXT,
                  duration_seconds INTEGER,
@@ -81,7 +82,27 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
              CREATE INDEX IF NOT EXISTS idx_extension_dashboard_coop_time
                  ON extension_dashboard_coop(account_id, played_at_ms);",
         )
-        .map_err(|error| format!("初始化面板数据表失败：{error}"))
+        .map_err(|error| format!("初始化面板数据表失败：{error}"))?;
+    // 第 2 版事实表增加了武器图片；旧数据库补上这一列，事实行会按版本号重建。
+    let has_weapon_image = connection
+        .prepare("PRAGMA table_info(extension_dashboard_battles)")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(|error| format!("检查面板数据表失败：{error}"))?
+        .iter()
+        .any(|column| column == "weapon_image");
+    if !has_weapon_image {
+        connection
+            .execute(
+                "ALTER TABLE extension_dashboard_battles ADD COLUMN weapon_image TEXT",
+                [],
+            )
+            .map_err(|error| format!("升级面板数据表失败：{error}"))?;
+    }
+    Ok(())
 }
 
 pub(crate) fn upsert_battle(
@@ -134,8 +155,9 @@ fn write_battle(
             "INSERT OR REPLACE INTO extension_dashboard_battles(
                  account_id, record_id, played_at_ms, mode, bankara_mode, rule_code, rule_name,
                  stage_id, stage_name, weapon_id, weapon_name, judgement, knockout,
-                 duration_seconds, kills, assists, deaths, specials, paint, power, power_kind
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                 duration_seconds, kills, assists, deaths, specials, paint, power, power_kind,
+                 weapon_image
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 account_id,
                 fact.record_id,
@@ -158,6 +180,7 @@ fn write_battle(
                 fact.paint,
                 fact.power,
                 fact.power_kind,
+                fact.weapon_image,
             ],
         )
         .map_err(|error| format!("保存面板对战数据失败：{error}"))?;
@@ -342,6 +365,7 @@ pub(crate) struct BattleRow {
     stage_name: Option<String>,
     weapon_id: Option<String>,
     weapon_name: Option<String>,
+    weapon_image: Option<String>,
     judgement: Option<String>,
     knockout: Option<String>,
     duration_seconds: Option<i64>,
@@ -399,7 +423,8 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
             .prepare(
                 "SELECT record_id, played_at_ms, mode, bankara_mode, rule_code, rule_name,
                         stage_id, stage_name, weapon_id, weapon_name, judgement, knockout,
-                        duration_seconds, kills, assists, deaths, specials, paint, power, power_kind
+                        duration_seconds, kills, assists, deaths, specials, paint, power, power_kind,
+                        weapon_image
                  FROM extension_dashboard_battles
                  WHERE account_id = ?1 AND played_at_ms IS NOT NULL
                  ORDER BY played_at_ms, record_id",
@@ -428,6 +453,7 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
                     paint: row.get(17)?,
                     power: row.get(18)?,
                     power_kind: row.get(19)?,
+                    weapon_image: row.get(20)?,
                 })
             })
             .map_err(|error| format!("读取面板对战数据失败：{error}"))?;
@@ -543,6 +569,8 @@ mod tests {
                 power_eggs: None,
                 rescued: None,
                 rescued_by_others: None,
+                rotation_start_time: None,
+                rotation_end_time: None,
             },
             raw: json!({
                 "id": id,
@@ -573,6 +601,43 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn upgrades_an_existing_battle_fact_table_with_the_weapon_image_column() {
+        let directory = tempdir().unwrap();
+        std::fs::create_dir_all(directory.path()).unwrap();
+        let connection =
+            rusqlite::Connection::open(directory.path().join("history.sqlite3")).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE extension_dashboard_battles (
+                     account_id TEXT NOT NULL,
+                     record_id TEXT NOT NULL,
+                     played_at_ms INTEGER,
+                     mode TEXT NOT NULL,
+                     bankara_mode TEXT, rule_code TEXT, rule_name TEXT, stage_id TEXT, stage_name TEXT,
+                     weapon_id TEXT, weapon_name TEXT, judgement TEXT, knockout TEXT,
+                     duration_seconds INTEGER, kills INTEGER, assists INTEGER, deaths INTEGER,
+                     specials INTEGER, paint INTEGER, power REAL, power_kind TEXT,
+                     PRIMARY KEY (account_id, record_id)
+                 );",
+            )
+            .unwrap();
+        drop(connection);
+
+        let connection = history_store::open_database(directory.path()).unwrap();
+        let columns: Vec<String> = connection
+            .prepare("PRAGMA table_info(extension_dashboard_battles)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(columns.iter().any(|column| column == "weapon_image"));
+        // 再打开一次不会重复加列。
+        drop(connection);
+        history_store::open_database(directory.path()).unwrap();
     }
 
     #[test]

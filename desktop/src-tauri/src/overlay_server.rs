@@ -29,6 +29,7 @@ const OVERLAY_CARD_RENDERER: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/overlay-card-renderer.js"
 ));
+const GAME_NAMES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/game-names.js"));
 const DISPLAY_FONT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/fonts/DFP_GBZY7.ttf"
@@ -773,6 +774,11 @@ fn route_request(
             content_type: "text/javascript; charset=utf-8",
             body: OVERLAY_CARD_RENDERER.as_bytes().to_vec(),
         }),
+        "/game-names.js" => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "text/javascript; charset=utf-8",
+            body: GAME_NAMES.as_bytes().to_vec(),
+        }),
         "/api/overlay" => {
             match load_overlay_state(config, overlay_match_category(request_target)) {
                 Ok(state) => Ok(HttpResponse {
@@ -1121,6 +1127,28 @@ mod tests {
         assert_eq!(response.status, "200 OK");
         assert_eq!(response.content_type, "text/javascript; charset=utf-8");
         assert_eq!(response.body, OVERLAY_CARD_RENDERER.as_bytes());
+    }
+
+    #[test]
+    fn serves_the_official_game_names_for_the_cards() {
+        let directory = tempdir().unwrap();
+        let response = route_request(
+            "GET",
+            "/game-names.js",
+            &OverlayServerConfig {
+                accounts_path: directory.path().join("accounts.json"),
+                history_dir: directory.path().join("history"),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(response.status, "200 OK");
+        assert_eq!(response.content_type, "text/javascript; charset=utf-8");
+        assert_eq!(response.body, GAME_NAMES.as_bytes());
+        for page in [OVERLAY_HTML, SALMON_RUN_HTML] {
+            let names_at = page.find("/game-names.js").unwrap();
+            assert!(names_at < page.find("/overlay-card-renderer.js").unwrap());
+        }
     }
 
     #[test]

@@ -124,6 +124,12 @@ pub enum HistoryFetchedRecord {
         payload_hash: String,
         raw_group: Value,
     },
+    /// 列表里已经归档过的打工记录所属这一期的起止时间，用来补齐之前同步的记录。
+    CoopRotation {
+        start_time: String,
+        end_time: String,
+        record_ids: Vec<String>,
+    },
 }
 
 pub type HistoryRecordCallback =
@@ -193,6 +199,11 @@ pub struct CoopRecord {
     pub power_eggs: Option<i64>,
     pub rescued: Option<i64>,
     pub rescued_by_others: Option<i64>,
+    /// SplatNet 打工列表里这一期的起止时间；之前同步的记录没有。
+    #[serde(default)]
+    pub rotation_start_time: Option<String>,
+    #[serde(default)]
+    pub rotation_end_time: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -562,11 +573,12 @@ impl SplatNetDataClient {
                 "battle-list",
             )
             .await
-            .map_err(|error| error.with_context("对战列表查询失败："))?;
+            .map_err(|error| error.with_context("对战列表查询失败："))?
+            .ids;
         let battle_ids = new_ids(listed_battle_ids, known_battle_ids);
 
         notify_progress(progress, "coop-list", 0, 0, 0);
-        let coop_ids = self
+        let listed_coop = self
             .fetch_ids(
                 COOP_QUERY,
                 "coopResult",
@@ -577,7 +589,18 @@ impl SplatNetDataClient {
             )
             .await
             .map_err(|error| error.with_context("打工列表查询失败："))?;
-        let coop_ids = new_ids(coop_ids, known_coop_ids);
+        if let Some(on_record) = on_record {
+            for (window, record_ids) in known_rotation_groups(&listed_coop, known_coop_ids) {
+                on_record(HistoryFetchedRecord::CoopRotation {
+                    start_time: window.start_time,
+                    end_time: window.end_time,
+                    record_ids,
+                })
+                .map_err(|error| format!("保存打工期起止时间失败：{error}"))?;
+            }
+        }
+        let coop_windows = listed_coop.windows;
+        let coop_ids = new_ids(listed_coop.ids, known_coop_ids);
 
         let mut battles = Vec::with_capacity(battle_ids.len());
         let mut unavailable_battle_details = 0;
@@ -683,7 +706,11 @@ impl SplatNetDataClient {
                 }
             };
             if let Some(detail) = detail {
-                if let Some(record) = parse_coop(&detail, &id) {
+                if let Some(mut record) = parse_coop(&detail, &id) {
+                    if let Some(window) = coop_windows.get(&id) {
+                        record.rotation_start_time = Some(window.start_time.clone());
+                        record.rotation_end_time = Some(window.end_time.clone());
+                    }
                     let archived = ArchivedCoop {
                         record,
                         raw: detail,
@@ -729,41 +756,11 @@ impl SplatNetDataClient {
         language: Option<&str>,
         progress: Option<&HistoryProgressCallback>,
         progress_phase: &str,
-    ) -> Result<Vec<String>, HistoryError> {
+    ) -> Result<ListedIds, HistoryError> {
         let value = self
             .graphql(query_hash, json!({}), language, progress, progress_phase)
             .await?;
-        let root = value
-            .get("data")
-            .and_then(|data| data.get(root_key))
-            .ok_or_else(|| format!("SplatNet 返回中缺少 {root_key}"))?;
-        let mut ids = Vec::new();
-        let mut seen = HashSet::new();
-        let groups = root
-            .get("historyGroups")
-            .and_then(|value| value.get("nodes"))
-            .and_then(Value::as_array)
-            .ok_or_else(|| format!("SplatNet {root_key} 返回中缺少 historyGroups"))?;
-
-        for group in groups {
-            let details = group
-                .get("historyDetails")
-                .and_then(|value| value.get("nodes"))
-                .and_then(Value::as_array)
-                .ok_or_else(|| format!("SplatNet {root_key} 返回中缺少 historyDetails"))?;
-            for detail in details {
-                let Some(id) = detail.get("id").and_then(Value::as_str) else {
-                    continue;
-                };
-                if seen.insert(id.to_owned()) {
-                    ids.push(id.to_owned());
-                    if ids.len() >= limit {
-                        return Ok(ids);
-                    }
-                }
-            }
-        }
-        Ok(ids)
+        Ok(list_ids_from_response(&value, root_key, limit)?)
     }
 
     async fn fetch_detail(
@@ -1084,6 +1081,88 @@ fn retry_delay(attempt: usize, retry_after: Option<Duration>) -> Duration {
     delay.min(MAX_RETRY_DELAY)
 }
 
+/// 列表里一组记录共用的起止时间。打工列表按期分组，私人打工没有起止时间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HistoryGroupWindow {
+    start_time: String,
+    end_time: String,
+}
+
+/// 列表里的记录 id（按列表顺序、去重），以及每条记录所属分组的起止时间。
+#[derive(Debug, Default)]
+struct ListedIds {
+    ids: Vec<String>,
+    windows: HashMap<String, HistoryGroupWindow>,
+}
+
+fn list_ids_from_response(
+    value: &Value,
+    root_key: &str,
+    limit: usize,
+) -> Result<ListedIds, String> {
+    let root = value
+        .get("data")
+        .and_then(|data| data.get(root_key))
+        .ok_or_else(|| format!("SplatNet 返回中缺少 {root_key}"))?;
+    let groups = root
+        .get("historyGroups")
+        .and_then(|value| value.get("nodes"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("SplatNet {root_key} 返回中缺少 historyGroups"))?;
+    let mut listed = ListedIds::default();
+    let mut seen = HashSet::new();
+    for group in groups {
+        let window = match (
+            group.get("startTime").and_then(Value::as_str),
+            group.get("endTime").and_then(Value::as_str),
+        ) {
+            (Some(start_time), Some(end_time)) => Some(HistoryGroupWindow {
+                start_time: start_time.to_owned(),
+                end_time: end_time.to_owned(),
+            }),
+            _ => None,
+        };
+        let details = group
+            .get("historyDetails")
+            .and_then(|value| value.get("nodes"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("SplatNet {root_key} 返回中缺少 historyDetails"))?;
+        for detail in details {
+            let Some(id) = detail.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if seen.insert(id.to_owned()) {
+                if let Some(window) = &window {
+                    listed.windows.insert(id.to_owned(), window.clone());
+                }
+                listed.ids.push(id.to_owned());
+                if listed.ids.len() >= limit {
+                    return Ok(listed);
+                }
+            }
+        }
+    }
+    Ok(listed)
+}
+
+/// 列表里已经归档过的打工记录，按所属的一期分组，用来补齐之前同步的记录的起止时间。
+fn known_rotation_groups(
+    listed: &ListedIds,
+    known_ids: &HashSet<String>,
+) -> Vec<(HistoryGroupWindow, Vec<String>)> {
+    let mut groups: Vec<(HistoryGroupWindow, Vec<String>)> = Vec::new();
+    for id in listed.ids.iter().filter(|id| known_ids.contains(*id)) {
+        let Some(window) = listed.windows.get(id) else {
+            continue;
+        };
+        match groups.iter_mut().find(|(existing, _)| existing == window) {
+            Some((_, ids)) => ids.push(id.clone()),
+            None => groups.push((window.clone(), vec![id.clone()])),
+        }
+    }
+    groups
+}
+
 fn new_ids(ids: Vec<String>, known_ids: &HashSet<String>) -> Vec<String> {
     ids.into_iter()
         .filter(|id| !known_ids.contains(id))
@@ -1298,6 +1377,8 @@ fn parse_coop(detail: &Value, fallback_id: &str) -> Option<CoopRecord> {
         power_eggs,
         rescued,
         rescued_by_others,
+        rotation_start_time: None,
+        rotation_end_time: None,
     })
 }
 
@@ -1417,6 +1498,43 @@ mod tests {
     use super::*;
     use base64::engine::general_purpose::STANDARD;
     use base64::Engine;
+
+    #[test]
+    fn coop_listing_keeps_each_rotation_window() {
+        let response = json!({ "data": { "coopResult": { "historyGroups": { "nodes": [
+            {
+                "startTime": "2026-10-16T08:00:00Z",
+                "endTime": "2026-10-18T00:00:00Z",
+                "historyDetails": { "nodes": [{ "id": "c3" }, { "id": "c2" }] }
+            },
+            {
+                "startTime": null,
+                "endTime": null,
+                "historyDetails": { "nodes": [{ "id": "private" }] }
+            },
+            {
+                "startTime": "2026-10-14T16:00:00Z",
+                "endTime": "2026-10-16T08:00:00Z",
+                "historyDetails": { "nodes": [{ "id": "c1" }, { "id": "c2" }] }
+            }
+        ] } } } });
+
+        let listed = list_ids_from_response(&response, "coopResult", 50).unwrap();
+        assert_eq!(listed.ids, ["c3", "c2", "private", "c1"]);
+        assert_eq!(listed.windows["c3"].start_time, "2026-10-16T08:00:00Z");
+        assert_eq!(listed.windows["c1"].end_time, "2026-10-16T08:00:00Z");
+        assert!(!listed.windows.contains_key("private"));
+        let limited = list_ids_from_response(&response, "coopResult", 2).unwrap();
+        assert_eq!(limited.ids, ["c3", "c2"]);
+
+        // 只有已经归档过、并且有起止时间的记录需要补写。
+        let known = HashSet::from(["c2".to_owned(), "c1".to_owned(), "private".to_owned()]);
+        let groups = known_rotation_groups(&listed, &known);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].0.end_time, "2026-10-18T00:00:00Z");
+        assert_eq!(groups[0].1, ["c2"]);
+        assert_eq!(groups[1].1, ["c1"]);
+    }
 
     #[test]
     fn token_expiration_remains_typed_through_error_context() {

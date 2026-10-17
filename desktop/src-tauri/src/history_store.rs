@@ -558,10 +558,15 @@ fn load_salmon_run_card(
     };
     accumulate_record(&latest_record, &latest_raw);
 
-    // 同一期工：一般打工里场地和这期发放的武器都相同，并且在一期的时长之内。
+    // 同一期工：优先用 SplatNet 打工列表给的这一期起止时间。之前同步、没有起止时间的记录，
+    // 按场地和这期发放的武器判断，并且只看一期的时长之内。
     // 中间穿插的大型跑、团队打工或私人打工直接跳过，不会把这一期截断。
-    if let (Some(latest_time), Some(rotation_key)) = (latest_time, rotation_key) {
-        let window_start = latest_time - chrono::Duration::hours(COOP_ROTATION_MAX_HOURS);
+    let rotation_window = coop_rotation_window(&latest_record);
+    if let Some(latest_time) = latest_time {
+        let window_start = rotation_window
+            .as_ref()
+            .and_then(|(start, _)| chrono::DateTime::parse_from_rfc3339(start).ok())
+            .unwrap_or_else(|| latest_time - chrono::Duration::hours(COOP_ROTATION_MAX_HOURS));
         for record_row in rows {
             let (played_time, record_json, raw_bytes, encoding) =
                 record_row.map_err(|error| format!("读取鲑鱼跑卡片行失败：{error}"))?;
@@ -581,7 +586,11 @@ fn load_salmon_run_card(
                 continue;
             }
             let raw = decode_raw_json(&raw_bytes, &encoding).unwrap_or(Value::Null);
-            if coop_rotation_key(&record, &raw).as_deref() == Some(rotation_key.as_str()) {
+            let same_rotation = match (&rotation_window, coop_rotation_window(&record)) {
+                (Some(latest_window), Some(window)) => *latest_window == window,
+                _ => rotation_key.is_some() && coop_rotation_key(&record, &raw) == rotation_key,
+            };
+            if same_rotation {
                 accumulate_record(&record, &raw);
             }
         }
@@ -647,6 +656,67 @@ fn load_salmon_run_card(
         grade_point,
         danger_rate,
     }))
+}
+
+/// SplatNet 打工列表给的这一期起止时间，同步时写进记录。
+fn coop_rotation_window(record: &Value) -> Option<(String, String)> {
+    Some((
+        record.get("rotation_start_time")?.as_str()?.to_owned(),
+        record.get("rotation_end_time")?.as_str()?.to_owned(),
+    ))
+}
+
+/// 给列表里已归档的打工记录补上这一期的起止时间；已经有的不改，原始 JSON 不动。
+fn fill_coop_rotation(
+    transaction: &rusqlite::Transaction<'_>,
+    account_id: &str,
+    start_time: &str,
+    end_time: &str,
+    record_ids: &[String],
+) -> Result<(), String> {
+    let mut select = transaction
+        .prepare(
+            "SELECT record_json FROM history_records
+             WHERE account_id = ?1 AND record_type = 'coop' AND record_id = ?2",
+        )
+        .map_err(|error| format!("准备补写打工期时间失败：{error}"))?;
+    let mut update = transaction
+        .prepare(
+            "UPDATE history_records SET record_json = ?3
+             WHERE account_id = ?1 AND record_type = 'coop' AND record_id = ?2",
+        )
+        .map_err(|error| format!("准备补写打工期时间失败：{error}"))?;
+    for record_id in record_ids {
+        let Some(record_json) = select
+            .query_row(params![account_id, record_id], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()
+            .map_err(|error| format!("读取打工记录失败：{error}"))?
+        else {
+            continue;
+        };
+        let Ok(Value::Object(mut record)) = serde_json::from_str::<Value>(&record_json) else {
+            continue;
+        };
+        if coop_rotation_window(&Value::Object(record.clone())).is_some() {
+            continue;
+        }
+        record.insert(
+            "rotation_start_time".to_owned(),
+            Value::String(start_time.to_owned()),
+        );
+        record.insert(
+            "rotation_end_time".to_owned(),
+            Value::String(end_time.to_owned()),
+        );
+        let encoded = serde_json::to_string(&record)
+            .map_err(|error| format!("写入打工期时间失败：{error}"))?;
+        update
+            .execute(params![account_id, record_id, encoded])
+            .map_err(|error| format!("写入打工期时间失败：{error}"))?;
+    }
+    Ok(())
 }
 
 /// 一期工的标识：场地加上这一期发放的四把武器（随机武器期是问号武器，同样固定）。
@@ -1048,6 +1118,20 @@ impl HistoryRecordWriter {
                 &payload_hash,
                 &raw_group,
             )?,
+            HistoryFetchedRecord::CoopRotation {
+                start_time,
+                end_time,
+                record_ids,
+            } => {
+                fill_coop_rotation(
+                    &transaction,
+                    account_id,
+                    &start_time,
+                    &end_time,
+                    &record_ids,
+                )?;
+                false
+            }
         };
         transaction
             .execute(
@@ -1491,6 +1575,30 @@ fn overlay_cache_raw(track_key: &str) -> Value {
     Value::Object(raw)
 }
 
+/// 读取一条记录归档的原始 JSON（只读），对战记录页的详情用。
+pub(crate) fn load_record_raw(
+    history_dir: &Path,
+    account_id: &str,
+    record_type: &str,
+    record_id: &str,
+) -> Result<Option<Value>, String> {
+    if !matches!(record_type, "battle" | "coop") {
+        return Err(format!("不支持的记录类型：{record_type}"));
+    }
+    let connection = open_database(history_dir)?;
+    connection
+        .query_row(
+            "SELECT raw_json, raw_encoding FROM history_records
+             WHERE account_id = ?1 AND record_type = ?2 AND record_id = ?3",
+            params![account_id, record_type, record_id],
+            |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|error| format!("读取记录详情失败：{error}"))?
+        .map(|(bytes, encoding)| decode_raw_json(&bytes, &encoding))
+        .transpose()
+}
+
 pub(crate) fn decode_raw_json(bytes: &[u8], encoding: &str) -> Result<Value, String> {
     let decoded = if encoding == "gzip" {
         let mut decoder = GzDecoder::new(bytes);
@@ -1505,12 +1613,28 @@ pub(crate) fn decode_raw_json(bytes: &[u8], encoding: &str) -> Result<Value, Str
     serde_json::from_slice(&decoded).map_err(|error| format!("解析原始记录失败：{error}"))
 }
 
+/// 其他模块的测试共用的样例数据。
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use splat3_widget_core::history::HistoryCache;
+
+    /// 一场对战加一场打工。
+    pub(crate) fn sample_cache_with_coop() -> HistoryCache {
+        let mut cache = super::tests::sample_cache();
+        cache.coop.push(super::tests::sample_coop(
+            "coop-1",
+            "2026-09-22T01:00:00Z".to_owned(),
+        ));
+        cache
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    fn sample_cache() -> HistoryCache {
+    pub(crate) fn sample_cache() -> HistoryCache {
         HistoryCache {
             schema_version: 1,
             fetched_at_ms: 123,
@@ -1539,7 +1663,7 @@ mod tests {
         }
     }
 
-    fn sample_coop(id: &str, played_time: String) -> ArchivedCoop {
+    pub(crate) fn sample_coop(id: &str, played_time: String) -> ArchivedCoop {
         ArchivedCoop {
             record: CoopRecord {
                 id: id.to_owned(),
@@ -1556,6 +1680,8 @@ mod tests {
                 power_eggs: None,
                 rescued: None,
                 rescued_by_others: None,
+                rotation_start_time: None,
+                rotation_end_time: None,
             },
             raw: json!({ "id": id, "raw": "complete-coop-response" }),
         }
@@ -2262,6 +2388,141 @@ mod tests {
         assert_eq!(salmon.gold_scale, Some(7));
         assert_eq!(salmon.clear_count, 3);
         assert_eq!(salmon.failure_count, 0);
+    }
+
+    #[test]
+    fn loads_one_record_raw_json_for_the_matching_account_only() {
+        let directory = tempdir().unwrap();
+        let mut cache = sample_cache();
+        let coop = sample_coop("coop-1", "2026-09-22T01:00:00Z".to_owned());
+        let coop_raw = coop.raw.clone();
+        cache.coop.push(coop);
+        save_cache(directory.path(), "account", &cache).unwrap();
+
+        let battle_id = cache.battles[0].record.id.clone();
+        assert_eq!(
+            load_record_raw(directory.path(), "account", "battle", &battle_id).unwrap(),
+            Some(cache.battles[0].raw.clone())
+        );
+        assert_eq!(
+            load_record_raw(directory.path(), "account", "coop", "coop-1").unwrap(),
+            Some(coop_raw)
+        );
+        assert_eq!(
+            load_record_raw(directory.path(), "other", "coop", "coop-1").unwrap(),
+            None
+        );
+        assert_eq!(
+            load_record_raw(directory.path(), "account", "battle", "coop-1").unwrap(),
+            None
+        );
+        assert!(load_record_raw(directory.path(), "account", "meta", "coop-1").is_err());
+    }
+
+    #[test]
+    fn coop_rotation_backfill_only_fills_missing_windows() {
+        let directory = tempdir().unwrap();
+        let mut writer = HistoryRecordWriter::open(directory.path()).unwrap();
+        let coop = sample_coop("coop-1", "2026-09-22T01:00:00Z".to_owned());
+        let raw = coop.raw.clone();
+        writer
+            .save("account", 1, HistoryFetchedRecord::Coop(coop))
+            .unwrap();
+        let rotation = |start: &str, end: &str| HistoryFetchedRecord::CoopRotation {
+            start_time: start.to_owned(),
+            end_time: end.to_owned(),
+            record_ids: vec!["coop-1".to_owned(), "not-archived".to_owned()],
+        };
+        writer
+            .save(
+                "account",
+                2,
+                rotation("2026-09-21T16:00:00Z", "2026-09-23T08:00:00Z"),
+            )
+            .unwrap();
+        // 已经有起止时间的不再改写。
+        writer
+            .save(
+                "account",
+                3,
+                rotation("2026-09-23T08:00:00Z", "2026-09-25T00:00:00Z"),
+            )
+            .unwrap();
+        drop(writer);
+
+        let loaded = load_cache(directory.path(), "account").unwrap().unwrap();
+        let record = &loaded.coop[0].record;
+        assert_eq!(
+            record.rotation_start_time.as_deref(),
+            Some("2026-09-21T16:00:00Z")
+        );
+        assert_eq!(
+            record.rotation_end_time.as_deref(),
+            Some("2026-09-23T08:00:00Z")
+        );
+        assert_eq!(loaded.coop[0].raw, raw);
+    }
+
+    #[test]
+    fn salmon_run_rotation_prefers_the_listed_rotation_window() {
+        let directory = tempdir().unwrap();
+        let mut cache = sample_cache();
+        let weapons = json!([{ "name": "Splattershot" }, { "name": "Slosher" }]);
+        let shift = |id: &str, time: &str, stage: &str, window: bool, gold: i64| {
+            let mut coop = sample_coop(id, time.to_owned());
+            coop.record.stage = Some(stage.to_owned());
+            coop.record.clear_waves = Some(3);
+            if window {
+                coop.record.rotation_start_time = Some("2026-09-22T00:00:00Z".to_owned());
+                coop.record.rotation_end_time = Some("2026-09-23T16:00:00Z".to_owned());
+            }
+            coop.raw = json!({
+                "weapons": weapons,
+                "scale": { "gold": gold, "silver": 0, "bronze": 0 }
+            });
+            coop
+        };
+        cache.coop = vec![
+            shift(
+                "latest",
+                "2026-09-22T10:00:00Z",
+                "Spawning Grounds",
+                true,
+                1,
+            ),
+            shift("same", "2026-09-22T05:00:00Z", "Spawning Grounds", true, 2),
+            // 之前同步、没有起止时间的记录：在这一期之内，场地和武器一致，算进来。
+            shift(
+                "older-sync",
+                "2026-09-22T02:00:00Z",
+                "Spawning Grounds",
+                false,
+                4,
+            ),
+            shift(
+                "other-setup",
+                "2026-09-22T01:00:00Z",
+                "Sockeye Station",
+                false,
+                100,
+            ),
+            // 早于这一期开始：即使场地和武器相同、在 48 小时内，也不算。
+            shift(
+                "before",
+                "2026-09-21T23:00:00Z",
+                "Spawning Grounds",
+                false,
+                100,
+            ),
+        ];
+        save_cache(directory.path(), "account", &cache).unwrap();
+
+        let salmon = load_overlay_state(directory.path(), "account")
+            .unwrap()
+            .salmon_run
+            .unwrap();
+        assert_eq!(salmon.gold_scale, Some(7));
+        assert_eq!(salmon.clear_count, 3);
     }
 
     #[test]

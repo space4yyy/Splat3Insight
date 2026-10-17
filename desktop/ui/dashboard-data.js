@@ -10,18 +10,11 @@
 
   // SplatNet 返回的对战名称跟着任天堂账号的语言，打工名称固定是英文。
   // 按游戏文本（game-names.js）把繁体和英文换成同一条文本的简体中文；查不到的原样显示。
-  const GAME_NAMES = Object.fromEntries(Object.entries(window.Splat3GameNames || {}).map(([kind, rows]) => {
-    const lookup = new Map();
-    for (const [simplified, ...others] of rows) {
-      lookup.set(simplified, simplified);
-      for (const text of others) if (text) lookup.set(text, simplified);
-    }
-    return [kind, lookup];
-  }));
+  const officialName = (kind, text) => window.Splat3GameNames?.lookup(kind, text) ?? null;
   const trimmed = (name) => (typeof name === 'string' ? name.trim() : '');
   function gameName(kind, name) {
     const text = trimmed(name);
-    return text ? GAME_NAMES[kind]?.get(text) ?? text : null;
+    return text ? officialName(kind, text) ?? text : null;
   }
 
   // 同一场地或武器在不同时期的记录里可能是不同语言，按 id 归并成一个名称：
@@ -32,7 +25,7 @@
       const id = row[idKey];
       const text = trimmed(row[nameKey]);
       if (!id || !text) continue;
-      const known = GAME_NAMES[kind]?.get(text);
+      const known = officialName(kind, text);
       if (known) names.set(id, { name: known, known: true });
       else if (!names.get(id)?.known) names.set(id, { name: text, known: false });
     }
@@ -51,6 +44,7 @@
       stage: nameOf(names?.stages, row.stage_id, row.stage_name, 'stages') || '未知场地',
       weapon: nameOf(names?.weapons, row.weapon_id, row.weapon_name, 'weapons') || '未知武器',
       weaponId: row.weapon_id || row.weapon_name || null,
+      weaponImage: typeof row.weapon_image === 'string' ? row.weapon_image : null,
       win: row.judgement === 'WIN',
       lose: LOSSES.has(row.judgement),
       duration: isNum(row.duration_seconds) ? row.duration_seconds : null,
@@ -189,6 +183,34 @@
     };
   }
 
+  // 对战记录页：页面内筛选（"all" 表示不限），按列排序（空值排在最后），每页 20 条。
+  const LOG_PAGE_SIZE = 20;
+  function filterRecords(rows, filters, salmon) {
+    const pass = (key, value) => !filters?.[key] || filters[key] === 'all' || filters[key] === value;
+    return rows.filter((item) => {
+      if (!pass('stage', item.stage)) return false;
+      if (filters?.result === 'win' && !(salmon ? item.cleared : item.win)) return false;
+      if (filters?.result === 'lose' && !(salmon ? !item.cleared : item.lose)) return false;
+      if (salmon) return true;
+      return pass('rule', item.rule) && pass('weapon', item.weapon);
+    });
+  }
+  function sortRecords(rows, sort) {
+    const sign = sort?.dir === 'asc' ? 1 : -1;
+    const key = sort?.key || 't';
+    return [...rows].sort((a, b) => {
+      const left = a[key];
+      const right = b[key];
+      if (left == null || right == null) return (left == null) - (right == null) || b.t - a.t;
+      return sign * (left - right) || b.t - a.t;
+    });
+  }
+  function pageOf(rows, page, size = LOG_PAGE_SIZE) {
+    const pages = Math.max(1, Math.ceil(rows.length / size));
+    const current = Math.min(Math.max(0, page || 0), pages - 1);
+    return { page: current, pages, first: current * size, items: rows.slice(current * size, current * size + size) };
+  }
+
   function average(list, pick) {
     const values = list.map(pick).filter(isNum);
     return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
@@ -207,5 +229,9 @@
     seasonStart,
     summarize,
     average,
+    LOG_PAGE_SIZE,
+    filterRecords,
+    sortRecords,
+    pageOf,
   });
 })();

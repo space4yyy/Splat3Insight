@@ -7,10 +7,12 @@
   const revealPath = (path) => tauri.opener.revealItemInDir(path);
   const $ = (selector) => document.querySelector(selector);
   const dashboard = window.Splat3Dashboard;
+  const records = window.Splat3Records;
   const cards = window.Splat3OverlayCard;
 
   const VIEWS = {
     overview: ['总览', '最近的状态、战力走势和常用配置，一页看完。'],
+    log: ['对战记录', '所有对局，点一行查看详情。'],
     obs: ['其他工具', '直播用的 OBS 数据卡片等附加工具。'],
     accounts: ['账号管理', '添加、切换和管理 Nintendo 账号。'],
   };
@@ -122,7 +124,7 @@
   function onThemeChange() {
     dashboard.onThemeChange();
     syncThemeSwitch();
-    if (app.view === 'overview') renderOverview();
+    renderDataView();
   }
   themeSwitch.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-theme-choice]');
@@ -152,7 +154,9 @@
     $('#page-sub').textContent = VIEWS[view][1];
     dashboard.hideTip();
     $('#filters').hidden = true;
+    if (view !== 'log') records.close();
     if (view === 'overview') renderOverview();
+    else if (view === 'log') renderLog();
     else if (view === 'obs') {
       renderObsPreview();
       refreshOverlayStates();
@@ -171,44 +175,60 @@
     else showView(view);
   }
 
-  // 总览
-  function renderOverview() {
-    const status = $('#overview-status');
-    const content = $('#overview-content');
-    let notice = null;
-    if (!app.accountsLoaded) {
-      notice = { title: '正在读取账号…' };
-    } else if (!app.activeAccountId) {
-      notice = {
+  // 总览和对战记录共用的提示：账号、数据整理和读取失败等状态；没有提示时才绘制页面。
+  function dataNotice() {
+    if (!app.accountsLoaded) return { title: '正在读取账号…' };
+    if (!app.activeAccountId) {
+      return {
         title: '还没有添加账号',
         body: '添加 Nintendo 账号并完成首次同步后，这里会显示你的对战和打工数据。',
         action: { label: '添加账号', run: startLogin },
       };
-    } else if (app.facts.accountId === app.activeAccountId && app.facts.status === 'error') {
-      notice = { title: '读取历史数据失败', body: app.facts.error, action: { label: '重试', run: () => loadFacts({ force: true }) } };
-    } else if (app.facts.accountId !== app.activeAccountId || app.facts.status !== 'ready') {
-      notice = { title: '正在整理历史数据…', body: '第一次打开时会为全部历史记录建立索引，记录很多时需要一点时间。' };
-    } else if (!dashboard.hasRecords()) {
-      notice = { title: '还没有对战或打工记录', body: '同步完成后，这里会显示你的数据。同步进度显示在左下角。' };
     }
+    if (app.facts.accountId === app.activeAccountId && app.facts.status === 'error') {
+      return { title: '读取历史数据失败', body: app.facts.error, action: { label: '重试', run: () => loadFacts({ force: true }) } };
+    }
+    if (app.facts.accountId !== app.activeAccountId || app.facts.status !== 'ready') {
+      return { title: '正在整理历史数据…', body: '第一次打开时会为全部历史记录建立索引，记录很多时需要一点时间。' };
+    }
+    if (!dashboard.hasRecords()) return { title: '还没有对战或打工记录', body: '同步完成后，这里会显示你的数据。同步进度显示在左下角。' };
+    return null;
+  }
+  function showDataNotice(status, content) {
+    const notice = dataNotice();
     status.hidden = !notice;
     content.hidden = Boolean(notice);
-    $('#filters').hidden = app.view !== 'overview' || Boolean(notice);
-    if (notice) {
-      const action = notice.action ? el('button', { type: 'button', class: 'button-primary', text: notice.action.label }) : null;
-      if (action) action.addEventListener('click', notice.action.run);
-      status.replaceChildren(...present(el('strong', { text: notice.title }), notice.body ? el('span', { text: notice.body }) : null, action));
-      return;
-    }
-    dashboard.render();
+    $('#filters').hidden = Boolean(notice);
+    if (!notice) return false;
+    const action = notice.action ? el('button', { type: 'button', class: 'button-primary', text: notice.action.label }) : null;
+    if (action) action.addEventListener('click', notice.action.run);
+    status.replaceChildren(...present(el('strong', { text: notice.title }), notice.body ? el('span', { text: notice.body }) : null, action));
+    return true;
   }
+  function renderOverview() {
+    if (!showDataNotice($('#overview-status'), $('#overview-content'))) dashboard.render();
+  }
+  function renderLog() {
+    if (!showDataNotice($('#log-status'), $('#log-content'))) records.render();
+  }
+  function renderDataView() {
+    if (app.view === 'overview') renderOverview();
+    else if (app.view === 'log') renderLog();
+  }
+  dashboard.onFiltersChange(renderDataView);
+  // 总览里点最近的一场：切到对战记录并打开这一条的详情。
+  dashboard.onOpenRecord((kind, id) => {
+    if (location.hash !== '#log') location.hash = 'log';
+    showView('log');
+    records.open(kind, id);
+  });
 
   async function loadFacts({ force = false } = {}) {
     const accountId = app.activeAccountId;
     if (!accountId) {
       app.facts = { accountId: null, status: 'idle', error: null, loadedAt: 0 };
       dashboard.setData(null);
-      if (app.view === 'overview') renderOverview();
+      renderDataView();
       return;
     }
     const firstLoad = app.facts.accountId !== accountId || app.facts.status !== 'ready';
@@ -217,7 +237,7 @@
     const requestId = ++factsRequest;
     if (firstLoad) {
       app.facts = { accountId, status: 'loading', error: null, loadedAt: 0 };
-      if (app.view === 'overview') renderOverview();
+      renderDataView();
     }
     try {
       const facts = await invoke('get_dashboard_facts', { accountId });
@@ -229,7 +249,7 @@
       // 已有数据时保留旧图表，只有首次读取失败才显示错误。
       if (firstLoad) app.facts = { accountId, status: 'error', error: String(error), loadedAt: 0 };
     }
-    if (app.view === 'overview') renderOverview();
+    renderDataView();
   }
 
   // 账号
@@ -463,7 +483,7 @@
       loadFacts();
       refreshOverlayStates();
     }
-    if (app.view === 'overview') renderOverview();
+    renderDataView();
   }
 
   // 添加账号
@@ -891,13 +911,13 @@
   renderObsTransparency();
   // 字体加载完再画一次总览，场地名的宽度按实际字体计算。
   document.fonts?.ready.then(() => {
-    if (app.view === 'overview') renderOverview();
+    renderDataView();
   });
   loadObsCatalog().catch((error) => setMessage(String(error), true));
   refreshAccounts().catch((error) => {
     app.accountsLoaded = true;
     setMessage(String(error), true);
-    if (app.view === 'overview') renderOverview();
+    renderDataView();
   });
   refreshSyncStatus();
   refreshServiceStatus();

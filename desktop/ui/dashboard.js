@@ -41,6 +41,8 @@
   let xSettlements = [];
   let xRules = new Set();
   let salmonRun = null;
+  let filterListener = null;
+  let openRecordListener = null;
   const state = { range: '30d', mode: 'all', rule: 'AREA', heatMetric: 'count', tables: {} };
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -159,15 +161,27 @@
     container.textContent = '';
     container.append(el('div', { class: 'empty-state' }, [el('strong', { text: title }), el('span', { text: body })]));
   }
-  function renderTable(container, columns, rows) {
+  // onRow：点一行（或在行上按回车 / 空格）时调用，用来打开这条记录的详情。
+  function clickableRow(tr, open) {
+    tr.classList.add('is-clickable');
+    tr.tabIndex = 0;
+    tr.addEventListener('click', open);
+    tr.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      open();
+    });
+  }
+  function renderTable(container, columns, rows, { onRow } = {}) {
     container.textContent = '';
     const table = el('table', { class: 'data' });
     const head = el('tr');
     for (const column of columns) head.append(el('th', { class: column.num ? 'num' : '', text: column.label }));
     table.append(el('thead', {}, head));
     const body = el('tbody');
-    for (const row of rows) {
+    for (const [rowIndex, row] of rows.entries()) {
       const tr = el('tr');
+      if (onRow) clickableRow(tr, () => onRow(rowIndex));
       row.forEach((cell, index) => {
         const column = columns[index];
         const td = el('td', { class: [column.num ? 'num' : '', column.number ? 'font-number' : '', cell === '—' ? 'placeholder' : ''].filter(Boolean).join(' ') });
@@ -928,7 +942,7 @@
         `${count(shift.rescues)} / ${count(shift.rescued)}`,
         shift.kingAppeared ? (shift.kingDefeated ? '已击倒' : '未击倒') : '—',
         shift.gradeName ? `${shift.gradeName} ${shift.gradePoint ?? ''}`.trim() : '—',
-      ]));
+      ]), { onRow: (index) => openRecordListener?.('coop', recentShifts[index].id) });
       return;
     }
     const list = battlesIn(start, end).slice(-8).reverse();
@@ -941,7 +955,7 @@
       resultChip(battle),
       `${count(battle.kills)} / ${count(battle.assists)} / ${count(battle.deaths)}`,
       powerNode(battle),
-    ]));
+    ]), { onRow: (index) => openRecordListener?.('battle', list[index].id) });
   }
 
   function render() {
@@ -986,8 +1000,10 @@
       apply(button.getAttribute(attribute));
     });
   }
-  bindSegmented(document.getElementById('range-filter'), 'data-range', (value) => { state.range = value; render(); });
-  bindSegmented(modeFilter, 'data-mode', (value) => { state.mode = value; render(); });
+  // 时间范围和模式筛选由总览和对战记录共用，改动后通知当前页面重新绘制。
+  const filtersChanged = () => (filterListener ? filterListener() : render());
+  bindSegmented(document.getElementById('range-filter'), 'data-range', (value) => { state.range = value; filtersChanged(); });
+  bindSegmented(modeFilter, 'data-mode', (value) => { state.mode = value; filtersChanged(); });
   bindSegmented(document.getElementById('heat-metric'), 'data-metric', (value) => { state.heatMetric = value; renderHeat(); });
   for (const button of document.querySelectorAll('[data-table-toggle]')) {
     button.addEventListener('click', () => {
@@ -1006,6 +1022,18 @@
     },
     render,
     hasRecords: () => battles.length > 0 || shifts.length > 0,
+    onFiltersChange(listener) {
+      filterListener = listener;
+    },
+    onOpenRecord(listener) {
+      openRecordListener = listener;
+    },
+    // 对战记录页的数据：当前时间范围和模式下的对战，或者选“打工”时的打工记录。
+    logSource() {
+      const [start, end] = rangeBounds(state.range);
+      return state.mode === 'salmon' ? { salmon: true, rows: shiftsIn(start, end) } : { salmon: false, rows: battlesIn(start, end) };
+    },
+    ui: Object.freeze({ el, fmtDateTime, count, pct, fixed, MODE, RULE_LABEL, ruleLabel, modeLabelOf, modeColor, powerNode, emptyState, clickableRow }),
     onThemeChange() {
       COLOR = readColors();
     },

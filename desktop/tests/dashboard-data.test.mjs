@@ -12,7 +12,7 @@ async function loadScripts(...names) {
 }
 
 const { Splat3DashboardData: data, Splat3GameNames: gameNames } = await loadScripts('game-names.js', 'dashboard-data.js');
-const { Splat3OverlayCard: cards } = await loadScripts('overlay-card-renderer.js');
+const { Splat3OverlayCard: cards } = await loadScripts('game-names.js', 'overlay-card-renderer.js');
 
 function battleRow(overrides) {
   return {
@@ -119,8 +119,16 @@ test('names follow the game text and unknown names stay unchanged', () => {
   assert.equal(data.gameName('weapons', null), null);
 });
 
+test('the shared lookup maps game text and returns null for unknown names', () => {
+  assert.equal(gameNames.lookup('awards', '塗墨點數 No.1'), '涂墨点数 No.1');
+  assert.equal(gameNames.lookup('awards', '#1 Turf Inker'), '涂墨点数 No.1');
+  assert.equal(gameNames.lookup('grades', 'Profreshional +2'), '达人+2');
+  assert.equal(gameNames.lookup('weapons', 'Not A Weapon'), null);
+  assert.equal(gameNames.lookup('nope', 'Splattershot'), null);
+});
+
 test('each Traditional or English game name maps to one Simplified name', () => {
-  for (const [kind, rows] of Object.entries(gameNames)) {
+  for (const [kind, rows] of Object.entries(gameNames.text)) {
     const targets = new Map();
     for (const [simplified, ...others] of rows) {
       assert.ok(simplified, `${kind} row has a Simplified name`);
@@ -164,6 +172,19 @@ test('Salmon Run stages, grades and kings use the game text', () => {
   assert.equal(shifts[0].waves[0].event, '大胖鱼大量出现');
 });
 
+test('OBS cards show official names and keep their short rule labels', () => {
+  assert.equal(cards.labels.rule('真格魚虎對戰'), '真格鱼虎');
+  assert.equal(cards.labels.rule('占地對戰'), '占地对战');
+  assert.equal(cards.labels.rule('Tricolor Turf War'), '三色夺宝对战');
+  assert.equal(cards.labels.rule('Mystery Rule'), 'Mystery Rule');
+  assert.equal(cards.labels.rule(''), '—');
+  assert.equal(cards.labels.coopStage('Spawning Grounds'), '鲑坝');
+  assert.equal(cards.labels.coopStage('Wahoo World'), '醋饭海洋世界');
+  assert.equal(cards.labels.coopStage('Future Site'), 'Future Site');
+  assert.equal(cards.labels.grade('Profreshional +2'), '达人+2');
+  assert.equal(cards.labels.grade('Eggsecutive VP'), '传说');
+});
+
 test('combined OBS routes show the selected type with the newest record', () => {
   const battle = (time) => ({ selected: { played_time: time } });
   const salmon = (time) => ({ salmon_run: { played_time: time } });
@@ -177,4 +198,31 @@ test('combined OBS routes show the selected type with the newest record', () => 
   }), 'xmatch');
   assert.equal(cards.newestCardType({ xmatch: { selected: null }, bankaramatch: battle('2026-10-15T09:00:00Z') }), 'bankaramatch');
   assert.equal(cards.newestCardType({ xmatch: { selected: null } }), null);
+});
+
+test('record log filters, sorts with blanks last, and pages by 20', () => {
+  const rows = [
+    { id: 'a', t: 1, stage: '鲑坝', rule: 'AREA', weapon: 'W1', win: true, lose: false, kills: 5, paint: 900 },
+    { id: 'b', t: 2, stage: '鲑坝', rule: 'LOFT', weapon: 'W2', win: false, lose: true, kills: null, paint: 1200 },
+    { id: 'c', t: 3, stage: '新卷堡', rule: 'AREA', weapon: 'W1', win: false, lose: false, kills: 9, paint: 700 },
+  ];
+  const ids = (list) => Array.from(list, (row) => row.id);
+  assert.deepEqual(ids(data.filterRecords(rows, { rule: 'AREA', stage: 'all', weapon: 'all', result: 'all' }, false)), ['a', 'c']);
+  assert.deepEqual(ids(data.filterRecords(rows, { result: 'lose' }, false)), ['b']);
+  assert.deepEqual(ids(data.filterRecords(rows, { result: 'win', stage: '鲑坝' }, false)), ['a']);
+  const shifts = [{ id: 's1', t: 1, stage: '鲑坝', cleared: true }, { id: 's2', t: 2, stage: '鲑坝', cleared: false }];
+  assert.deepEqual(ids(data.filterRecords(shifts, { result: 'lose', rule: 'AREA' }, true)), ['s2']);
+
+  assert.deepEqual(ids(data.sortRecords(rows, { key: 't', dir: 'desc' })), ['c', 'b', 'a']);
+  assert.deepEqual(ids(data.sortRecords(rows, { key: 'kills', dir: 'desc' })), ['c', 'a', 'b']);
+  assert.deepEqual(ids(data.sortRecords(rows, { key: 'kills', dir: 'asc' })), ['a', 'c', 'b']);
+  assert.deepEqual(ids(data.sortRecords(rows, { key: 'paint', dir: 'asc' })), ['c', 'a', 'b']);
+
+  const many = Array.from({ length: 45 }, (_, index) => ({ id: `r${index}` }));
+  const last = data.pageOf(many, 5);
+  assert.equal(last.page, 2);
+  assert.equal(last.pages, 3);
+  assert.equal(last.first, 40);
+  assert.equal(last.items.length, 5);
+  assert.equal(data.pageOf([], 0).pages, 1);
 });

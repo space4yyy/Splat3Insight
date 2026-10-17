@@ -16,30 +16,27 @@
     'Turf War': '占地对战'
   });
 
+  // 名称查官方游戏文本（game-names.js），查不到时原样显示。
+  const officialName = (kind, text) => window.Splat3GameNames?.lookup(kind, text) ?? null;
+
   const mountedCards = new WeakMap();
   const mountedSalmonCards = new WeakMap();
   const mountedCardTypes = new WeakMap();
   const isNumber = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
   const displayNumber = (value, digits = 0) => isNumber(value) ? Number(value).toFixed(digits) : '—';
+  // 规则优先用卡片自己的简称（真格鱼虎等），其余查官方文本。
   const localizeRule = (value) => {
     const label = String(value ?? '').trim();
-    return ruleLabels[label] || label || '—';
+    return ruleLabels[label] || officialName('rules', label) || label || '—';
   };
-
-  const salmonStageLabels = Object.freeze({
-    'Bonerattle Arena': '鲑鱼心脏斗技场',
-    'Gone Fission Hydroplant': '麦年海洋发电所',
-    "Jammin' Salmon Junction": '生筋子系统交流道遗址',
-    "Marooner's Bay": '漂浮落难船',
-    'Salmonid Smokeyard': '时不知鲑烟熏工房',
-    'Sockeye Station': '新卷堡',
-    'Spawning Grounds': '鲑坝'
-  });
-
-  const salmonGradeLabels = Object.freeze({
-    'Eggsecutive VP': '传说',
-    Profreshional: '达人'
-  });
+  const localizeCoopStage = (value) => {
+    const stage = String(value ?? '').trim();
+    return officialName('coopStages', stage) || stage || '—';
+  };
+  const localizeGrade = (value) => {
+    const grade = String(value ?? '').trim();
+    return officialName('grades', grade) || grade;
+  };
 
   function prepareCardType(root, type) {
     const currentType = mountedCardTypes.get(root);
@@ -322,15 +319,14 @@ ${SALMON_TOTALS_HTML}
     }
 
     const stage = String(data.stage ?? '').trim();
-    refs.fields.stage.textContent = salmonStageLabels[stage] || stage || '—';
+    refs.fields.stage.textContent = localizeCoopStage(stage);
     refs.fields['defeat-enemy-count'].textContent = `x${displayNumber(data.defeat_enemy_count)}`;
     refs.fields['golden-egg-count'].textContent = `x${displayNumber(data.golden_egg_count)}`;
     refs.fields['power-egg-count'].textContent = `x${displayNumber(data.power_egg_count)}`;
     refs.fields['rescued-count'].textContent = `x${displayNumber(data.rescued_count)}`;
     refs.fields['rescue-count'].textContent = `x${displayNumber(data.rescue_count)}`;
     fillSalmonTotals(refs.card, refs.fields, data);
-    const rawGrade = String(data.grade ?? '').trim();
-    refs.fields.grade.textContent = salmonGradeLabels[rawGrade] || rawGrade;
+    refs.fields.grade.textContent = localizeGrade(data.grade);
     refs.fields['grade-point'].textContent = isNumber(data.grade_point) ? displayNumber(data.grade_point) : '';
     if (isNumber(data.danger_rate)) {
       const dangerRate = Number(data.danger_rate);
@@ -364,5 +360,12 @@ ${SALMON_TOTALS_HTML}
     return newest?.type ?? null;
   }
 
-  window.Splat3OverlayCard = Object.freeze({ update, updateAuto, updateSalmonRun, updateSalmonTotals, newestCardType });
+  window.Splat3OverlayCard = Object.freeze({
+    update,
+    updateAuto,
+    updateSalmonRun,
+    updateSalmonTotals,
+    newestCardType,
+    labels: Object.freeze({ rule: localizeRule, coopStage: localizeCoopStage, grade: localizeGrade }),
+  });
 })();
