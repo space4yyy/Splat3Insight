@@ -244,7 +244,11 @@ fn power_track(item: &ArchivedBattle) -> Option<PowerTrack> {
         }
         ("EVENT_MATCH", _) => {
             let event_id = event_session_id(&item.raw)?;
-            let (division, group_id) = event_group_identity(&item.raw)?;
+            // SplatNet's event battles usually carry no team id. Without one the track is
+            // the event alone, and the games that measure a new rating separate the runs
+            // (see `to_overlay_battle`).
+            let (division, group_id) = event_group_identity(&item.raw)
+                .unwrap_or_else(|| ("ANY".to_owned(), String::new()));
             Some(PowerTrack::EventMatch {
                 power_kind,
                 event_id,
@@ -256,16 +260,11 @@ fn power_track(item: &ArchivedBattle) -> Option<PowerTrack> {
     }
 }
 
+/// Anarchy Open has no usable team identity in SplatNet's data (teammates are random in
+/// solo play), so its deltas are scoped to the mode and separated by rating runs.
 fn mode_level_delta_track(item: &ArchivedBattle) -> Option<&'static str> {
-    let scope = match (
-        item.record.mode.as_str(),
-        item.record.bankara_mode.as_deref(),
-    ) {
-        ("BANKARA", Some("OPEN")) => "BANKARA_OPEN",
-        ("EVENT_MATCH", _) => "EVENT_MATCH",
-        _ => return None,
-    };
-    Some(scope)
+    (item.record.mode == "BANKARA" && item.record.bankara_mode.as_deref() == Some("OPEN"))
+        .then_some("BANKARA_OPEN")
 }
 
 fn same_power_delta_track(current: &ArchivedBattle, candidate: &ArchivedBattle) -> bool {
@@ -485,28 +484,37 @@ fn to_overlay_battle(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> Overla
     } else {
         item.record.power
     };
+    // Anarchy Open and events measure a new rating over a few games that report no power;
+    // powers before those games belong to an earlier rating.
+    let rated_in_runs = mode_level_delta_track(item).is_some() || item.record.mode == "EVENT_MATCH";
     let power_delta = power.and_then(|current_power| {
         if mode_level_delta_track(item).is_none() && current_track.is_none() {
             return None;
         }
-        Some(
-            older
-                .iter()
-                .enumerate()
-                .filter(|(index, candidate)| {
-                    candidate.record.power.is_some()
-                        && same_power_delta_track(item, candidate)
-                        && (item.record.mode != "EVENT_MATCH"
-                            || event_power_is_placed(candidate, &older[*index + 1..]))
-                        && (candidate.record.power.unwrap() - current_power).abs() > 0.0001
-                })
-                .find_map(|(_, candidate)| {
-                    candidate.record.power.map(|power| current_power - power)
-                })
-                // A newly rated track starts at +0; an unplaced track has no current power,
-                // so the outer `and_then` keeps both values absent until a rating exists.
-                .unwrap_or(0.0),
-        )
+        let mut previous_power = None;
+        for (index, candidate) in older.iter().enumerate() {
+            if !same_power_delta_track(item, candidate) {
+                continue;
+            }
+            let Some(candidate_power) = candidate.record.power else {
+                if rated_in_runs {
+                    break;
+                }
+                continue;
+            };
+            if item.record.mode == "EVENT_MATCH"
+                && !event_power_is_placed(candidate, &older[index + 1..])
+            {
+                continue;
+            }
+            if (candidate_power - current_power).abs() > 0.0001 {
+                previous_power = Some(candidate_power);
+                break;
+            }
+        }
+        // A newly rated track starts at +0; an unplaced track has no current power,
+        // so the outer `and_then` keeps both values absent until a rating exists.
+        Some(previous_power.map_or(0.0, |previous| current_power - previous))
     });
 
     OverlayBattle {
@@ -717,56 +725,109 @@ mod tests {
     }
 
     #[test]
-    fn event_match_delta_is_scoped_to_mode_across_events_and_groups() {
-        let mut battles = Vec::new();
-        for index in 1..=5 {
-            battles.push(event_battle(
-                &format!("group-a-{index}"),
-                &format!("2026-09-22T00:{index:02}:00Z"),
-                Some(1800.0 + f64::from(index)),
-                "event-a",
-                "slot-1",
-                false,
-                Some("party-a"),
-            ));
-        }
-        for index in 1..=5 {
-            battles.push(event_battle(
-                &format!("group-b-{index}"),
-                &format!("2026-09-22T00:{:02}:00Z", index + 5),
-                Some(2400.0 + f64::from(index)),
-                "event-b",
-                "slot-2",
-                false,
-                Some("party-b"),
-            ));
-        }
-        for battle in battles
-            .iter_mut()
-            .filter(|battle| battle.record.id.starts_with("group-b-"))
-        {
-            battle.record.power_kind = Some("team-event".to_owned());
-        }
-        battles.push(event_battle(
-            "group-a-6",
-            "2026-09-22T00:11:00Z",
-            Some(1815.0),
-            "event-a",
-            "slot-1",
-            false,
-            Some("party-a"),
-        ));
+    fn open_power_delta_restarts_after_the_games_that_re_measure_it() {
+        let open_delta = |battles: Vec<ArchivedBattle>| {
+            OverlayState::from_history(&HistoryCache {
+                schema_version: 1,
+                fetched_at_ms: 1,
+                battles,
+                coop: Vec::new(),
+            })
+            .selected
+            .unwrap()
+            .power_delta
+        };
+        // An earlier session, then four games without a power while the game re-measures it.
+        let earlier = open_battle("earlier", "01:00", 1800.0, &["me", "a"]);
+        let measuring: Vec<_> = ["02:10", "02:20", "02:30", "02:40"]
+            .iter()
+            .enumerate()
+            .map(|(index, time)| {
+                let mut item = open_battle(&format!("measuring-{index}"), time, 0.0, &["me", "b"]);
+                item.record.power = None;
+                item
+            })
+            .collect();
+        let first_rated = open_battle("first-rated", "02:50", 1900.0, &["me", "c"]);
+        let next = open_battle("next", "03:00", 1912.5, &["me", "d"]);
 
-        let state = OverlayState::from_history(&HistoryCache {
-            schema_version: 1,
-            fetched_at_ms: 1,
-            battles,
-            coop: Vec::new(),
-        });
-        let selected = state.selected.unwrap();
-        assert_eq!(selected.id, "group-a-6");
-        assert_eq!(selected.power, Some(1815.0));
-        assert_eq!(selected.power_delta, Some(-590.0));
+        // The first rated game of the new run starts at +0 instead of comparing with 1800.
+        let mut battles = vec![earlier.clone(), first_rated.clone()];
+        battles.extend(measuring.iter().cloned());
+        assert_eq!(open_delta(battles), Some(0.0));
+
+        // Later games compare within the run.
+        let mut battles = vec![earlier, first_rated, next];
+        battles.extend(measuring);
+        assert_eq!(open_delta(battles), Some(12.5));
+    }
+
+    #[test]
+    fn event_match_delta_restarts_after_the_games_that_re_measure_it() {
+        let card_power = |battles: &[ArchivedBattle]| {
+            let selected = OverlayState::from_history(&HistoryCache {
+                schema_version: 1,
+                fetched_at_ms: 1,
+                battles: battles.to_vec(),
+                coop: Vec::new(),
+            })
+            .selected
+            .unwrap();
+            (selected.power, selected.power_delta)
+        };
+        // SplatNet's event battles carry the event but no team id, and no power over the
+        // first four games while the game measures it.
+        let measuring = |event_id: &str, minute: u32| {
+            (0..4)
+                .map(|index| {
+                    league_event_battle(
+                        &format!("{event_id}-measuring-{}", minute + index),
+                        &format!("2026-09-22T00:{:02}:00Z", minute + index),
+                        None,
+                        event_id,
+                        None,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut battles = measuring("event-a", 0);
+        battles.push(league_event_battle(
+            "a-first",
+            "2026-09-22T00:04:00Z",
+            Some(1800.0),
+            "event-a",
+            None,
+        ));
+        assert_eq!(card_power(&battles), (Some(1800.0), Some(0.0)));
+
+        // Another event is neither compared nor ends this event's rating.
+        battles.extend(measuring("event-b", 10));
+        battles.push(league_event_battle(
+            "b-first",
+            "2026-09-22T00:14:00Z",
+            Some(2400.0),
+            "event-b",
+            None,
+        ));
+        battles.push(league_event_battle(
+            "a-second",
+            "2026-09-22T00:20:00Z",
+            Some(1820.0),
+            "event-a",
+            None,
+        ));
+        assert_eq!(card_power(&battles), (Some(1820.0), Some(20.0)));
+
+        // A later period re-measures the power, so its first rated game starts at +0.
+        battles.extend(measuring("event-a", 30));
+        battles.push(league_event_battle(
+            "a-re-measured",
+            "2026-09-22T00:34:00Z",
+            Some(1850.0),
+            "event-a",
+            None,
+        ));
+        assert_eq!(card_power(&battles), (Some(1850.0), Some(0.0)));
     }
 
     #[test]
@@ -955,25 +1016,25 @@ mod tests {
                 league_event_battle(
                     &format!("team-a-{index}"),
                     &format!("2026-09-22T00:0{index}:00Z"),
-                    1700.0 + f64::from(index),
+                    Some(1700.0 + f64::from(index)),
                     "event-a",
-                    "team-a",
+                    Some("team-a"),
                 )
             })
             .collect::<Vec<_>>();
         battles.push(league_event_battle(
             "team-b-1",
             "2026-09-22T00:06:00Z",
-            2300.0,
+            Some(2300.0),
             "event-a",
-            "team-b",
+            Some("team-b"),
         ));
         battles.push(league_event_battle(
             "team-a-6",
             "2026-09-22T00:07:00Z",
-            1715.0,
+            Some(1715.0),
             "event-a",
-            "team-a",
+            Some("team-a"),
         ));
 
         let state = OverlayState::from_history(&HistoryCache {
@@ -1044,19 +1105,21 @@ mod tests {
     fn league_event_battle(
         id: &str,
         time: &str,
-        power: f64,
+        power: Option<f64>,
         event_id: &str,
-        team_id: &str,
+        team_id: Option<&str>,
     ) -> ArchivedBattle {
-        let mut item = battle(id, time, "EVENT_MATCH", Some(power), "WIN");
+        let mut item = battle(id, time, "EVENT_MATCH", power, "WIN");
         item.record.power_kind = Some("event".to_owned());
         item.raw = serde_json::json!({
             "leagueMatch": {
-                "leagueMatchEvent": { "id": event_id },
-                "myLeaguePower": power,
-                "teamId": team_id
+                "leagueMatchEvent": { "id": event_id, "name": "Test Event" },
+                "myLeaguePower": power
             }
         });
+        if let Some(team_id) = team_id {
+            item.raw["leagueMatch"]["teamId"] = serde_json::json!(team_id);
+        }
         item
     }
 }

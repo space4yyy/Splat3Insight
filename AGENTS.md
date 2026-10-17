@@ -12,7 +12,7 @@
 
 - Keep account tokens and credentials in the platform credential store. Never print or log credentials, login callback URLs, or token values.
 - Preserve original battle and Salmon Run JSON in the compressed SQLite archive. Do not silently prune user history or app-data exports.
-- Battle power deltas must only compare records from the same track: X Match by rule, Anarchy Challenge by weapon, and Anarchy Open by team identity. Missing/unplaced power remains unavailable rather than borrowing another track's score.
+- Battle power deltas must only compare records from the same track: X Match by rule, Anarchy Challenge by weapon, Anarchy Open by mode, and event matches by event (plus team when SplatNet provides one). Open and event deltas never reach back past the games without power that measure a new rating. Missing/unplaced power remains unavailable rather than borrowing another track's score.
 - The app preview and `/overlay` should use the same card markup conventions and `desktop/ui/overlay-card.css`; keep the card proportional and transparent outside its bounds.
 - Keep the OBS card catalog in `desktop/ui/obs-cards.json`; account-scoped extension tables use the `extension_` prefix and an `account_id` column so account deletion can clean them generically.
 - Treat account data and local exports as private; never stage local exports.

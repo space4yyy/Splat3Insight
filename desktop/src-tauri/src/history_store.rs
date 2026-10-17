@@ -29,6 +29,13 @@ const NO_OVERLAY_TRACK: &str = "none";
 const CACHED_POWER_TRACK_KEY: &str = "__s3w_overlay_power_track_v1";
 const EVENT_POWER_MIGRATION: &str = "event-power-fields-v1";
 const MODE_DELTA_MIGRATION: &str = "mode-level-deltas-v1";
+const RATING_RUN_MIGRATION: &str = "rating-run-deltas-v1";
+/// 卡片数据的升级：缺任何一项时，重新解析活动比赛记录并重建卡片缓存，然后全部标记完成。
+const OVERLAY_MIGRATIONS: [&str; 3] = [
+    EVENT_POWER_MIGRATION,
+    MODE_DELTA_MIGRATION,
+    RATING_RUN_MIGRATION,
+];
 /// 一般打工每期 40 小时。往前找同一期工时只看这个范围，既能覆盖整期，
 /// 又不会把隔了几周、恰好场地和武器都相同的另一期算进来。
 const COOP_ROTATION_MAX_HOURS: i64 = 48;
@@ -773,16 +780,7 @@ pub(crate) fn load_overlay_state(
     account_id: &str,
 ) -> Result<OverlayState, String> {
     let connection = open_database(history_dir)?;
-    let migrated_version = connection
-        .query_row(
-            "SELECT version FROM history_migrations
-             WHERE account_id = ?1 AND migration_key = ?2",
-            params![account_id, EVENT_POWER_MIGRATION],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()
-        .map_err(|error| format!("读取活动赛卡片数据版本失败：{error}"))?;
-    if migrated_version != Some(1) {
+    if overlay_migration_pending(&connection, account_id)? {
         drop(connection);
         reparse_event_match_records(history_dir, account_id)?;
         let state = match load_overlay_cache(history_dir, account_id)? {
@@ -791,53 +789,17 @@ pub(crate) fn load_overlay_state(
         };
         save_overlay_state(history_dir, account_id, &state)?;
         let connection = open_database(history_dir)?;
-        connection
-            .execute(
-                "INSERT INTO history_migrations(account_id, migration_key, version)
-                 VALUES (?1, ?2, 1)
-                 ON CONFLICT(account_id, migration_key) DO UPDATE SET
-                     version = excluded.version",
-                params![account_id, EVENT_POWER_MIGRATION],
-            )
-            .map_err(|error| format!("保存活动赛卡片数据版本失败：{error}"))?;
-        connection
-            .execute(
-                "INSERT INTO history_migrations(account_id, migration_key, version)
-                 VALUES (?1, ?2, 1)
-                 ON CONFLICT(account_id, migration_key) DO UPDATE SET
-                     version = excluded.version",
-                params![account_id, MODE_DELTA_MIGRATION],
-            )
-            .map_err(|error| format!("保存模式差分卡片数据版本失败：{error}"))?;
-        drop(connection);
-        return attach_salmon_run_card(history_dir, account_id, state);
-    }
-    let mode_delta_version = connection
-        .query_row(
-            "SELECT version FROM history_migrations
-             WHERE account_id = ?1 AND migration_key = ?2",
-            params![account_id, MODE_DELTA_MIGRATION],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()
-        .map_err(|error| format!("读取模式差分卡片数据版本失败：{error}"))?;
-    if mode_delta_version != Some(1) {
-        drop(connection);
-        let state = match load_overlay_cache(history_dir, account_id)? {
-            Some(cache) => OverlayState::from_history(&cache),
-            None => empty_overlay_state(),
-        };
-        save_overlay_state(history_dir, account_id, &state)?;
-        let connection = open_database(history_dir)?;
-        connection
-            .execute(
-                "INSERT INTO history_migrations(account_id, migration_key, version)
-                 VALUES (?1, ?2, 1)
-                 ON CONFLICT(account_id, migration_key) DO UPDATE SET
-                     version = excluded.version",
-                params![account_id, MODE_DELTA_MIGRATION],
-            )
-            .map_err(|error| format!("保存模式差分卡片数据版本失败：{error}"))?;
+        for migration in OVERLAY_MIGRATIONS {
+            connection
+                .execute(
+                    "INSERT INTO history_migrations(account_id, migration_key, version)
+                     VALUES (?1, ?2, 1)
+                     ON CONFLICT(account_id, migration_key) DO UPDATE SET
+                         version = excluded.version",
+                    params![account_id, migration],
+                )
+                .map_err(|error| format!("保存卡片数据版本失败：{error}"))?;
+        }
         drop(connection);
         return attach_salmon_run_card(history_dir, account_id, state);
     }
@@ -896,6 +858,24 @@ pub(crate) fn load_overlay_state_for_match_category(
     };
     state.salmon_run = current_state.salmon_run;
     Ok(state)
+}
+
+fn overlay_migration_pending(connection: &Connection, account_id: &str) -> Result<bool, String> {
+    for migration in OVERLAY_MIGRATIONS {
+        let version = connection
+            .query_row(
+                "SELECT version FROM history_migrations
+                 WHERE account_id = ?1 AND migration_key = ?2",
+                params![account_id, migration],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|error| format!("读取卡片数据版本失败：{error}"))?;
+        if version != Some(1) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn attach_salmon_run_card(
@@ -1858,7 +1838,7 @@ mod tests {
     }
 
     #[test]
-    fn mode_delta_migration_rebuilds_stale_overlay_snapshots() {
+    fn card_data_migration_rebuilds_stale_overlay_snapshots() {
         let directory = tempdir().unwrap();
         let mut latest = sample_cache().battles.remove(0);
         latest.record.id = "open-latest".to_owned();
@@ -1897,6 +1877,85 @@ mod tests {
         let refreshed = load_overlay_state(directory.path(), "account").unwrap();
         let delta = refreshed.selected.unwrap().power_delta.unwrap();
         assert!((delta - 7.9).abs() < 0.0001);
+    }
+
+    #[test]
+    fn rating_run_migration_reindexes_event_battles_without_a_team() {
+        let directory = tempdir().unwrap();
+        let mut cache = sample_cache();
+        let template = cache.battles.remove(0);
+        // SplatNet's shape: the event without a team id, and no power over the first four games.
+        cache.battles = (1..=5)
+            .map(|index| {
+                let mut battle = template.clone();
+                battle.record.id = format!("event-{index}");
+                battle.record.played_time = Some(format!("2026-09-22T00:0{index}:00Z"));
+                battle.record.mode = "EVENT_MATCH".to_owned();
+                battle.record.power = (index == 5).then_some(1789.5);
+                battle.record.power_kind = Some("event".to_owned());
+                battle.raw = json!({
+                    "id": battle.record.id,
+                    "vsMode": { "mode": "LEAGUE" },
+                    "leagueMatch": {
+                        "myLeaguePower": battle.record.power,
+                        "leagueMatchEvent": { "id": "event-a", "name": "Test Event" }
+                    }
+                });
+                battle
+            })
+            .collect();
+        save_cache(directory.path(), "account", &cache).unwrap();
+
+        // Earlier versions indexed these battles without a track and cached a card without power.
+        let connection = open_database(directory.path()).unwrap();
+        connection
+            .execute(
+                "UPDATE history_records SET overlay_track_key = ?2 WHERE account_id = ?1",
+                params!["account", NO_OVERLAY_TRACK],
+            )
+            .unwrap();
+        for migration in [EVENT_POWER_MIGRATION, MODE_DELTA_MIGRATION] {
+            connection
+                .execute(
+                    "INSERT INTO history_migrations(account_id, migration_key, version)
+                     VALUES (?1, ?2, 1)",
+                    params!["account", migration],
+                )
+                .unwrap();
+        }
+        drop(connection);
+        let old_cache = load_overlay_cache(directory.path(), "account")
+            .unwrap()
+            .unwrap();
+        let stale_state = OverlayState::from_history(&old_cache);
+        assert_eq!(stale_state.selected.as_ref().unwrap().power, None);
+        save_overlay_state(directory.path(), "account", &stale_state).unwrap();
+
+        let refreshed = load_overlay_state(directory.path(), "account").unwrap();
+        let selected = refreshed.selected.unwrap();
+        assert_eq!(selected.id, "event-5");
+        assert_eq!(selected.power, Some(1789.5));
+        assert_eq!(selected.power_delta, Some(0.0));
+
+        let connection = open_database(directory.path()).unwrap();
+        let untracked: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM history_records
+                 WHERE account_id = ?1 AND overlay_track_key = ?2",
+                params!["account", NO_OVERLAY_TRACK],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(untracked, 0);
+        let migrated: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM history_migrations
+                 WHERE account_id = ?1 AND migration_key = ?2 AND version = 1",
+                params!["account", RATING_RUN_MIGRATION],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(migrated, 1);
     }
 
     #[test]
