@@ -22,6 +22,8 @@
   box-sizing: border-box;
 }
 
+/* 两种卡片共用一个背景色。在 OBS 浏览器源的“自定义 CSS”里加一行就能改：
+   :root { --obs-card-background: rgba(0, 0, 0, .6); } */
 .overlay-card {
   container-type: inline-size;
   display: flex;
@@ -33,10 +35,10 @@
   min-height: 0;
   max-height: none;
   overflow: hidden;
-  padding: 8px 10px 8px;
+  padding: 10px 10px 6px;
   border-radius: 6px;
   color: #f5f5f2;
-  background: #383838;
+  background: var(--obs-card-background, #383838);
   font-family: "DFP GBZY7", Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
 }
 
@@ -164,26 +166,25 @@
   margin-bottom: 8px;
 }
 
+/* 没有战力时，变化值的横线和战力的横线放在同一高度。 */
 .overlay-card__power-delta.is-placeholder {
   font-size: 16px;
-  margin-bottom: 2px;
+  margin-bottom: 15px;
 }
 
 .salmon-run-card {
   --salmon-run-secondary-font-size: 12px;
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
-  gap: 4px;
+  justify-content: space-between;
   width: var(--obs-card-width);
   height: var(--obs-card-height);
   min-width: 0;
   overflow: hidden;
-  padding: 7px;
-  border: 1px solid #50544b;
-  border-radius: 7px;
-  color: #f4f0e6;
-  background: #22231f;
+  padding: 10px 10px 6px;
+  border-radius: 6px;
+  color: #f5f5f2;
+  background: var(--obs-card-background, #383838);
   font-family: "DFP GBZY7", sans-serif;
   line-height: 1;
 }
@@ -240,8 +241,8 @@
 
 .salmon-run-card__scale-icon {
   display: block;
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   object-fit: contain;
 }
 
@@ -253,16 +254,15 @@
   white-space: nowrap;
 }
 
+/* 下面两行直接参与卡片的上下分布，三行间距相等。 */
 .salmon-run-card__bottom {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0;
+  display: contents;
 }
 
 .salmon-run-card__stats {
   justify-content: space-between;
   gap: 4px;
-  height: 20px;
+  height: 18px;
   white-space: nowrap;
 }
 
@@ -274,33 +274,22 @@
   white-space: nowrap;
 }
 
+/* 图标统一 18px 高，宽度按各自的原始比例。 */
 .salmon-run-card__stats-icon {
   display: block;
-  height: 16px;
-  width: 22px;
-  margin-right: 0;
+  flex: 0 0 auto;
+  width: 25px;
+  height: 18px;
   object-fit: contain;
 }
 
 .salmon-run-card__stats-icon[data-salmon-stat-icon="golden-egg"] {
   width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  object-fit: contain;
 }
 
-.salmon-run-card__stats-icon[data-salmon-stat-icon="rescue"] {
-  width: 32px;
-  height: 16px;
-  flex: 0 0 auto;
-  object-fit: contain;
-}
-
+.salmon-run-card__stats-icon[data-salmon-stat-icon="rescue"],
 .salmon-run-card__stats-icon[data-salmon-stat-icon="rescued"] {
-  width: 32px;
-  height: 16px;
-  flex: 0 0 auto;
-  object-fit: contain;
+  width: 36px;
 }
 
 .salmon-run-card__stats-item b,
@@ -326,7 +315,7 @@
 .salmon-run-card__details {
   justify-content: flex-start;
   gap: 5px;
-  height: 20px;
+  height: 18px;
   white-space: nowrap;
 }
 
@@ -349,8 +338,8 @@
   position: relative;
   display: block;
   flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   overflow: hidden;
   background: #000;
   -webkit-mask-image: var(--boss-image);
@@ -495,22 +484,6 @@
   font-size: clamp(10px, 2.4cqi, 13px);
   line-height: 1;
   letter-spacing: .04em;
-}
-
-.is-placeholder {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-weight: 600;
-  letter-spacing: 0;
-}
-
-.overlay-card__power-value.is-placeholder {
-  font-size: 34px;
-  margin-bottom: 8px;
-}
-
-.overlay-card__power-delta.is-placeholder {
-  font-size: 16px;
-  margin-bottom: 2px;
 }
 
 .empty {

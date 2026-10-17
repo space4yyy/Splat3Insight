@@ -1,3 +1,4 @@
+use crate::dashboard_store;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -28,6 +29,9 @@ const NO_OVERLAY_TRACK: &str = "none";
 const CACHED_POWER_TRACK_KEY: &str = "__s3w_overlay_power_track_v1";
 const EVENT_POWER_MIGRATION: &str = "event-power-fields-v1";
 const MODE_DELTA_MIGRATION: &str = "mode-level-deltas-v1";
+/// 一般打工每期 40 小时。往前找同一期工时只看这个范围，既能覆盖整期，
+/// 又不会把隔了几周、恰好场地和武器都相同的另一期算进来。
+const COOP_ROTATION_MAX_HOURS: i64 = 48;
 
 fn database_path(history_dir: &Path) -> PathBuf {
     history_dir.join(DATABASE_FILE)
@@ -44,7 +48,7 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
-fn open_database(history_dir: &Path) -> Result<Connection, String> {
+pub(crate) fn open_database(history_dir: &Path) -> Result<Connection, String> {
     fs::create_dir_all(history_dir).map_err(|error| format!("创建历史数据目录失败：{error}"))?;
     let connection = Connection::open(database_path(history_dir))
         .map_err(|error| format!("打开历史数据库失败：{error}"))?;
@@ -131,6 +135,7 @@ fn open_database(history_dir: &Path) -> Result<Connection, String> {
                  ON history_records(account_id, overlay_track_key, played_time DESC);",
         )
         .map_err(|error| format!("创建卡片历史索引失败：{error}"))?;
+    dashboard_store::ensure_schema(&connection)?;
     Ok(connection)
 }
 
@@ -507,10 +512,10 @@ fn load_salmon_run_card(
         .get("stage")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    let latest_time_is_valid = latest_played_time
+    let latest_time = latest_played_time
         .as_deref()
-        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-        .is_some();
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok());
+    let rotation_key = coop_rotation_key(&latest_record, &latest_raw);
 
     let mut gold_scale = 0;
     let mut silver_scale = 0;
@@ -523,7 +528,7 @@ fn load_salmon_run_card(
     let mut boss_encounter_count = 0;
     let mut boss_undefeated_count = 0;
 
-    let mut accumulate_record = |record: &Value, raw_bytes: &[u8], encoding: &str| {
+    let mut accumulate_record = |record: &Value, raw: &Value| {
         let clear_waves = record.get("clear_waves").and_then(Value::as_i64);
         if let Some(clear_waves) = clear_waves {
             if clear_waves >= 3 {
@@ -533,51 +538,52 @@ fn load_salmon_run_card(
             }
         }
 
-        if let Ok(raw) = decode_raw_json(raw_bytes, encoding) {
-            if let Some(scale) = raw.get("scale") {
-                add_scale(scale, "gold", &mut gold_scale, &mut has_gold_scale);
-                add_scale(scale, "silver", &mut silver_scale, &mut has_silver_scale);
-                add_scale(scale, "bronze", &mut bronze_scale, &mut has_bronze_scale);
-            }
-            if let Some(boss_enemy_id) = boss_enemy_id {
-                let matching_boss =
-                    raw.pointer("/boss/coopEnemyId").and_then(Value::as_i64) == Some(boss_enemy_id);
-                if matching_boss {
-                    if let Some(boss_result) =
-                        raw.get("bossResult").filter(|value| value.is_object())
-                    {
-                        boss_encounter_count += 1;
-                        if boss_result.get("hasDefeatBoss").and_then(Value::as_bool) == Some(false)
-                        {
-                            boss_undefeated_count += 1;
-                        }
+        if let Some(scale) = raw.get("scale") {
+            add_scale(scale, "gold", &mut gold_scale, &mut has_gold_scale);
+            add_scale(scale, "silver", &mut silver_scale, &mut has_silver_scale);
+            add_scale(scale, "bronze", &mut bronze_scale, &mut has_bronze_scale);
+        }
+        if let Some(boss_enemy_id) = boss_enemy_id {
+            let matching_boss =
+                raw.pointer("/boss/coopEnemyId").and_then(Value::as_i64) == Some(boss_enemy_id);
+            if matching_boss {
+                if let Some(boss_result) = raw.get("bossResult").filter(|value| value.is_object()) {
+                    boss_encounter_count += 1;
+                    if boss_result.get("hasDefeatBoss").and_then(Value::as_bool) == Some(false) {
+                        boss_undefeated_count += 1;
                     }
                 }
             }
         }
     };
-    accumulate_record(&latest_record, &latest_raw_bytes, &latest_encoding);
+    accumulate_record(&latest_record, &latest_raw);
 
-    if stage.is_some() && latest_time_is_valid {
+    // 同一期工：一般打工里场地和这期发放的武器都相同，并且在一期的时长之内。
+    // 中间穿插的大型跑、团队打工或私人打工直接跳过，不会把这一期截断。
+    if let (Some(latest_time), Some(rotation_key)) = (latest_time, rotation_key) {
+        let window_start = latest_time - chrono::Duration::hours(COOP_ROTATION_MAX_HOURS);
         for record_row in rows {
             let (played_time, record_json, raw_bytes, encoding) =
                 record_row.map_err(|error| format!("读取鲑鱼跑卡片行失败：{error}"))?;
-            let Some(played_time) = played_time else {
-                break;
+            let Some(played_at) = played_time
+                .as_deref()
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+            else {
+                continue;
             };
-            if chrono::DateTime::parse_from_rfc3339(&played_time).is_err() {
+            if played_at < window_start {
                 break;
             }
-            let record: Value = match serde_json::from_str(&record_json) {
-                Ok(record) => record,
-                Err(_) => break,
+            let Ok(record) = serde_json::from_str::<Value>(&record_json) else {
+                continue;
             };
-            if record.get("rule").and_then(Value::as_str) != Some("REGULAR")
-                || record.get("stage").and_then(Value::as_str) != stage.as_deref()
-            {
-                break;
+            if record.get("rule").and_then(Value::as_str) != Some("REGULAR") {
+                continue;
             }
-            accumulate_record(&record, &raw_bytes, &encoding);
+            let raw = decode_raw_json(&raw_bytes, &encoding).unwrap_or(Value::Null);
+            if coop_rotation_key(&record, &raw).as_deref() == Some(rotation_key.as_str()) {
+                accumulate_record(&record, &raw);
+            }
         }
     }
 
@@ -641,6 +647,32 @@ fn load_salmon_run_card(
         grade_point,
         danger_rate,
     }))
+}
+
+/// 一期工的标识：场地加上这一期发放的四把武器（随机武器期是问号武器，同样固定）。
+/// 打工记录固定按英文拉取，武器名可以直接比较；没有武器信息时只比较场地。
+fn coop_rotation_key(record: &Value, raw: &Value) -> Option<String> {
+    let stage = raw
+        .pointer("/coopStage/id")
+        .and_then(Value::as_str)
+        .or_else(|| record.get("stage").and_then(Value::as_str))?;
+    let weapons = raw
+        .get("weapons")
+        .and_then(Value::as_array)
+        .map(|weapons| {
+            weapons
+                .iter()
+                .filter_map(|weapon| {
+                    weapon
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .or_else(|| weapon.pointer("/image/url").and_then(Value::as_str))
+                })
+                .collect::<Vec<_>>()
+                .join("\u{1f}")
+        })
+        .unwrap_or_default();
+    Some(format!("{stage}\u{1e}{weapons}"))
 }
 
 fn add_scale(scale: &Value, key: &str, total: &mut i64, found: &mut bool) {
@@ -909,6 +941,7 @@ pub(crate) fn save_cache(
             &battle.raw,
             track_key.as_deref().unwrap_or(NO_OVERLAY_TRACK),
         )?;
+        dashboard_store::upsert_battle(&transaction, account_id, &battle.record, &battle.raw)?;
     }
     for item in &cache.coop {
         upsert_record(
@@ -921,6 +954,7 @@ pub(crate) fn save_cache(
             &item.raw,
             NO_OVERLAY_TRACK,
         )?;
+        dashboard_store::upsert_coop(&transaction, account_id, &item.record, &item.raw)?;
     }
     transaction
         .execute(
@@ -973,6 +1007,12 @@ impl HistoryRecordWriter {
                     &record.raw,
                     track_key.as_deref().unwrap_or(NO_OVERLAY_TRACK),
                 )?;
+                dashboard_store::upsert_battle(
+                    &transaction,
+                    account_id,
+                    &record.record,
+                    &record.raw,
+                )?;
                 false
             }
             HistoryFetchedRecord::Coop(record) => {
@@ -985,6 +1025,12 @@ impl HistoryRecordWriter {
                     &record.record,
                     &record.raw,
                     NO_OVERLAY_TRACK,
+                )?;
+                dashboard_store::upsert_coop(
+                    &transaction,
+                    account_id,
+                    &record.record,
+                    &record.raw,
                 )?;
                 false
             }
@@ -1069,6 +1115,7 @@ fn save_x_battle_settlement(
             params![account_id, record_id, updated_json],
         )
         .map_err(|error| format!("更新 X 赛结算分数失败：{error}"))?;
+    dashboard_store::update_battle_power(transaction, account_id, record_id, power_after)?;
     Ok(true)
 }
 
@@ -1335,15 +1382,11 @@ pub(crate) fn delete_account(history_dir: &Path, account_id: &str) -> Result<(),
         .map_err(|error| format!("提交账号历史删除事务失败：{error}"))?;
 
     remove_file_if_present(&legacy_path(history_dir, account_id), "旧历史文件")?;
+    // 导出文件是用户自己的备份，删除账号数据时保留。
     remove_matching_files(
         &history_dir.join(LEGACY_DIRECTORY),
         &format!("{account_id}-"),
         "旧历史归档",
-    )?;
-    remove_matching_files(
-        &history_dir.join(EXPORT_DIRECTORY),
-        &format!("{account_id}-"),
-        "历史导出文件",
     )
 }
 
@@ -1448,7 +1491,7 @@ fn overlay_cache_raw(track_key: &str) -> Value {
     Value::Object(raw)
 }
 
-fn decode_raw_json(bytes: &[u8], encoding: &str) -> Result<Value, String> {
+pub(crate) fn decode_raw_json(bytes: &[u8], encoding: &str) -> Result<Value, String> {
     let decoded = if encoding == "gzip" {
         let mut decoder = GzDecoder::new(bytes);
         let mut decoded = Vec::new();
@@ -1724,7 +1767,7 @@ mod tests {
     }
 
     #[test]
-    fn deletes_account_records_and_export_files() {
+    fn deletes_account_records_but_keeps_export_files() {
         let directory = tempdir().unwrap();
         save_cache(directory.path(), "account", &sample_cache()).unwrap();
         HistoryRecordWriter::open(directory.path())
@@ -1794,7 +1837,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(extension_count, 0);
-        assert!(!export_path.exists());
+        assert!(export_path.exists());
         assert!(!legacy_path(directory.path(), "account").exists());
         assert!(!legacy_archive.exists());
     }
@@ -2139,6 +2182,86 @@ mod tests {
         assert_eq!(salmon.failure_count, 1);
         assert_eq!(salmon.grade_point, Some(440));
         assert_eq!(salmon.danger_rate, Some(2.49));
+    }
+
+    #[test]
+    fn salmon_run_rotation_matches_stage_and_supplied_weapons_across_other_modes() {
+        let directory = tempdir().unwrap();
+        let mut cache = sample_cache();
+        let rotation_weapons = json!([
+            { "name": "Splattershot" },
+            { "name": "Slosher" },
+            { "name": "Splat Roller" },
+            { "name": "E-liter 4K" }
+        ]);
+        let shift = |id: &str, time: &str, rule: &str, weapons: &Value, gold: i64| {
+            let mut coop = sample_coop(id, time.to_owned());
+            coop.record.rule = Some(rule.to_owned());
+            coop.record.stage = Some("Spawning Grounds".to_owned());
+            coop.record.clear_waves = Some(3);
+            coop.raw = json!({
+                "coopStage": { "id": "Q29vcFN0YWdlLTE=" },
+                "weapons": weapons,
+                "scale": { "gold": gold, "silver": 0, "bronze": 0 }
+            });
+            coop
+        };
+        let other_weapons = json!([{ "name": "Random" }, { "name": "Random" }]);
+        cache.coop = vec![
+            shift(
+                "latest",
+                "2026-09-22T10:00:00Z",
+                "REGULAR",
+                &rotation_weapons,
+                1,
+            ),
+            // 大型跑和私人打工夹在中间，不再把这一期截断。
+            shift(
+                "big-run",
+                "2026-09-22T09:00:00Z",
+                "BIG_RUN",
+                &other_weapons,
+                100,
+            ),
+            shift(
+                "same-1",
+                "2026-09-22T08:00:00Z",
+                "REGULAR",
+                &rotation_weapons,
+                2,
+            ),
+            shift(
+                "private",
+                "2026-09-22T07:00:00Z",
+                "REGULAR",
+                &other_weapons,
+                100,
+            ),
+            shift(
+                "same-2",
+                "2026-09-21T20:00:00Z",
+                "REGULAR",
+                &rotation_weapons,
+                4,
+            ),
+            // 上一期恰好也是同一张场地，但发放的武器不同。
+            shift(
+                "previous",
+                "2026-09-21T10:00:00Z",
+                "REGULAR",
+                &other_weapons,
+                100,
+            ),
+        ];
+        save_cache(directory.path(), "account", &cache).unwrap();
+
+        let salmon = load_overlay_state(directory.path(), "account")
+            .unwrap()
+            .salmon_run
+            .unwrap();
+        assert_eq!(salmon.gold_scale, Some(7));
+        assert_eq!(salmon.clear_count, 3);
+        assert_eq!(salmon.failure_count, 0);
     }
 
     #[test]

@@ -174,6 +174,96 @@
     return true;
   }
 
+  // 鲑鱼跑卡片第三行：鳞片、头目和场次在本期工里的总计。OBS 卡片和数据面板共用。
+  const SALMON_TOTALS_HTML = `
+          <div class="salmon-run-card__details">
+            <div class="salmon-run-card__scales" aria-label="鳞片总计">
+              <span class="salmon-run-card__scales-label">总计:</span>
+              <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="gold" alt="金鳞片"><b class="salmon-run-card__number" data-salmon-field="gold-scale"></b></span>
+              <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="silver" alt="银鳞片"><b class="salmon-run-card__number" data-salmon-field="silver-scale"></b></span>
+              <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="bronze" alt="铜鳞片"><b class="salmon-run-card__number" data-salmon-field="bronze-scale"></b></span>
+            </div>
+            <div class="salmon-run-card__boss" data-salmon-boss hidden>
+              <span class="salmon-run-card__boss-gauge" data-salmon-boss-gauge role="img">
+                <span class="salmon-run-card__boss-gauge-fill"></span>
+              </span>
+              <b data-salmon-field="boss-encounter-count"></b>
+              <b class="salmon-run-card__boss-undefeated" data-salmon-field="boss-undefeated-count"></b>
+            </div>
+            <div class="salmon-run-card__summary">
+              <span>场次<b data-salmon-field="total-count"></b><span class="salmon-run-card__summary-failure">(<b data-salmon-field="failure-count"></b>)</span></span>
+            </div>
+          </div>`;
+  const salmonBossIcons = Object.freeze({
+    23: { mask: 'boss1.png', color: 'boss1_color.png' },
+    24: { mask: 'boss2.png', color: 'boss2_color.png' },
+    25: { mask: 'boss3.png', color: 'boss3_color.png' },
+    30: { mask: 'boss_all.png', color: 'boss_all_color.png' },
+  });
+
+  function salmonFields(scope) {
+    return Object.fromEntries(
+      Array.from(scope.querySelectorAll('[data-salmon-field]'))
+        .map((element) => [element.dataset.salmonField, element])
+    );
+  }
+
+  function setSalmonScaleImages(scope) {
+    for (const image of scope.querySelectorAll('[data-salmon-scale]')) {
+      const kind = image.dataset.salmonScale;
+      image.src = new URL(`./images/scale-${kind}.png`, document.baseURI).href;
+    }
+  }
+
+  function fillSalmonTotals(scope, fields, data) {
+    fields['gold-scale'].textContent = `x${displayNumber(data.gold_scale)}`;
+    fields['silver-scale'].textContent = `x${displayNumber(data.silver_scale)}`;
+    fields['bronze-scale'].textContent = `x${displayNumber(data.bronze_scale)}`;
+    fields['total-count'].textContent = isNumber(data.clear_count) && isNumber(data.failure_count)
+      ? `x${displayNumber(Number(data.clear_count) + Number(data.failure_count))}`
+      : '—';
+    fields['failure-count'].textContent = displayNumber(data.failure_count);
+    const bossAsset = salmonBossIcons[Number(data.boss_enemy_id)];
+    const bossCountAvailable = isNumber(data.boss_encounter_count) && isNumber(data.boss_undefeated_count);
+    const bossWidget = scope.querySelector('[data-salmon-boss]');
+    if (bossAsset && bossCountAvailable) {
+      const gauge = scope.querySelector('[data-salmon-boss-gauge]');
+      const progress = isNumber(data.boss_progress) ? Math.max(0, Math.min(5, Number(data.boss_progress))) : 0;
+      const waveYScale = [0, 0.2, 0.4, 0.6, 0.8, 2][progress];
+      gauge.style.setProperty('--boss-image', `url("./images/${bossAsset.mask}")`);
+      gauge.style.setProperty('--boss-color-image', `url("./images/${bossAsset.color}")`);
+      gauge.style.setProperty('--boss-wave-y-scale', `${waveYScale * 100}%`);
+      gauge.dataset.bossProgress = String(progress);
+      gauge.setAttribute('aria-label', `头目出现进度 ${progress}/5`);
+      fields['boss-encounter-count'].textContent = `x${displayNumber(data.boss_encounter_count)}`;
+      fields['boss-undefeated-count'].textContent = `(${displayNumber(data.boss_undefeated_count)})`;
+      bossWidget.hidden = false;
+    } else {
+      bossWidget.hidden = true;
+    }
+  }
+
+  // 只显示第三行的总计，供数据面板的“当前打工”使用。
+  const mountedSalmonTotals = new WeakMap();
+  function updateSalmonTotals(root, state) {
+    const data = state?.salmon_run;
+    let refs = mountedSalmonTotals.get(root);
+    if (!data) {
+      if (refs) refs.scope.hidden = true;
+      return false;
+    }
+    if (!refs) {
+      root.innerHTML = SALMON_TOTALS_HTML;
+      const scope = root.querySelector('.salmon-run-card__details');
+      setSalmonScaleImages(scope);
+      refs = { scope, fields: salmonFields(scope) };
+      mountedSalmonTotals.set(root, refs);
+    }
+    refs.scope.hidden = false;
+    fillSalmonTotals(refs.scope, refs.fields, data);
+    return true;
+  }
+
   function createSalmonRunCard(root) {
     root.innerHTML = `
       <section class="salmon-run-card">
@@ -192,36 +282,13 @@
             <span class="salmon-run-card__stats-item"><img class="salmon-run-card__stats-icon" data-salmon-stat-icon="rescue" alt="救援"><b data-salmon-field="rescue-count"></b></span>
             <span class="salmon-run-card__stats-item"><img class="salmon-run-card__stats-icon" data-salmon-stat-icon="rescued" alt="被救"><b data-salmon-field="rescued-count"></b></span>
           </div>
-          <div class="salmon-run-card__details">
-            <div class="salmon-run-card__scales" aria-label="鳞片总计">
-              <span class="salmon-run-card__scales-label">总计:</span>
-              <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="gold" alt="金鳞片"><b class="salmon-run-card__number" data-salmon-field="gold-scale"></b></span>
-              <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="silver" alt="银鳞片"><b class="salmon-run-card__number" data-salmon-field="silver-scale"></b></span>
-              <span class="salmon-run-card__scale"><img class="salmon-run-card__scale-icon" data-salmon-scale="bronze" alt="铜鳞片"><b class="salmon-run-card__number" data-salmon-field="bronze-scale"></b></span>
-            </div>
-            <div class="salmon-run-card__boss" data-salmon-boss hidden>
-              <span class="salmon-run-card__boss-gauge" data-salmon-boss-gauge role="img">
-                <span class="salmon-run-card__boss-gauge-fill"></span>
-              </span>
-              <b data-salmon-field="boss-encounter-count"></b>
-              <b class="salmon-run-card__boss-undefeated" data-salmon-field="boss-undefeated-count"></b>
-            </div>
-            <div class="salmon-run-card__summary">
-              <span>场次<b data-salmon-field="total-count"></b><span class="salmon-run-card__summary-failure">(<b data-salmon-field="failure-count"></b>)</span></span>
-            </div>
-          </div>
+${SALMON_TOTALS_HTML}
         </div>
       </section>`;
 
     const card = root.querySelector('.salmon-run-card');
-    const fields = Object.fromEntries(
-      Array.from(card.querySelectorAll('[data-salmon-field]'))
-        .map((element) => [element.dataset.salmonField, element])
-    );
-    for (const image of card.querySelectorAll('[data-salmon-scale]')) {
-      const kind = image.dataset.salmonScale;
-      image.src = new URL(`./images/scale-${kind}.png`, document.baseURI).href;
-    }
+    const fields = salmonFields(card);
+    setSalmonScaleImages(card);
     for (const image of card.querySelectorAll('[data-salmon-stat-icon]')) {
       const kind = image.dataset.salmonStatIcon;
       const filename = kind === 'golden-egg' ? 'gold-ikura.svg' : 'ikura.svg';
@@ -256,42 +323,12 @@
 
     const stage = String(data.stage ?? '').trim();
     refs.fields.stage.textContent = salmonStageLabels[stage] || stage || '—';
-    refs.fields['gold-scale'].textContent = `x${displayNumber(data.gold_scale)}`;
-    refs.fields['silver-scale'].textContent = `x${displayNumber(data.silver_scale)}`;
-    refs.fields['bronze-scale'].textContent = `x${displayNumber(data.bronze_scale)}`;
     refs.fields['defeat-enemy-count'].textContent = `x${displayNumber(data.defeat_enemy_count)}`;
     refs.fields['golden-egg-count'].textContent = `x${displayNumber(data.golden_egg_count)}`;
     refs.fields['power-egg-count'].textContent = `x${displayNumber(data.power_egg_count)}`;
     refs.fields['rescued-count'].textContent = `x${displayNumber(data.rescued_count)}`;
     refs.fields['rescue-count'].textContent = `x${displayNumber(data.rescue_count)}`;
-    refs.fields['total-count'].textContent = isNumber(data.clear_count) && isNumber(data.failure_count)
-      ? `x${displayNumber(Number(data.clear_count) + Number(data.failure_count))}`
-      : '—';
-    refs.fields['failure-count'].textContent = displayNumber(data.failure_count);
-    const bossIcons = {
-      23: { mask: 'boss1.png', color: 'boss1_color.png' },
-      24: { mask: 'boss2.png', color: 'boss2_color.png' },
-      25: { mask: 'boss3.png', color: 'boss3_color.png' },
-      30: { mask: 'boss_all.png', color: 'boss_all_color.png' },
-    };
-    const bossAsset = bossIcons[Number(data.boss_enemy_id)];
-    const bossCountAvailable = isNumber(data.boss_encounter_count) && isNumber(data.boss_undefeated_count);
-    const bossWidget = refs.card.querySelector('[data-salmon-boss]');
-    if (bossAsset && bossCountAvailable) {
-      const gauge = refs.card.querySelector('[data-salmon-boss-gauge]');
-      const progress = isNumber(data.boss_progress) ? Math.max(0, Math.min(5, Number(data.boss_progress))) : 0;
-      const waveYScale = [0, 0.2, 0.4, 0.6, 0.8, 2][progress];
-      gauge.style.setProperty('--boss-image', `url("./images/${bossAsset.mask}")`);
-      gauge.style.setProperty('--boss-color-image', `url("./images/${bossAsset.color}")`);
-      gauge.style.setProperty('--boss-wave-y-scale', `${waveYScale * 100}%`);
-      gauge.dataset.bossProgress = String(progress);
-      gauge.setAttribute('aria-label', `头目出现进度 ${progress}/5`);
-      refs.fields['boss-encounter-count'].textContent = `x${displayNumber(data.boss_encounter_count)}`;
-      refs.fields['boss-undefeated-count'].textContent = `(${displayNumber(data.boss_undefeated_count)})`;
-      bossWidget.hidden = false;
-    } else {
-      bossWidget.hidden = true;
-    }
+    fillSalmonTotals(refs.card, refs.fields, data);
     const rawGrade = String(data.grade ?? '').trim();
     refs.fields.grade.textContent = salmonGradeLabels[rawGrade] || rawGrade;
     refs.fields['grade-point'].textContent = isNumber(data.grade_point) ? displayNumber(data.grade_point) : '';
@@ -315,5 +352,17 @@
     return type;
   }
 
-  window.Splat3OverlayCard = Object.freeze({ update, updateAuto, updateSalmonRun });
+  // 组合地址：在所选类型里取最近一条记录对应的卡片。
+  // states 的键是地址参数（xmatch、bankaramatch、salmonrun），值是对应的卡片状态。
+  function newestCardType(states) {
+    let newest = null;
+    for (const [type, state] of Object.entries(states || {})) {
+      const playedTime = type === 'salmonrun' ? state?.salmon_run?.played_time : state?.selected?.played_time;
+      const time = Date.parse(playedTime ?? '');
+      if (Number.isFinite(time) && (!newest || time > newest.time)) newest = { type, time };
+    }
+    return newest?.type ?? null;
+  }
+
+  window.Splat3OverlayCard = Object.freeze({ update, updateAuto, updateSalmonRun, updateSalmonTotals, newestCardType });
 })();

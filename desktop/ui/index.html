@@ -5,149 +5,291 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Splat3 Insight</title>
     <link rel="stylesheet" href="./overlay-card.css" />
-    <style>
-      :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #111117; color: #f5f5f2; }
-      * { box-sizing: border-box; }
-      body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 10% 0%, #2b214a 0, #111117 48%); }
-      main { width: min(960px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 32px; }
-      h1 { margin: 0; font-size: 30px; letter-spacing: .02em; }
-      p { color: #aaa8b5; line-height: 1.5; }
-      .panel { margin-top: 18px; padding: 20px 22px; border: 1px solid #393746; border-radius: 18px; background: #1b1a23d9; }
-      button { border: 0; border-radius: 999px; padding: 12px 18px; font: inherit; font-weight: 700; color: #171716; background: #ecff20; cursor: pointer; }
-      button.secondary { color: #f5f5f2; background: #34333d; }
-      button.danger { color: #fff; background: #8e2f44; }
-      #login { min-height: 34px; padding: 8px 14px; font-size: 14px; line-height: 1; }
-      button:disabled { opacity: .55; cursor: wait; }
-      .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-      .overlay-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
-      .overlay-primary-action { min-height: 30px; padding: 7px 13px; font-size: 12px; line-height: 1; }
-      .account { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: clamp(8px, calc(6.25vw - 12px), 18px); padding: 14px 0; border-bottom: 1px solid #35343e; }
-      .account:last-child { border-bottom: 0; }
-      .account-main { display: flex; align-items: baseline; min-width: 0; gap: clamp(6px, calc(2px + 1.67vw), 10px); }
-      .account-name { min-width: 0; overflow: hidden; font-size: clamp(14px, calc(11px + 1.25vw), 17px); text-overflow: ellipsis; white-space: nowrap; }
-      .account-history { min-width: 0; overflow: hidden; font-size: clamp(11px, calc(7.6px + 1.2vw), 13.33px); text-overflow: ellipsis; white-space: nowrap; }
-      .account-actions { display: flex; align-items: center; justify-content: flex-end; gap: clamp(4px, calc(1.5px + 1.35vw), 8px); flex-wrap: nowrap; min-width: max-content; }
-      .account-actions button, .account-actions .badge { padding: clamp(6px, calc(2px + 1.25vw), 8px) clamp(8px, calc(2px + 2.5vw), 14px); font-size: clamp(11px, calc(9px + .8333vw), 13px); }
-      .account-actions .badge { min-height: clamp(26px, calc(2px + 6.667vw), 34px); }
-      .account small, .status { color: #9d9aa8; }
-      .badge { display: inline-flex; align-items: center; min-height: 34px; color: #111; background: #ecff20; border-radius: 999px; padding: 8px 14px; font-size: 13px; line-height: 1; font-weight: 700; }
-      .badge-secondary { color: #f5f5f2; background: #4b4857; }
-      #message { height: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 22px; }
-      #message { margin: 14px 0 0; color: #bdbbc7; }
-      .account-section-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
-      #sync-status { display: inline-flex; align-items: center; color: #9d9aa8; font-size: 11px; line-height: 1; white-space: nowrap; }
-      #sync-status[hidden] { display: none; }
-      #sync-status.syncing { color: #ecff20; }
-      #sync-status.syncing::before { width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: currentColor; content: ""; }
-      #sync-status.error { color: #ff668a; }
-      .overlay-heading { font-size: 14px; }
-      .overlay-service-state { color: #9d9aa8; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
-      .overlay-service-state.running { color: #62e6ad; }
-      .overlay-service-state.stopped { color: #aaa8b5; }
-      .obs-card-picker { display: grid; gap: 12px; margin-top: 12px; }
-      .obs-card-picker__hint { margin: 0; color: #aaa8b5; font-size: 12px; }
-      .obs-card-options { display: flex; flex-wrap: wrap; gap: 8px; }
-      .obs-card-option { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 6px 10px; border: 1px solid #4b4857; border-radius: 9px; color: #d8d6df; background: #23222b; font-size: 13px; cursor: pointer; user-select: none; }
-      .obs-card-option.selected { border-color: #ecff20; color: #f5f5f2; background: #30301f; }
-      .obs-card-option input { width: 14px; height: 14px; margin: 0; accent-color: #ecff20; }
-      .obs-card-urls { display: grid; gap: 6px; }
-      .obs-card-url { display: grid; grid-template-columns: 78px minmax(0, 1fr); align-items: center; gap: 8px; padding-top: 7px; border-top: 1px solid #35343e; }
-      .obs-card-url__name { color: #c7c4d0; font-size: 12px; white-space: nowrap; }
-      .obs-card-url .overlay-url-row { min-width: 0; }
-      .obs-card-empty { padding: 8px 0; color: #8e8b9a; font-size: 12px; }
-      .obs-card-previews { display: grid; gap: 10px; }
-      .obs-card-preview { min-width: 0; padding-top: 9px; border-top: 1px solid #35343e; }
-      .obs-card-preview__heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
-      .obs-card-preview-title { color: #c7c4d0; font-size: 12px; font-weight: 600; }
-      .obs-card-preview__size { color: #8e8b9a; font-size: 11px; white-space: nowrap; }
-      .error { color: #ff668a !important; }
-      .auth-note { margin: 8px 0 0; font-size: 12px; color: #8e8b9a; }
-      #paste-panel { display: none; margin-top: 18px; }
-      #paste-panel.visible { display: block; }
-      .auth-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
-      .auth-actions button { padding: 10px 14px; font-size: 13px; }
-      textarea { width: 100%; min-height: 92px; resize: vertical; border: 1px solid #4b4857; border-radius: 12px; padding: 10px; color: #f5f5f2; background: #111117; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
-      .paste-help { margin: 8px 0 10px; font-size: 13px; color: #9d9aa8; }
-      .overlay-url-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 10px; min-height: 20px; }
-      .overlay-url-row code { min-width: 0; flex: 1; overflow: hidden; color: #aaa8b5; font-size: 13px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
-      .overlay-url-row button { flex: 0 0 auto; min-height: 26px; padding: 5px 10px; font-size: 12px; line-height: 1; }
-      .overlay-url-row button.copied { color: #10251d; background: #62e6ad; }
-      .obs-help { margin: 6px 0 0; color: #aaa8b5; font-size: 13px; line-height: 20px; }
-      .overlay-preview { min-width: 0; margin-top: 0; padding: 4px 0 2px; overflow: hidden; }
-      .overlay-preview__viewport { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; width: 100%; }
-      .overlay-preview__scale { width: max-content; transform-origin: top center; }
-      .overlay-preview__scale > .overlay-card { --obs-card-width: 320px; --obs-card-height: 80px; border-radius: 6px; }
-      .overlay-preview__scale > .salmon-run-card { --obs-card-width: 320px; --obs-card-height: 80px; border-radius: 6px; }
-      .overlay-empty { padding: 24px 0; color: #9d9aa8; text-align: center; }
-      #background-close-prompt { width: min(420px, calc(100% - 32px)); border: 1px solid #4b4857; border-radius: 18px; padding: 22px; color: #f5f5f2; background: #1b1a23; box-shadow: 0 24px 80px #0009; }
-      #background-close-prompt::backdrop { background: #09090dbb; }
-      #background-close-prompt h2 { margin: 0; font-size: 20px; }
-      #background-close-prompt p { margin: 12px 0 20px; font-size: 14px; }
-      .close-prompt-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
-      .close-prompt-actions button { padding: 9px 13px; font-size: 13px; }
-      @media (max-width: 700px) {
-        main { width: calc(100% - 20px); padding-top: 20px; }
-        .panel { padding: 16px; }
-        .obs-card-url { grid-template-columns: 68px minmax(0, 1fr); }
-      }
-    </style>
+    <link rel="stylesheet" href="./app.css" />
+    <script>
+      try {
+        const theme = localStorage.getItem('splat3-theme');
+        if (theme === 'light' || theme === 'dark') document.documentElement.setAttribute('data-theme', theme);
+      } catch {}
+    </script>
   </head>
   <body>
-    <main>
-      <h1>Splat3 Insight</h1>
-      <section class="panel">
-        <div class="row">
-          <div class="account-section-title">
-            <strong>账号</strong>
-            <span id="sync-status" role="status" aria-live="polite" hidden></span>
-          </div>
-          <button id="login">添加账号</button>
+    <div class="app">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand"><span class="brand-splat">Splat3</span> <b>Insight</b><small>斯普拉遁 3 数据面板</small></div>
+        <div class="account-switcher">
+          <button type="button" class="account-current" id="account-button" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu"></button>
+          <div class="account-menu" id="account-menu" role="menu" aria-label="切换账号" hidden></div>
         </div>
-        <div id="paste-panel">
-          <p class="paste-help">在浏览器登录后，右键“选择此人”按钮，复制链接地址并粘贴到这里。</p>
-          <textarea id="login-link" autocomplete="off" spellcheck="false" placeholder="粘贴 Nintendo 账号选择链接"></textarea>
-          <div class="auth-actions">
-            <button id="cancel-login" class="secondary" type="button">取消</button>
-            <button id="authenticate" type="button">开始认证</button>
-          </div>
-        </div>
-        <div id="message" class="status">正在读取账号列表…</div>
-        <div id="accounts"></div>
-      </section>
-      <section class="panel">
-        <div class="row">
-          <div class="account-section-title">
-            <strong class="overlay-heading">OBS 卡片 状态</strong>
-            <span id="overlay-service-state" class="overlay-service-state stopped">已停止</span>
-          </div>
-          <div class="overlay-actions">
-            <button id="start-overlay-service" class="overlay-primary-action" hidden>启动服务</button>
-            <button id="stop-overlay-service" class="overlay-primary-action" hidden>停止服务</button>
+        <nav class="nav" id="nav">
+          <div class="nav-label">数据分析</div>
+          <button type="button" data-view="overview" aria-current="page">总览</button>
+          <div class="nav-label">附加功能</div>
+          <button type="button" data-view="obs">其他工具</button>
+          <button type="button" data-view="accounts">账号管理</button>
+        </nav>
+        <div class="theme-switch">
+          <span>外观</span>
+          <div class="segmented small" id="theme-switch" role="group" aria-label="外观">
+            <button type="button" data-theme-choice="system" aria-pressed="true" title="跟随系统">系统</button>
+            <button type="button" data-theme-choice="light" aria-pressed="false">浅色</button>
+            <button type="button" data-theme-choice="dark" aria-pressed="false">深色</button>
           </div>
         </div>
-        <div class="obs-card-picker">
-          <p class="obs-card-picker__hint">自动与指定类型互斥，指定类型可多选。</p>
-          <div id="obs-card-options" class="obs-card-options" role="group" aria-label="OBS 卡片类型">
-            <label class="obs-card-option selected"><input type="checkbox" value="overlay" data-obs-card-option checked><span>自动</span></label>
-            <label class="obs-card-option"><input type="checkbox" value="bankara-match" data-obs-card-option><span>蛮颓比赛</span></label>
-            <label class="obs-card-option"><input type="checkbox" value="x-match" data-obs-card-option><span>X比赛</span></label>
-            <label class="obs-card-option"><input type="checkbox" value="salmon-run" data-obs-card-option><span>鲑鱼跑</span></label>
-          </div>
-          <div id="obs-card-urls" class="obs-card-urls" aria-live="polite"></div>
-          <div id="obs-card-previews" class="obs-card-previews"></div>
+        <div class="sidebar-foot">
+          <div id="sidebar-sync"></div>
+          <div id="sidebar-obs"></div>
         </div>
-      </section>
-    </main>
-    <dialog id="background-close-prompt" aria-labelledby="background-close-title">
+      </aside>
+
+      <div class="main">
+        <header class="topbar">
+          <div>
+            <h1 class="page-title" id="page-title">总览</h1>
+            <p class="page-sub" id="page-sub"></p>
+          </div>
+          <div class="filters" id="filters" aria-label="筛选">
+            <div class="segmented" id="range-filter" role="group" aria-label="时间范围">
+              <button type="button" data-range="7d" aria-pressed="false">近 7 天</button>
+              <button type="button" data-range="30d" aria-pressed="true">近 30 天</button>
+              <button type="button" data-range="season" aria-pressed="false">本赛季</button>
+              <button type="button" data-range="all" aria-pressed="false">全部</button>
+            </div>
+            <div class="segmented" id="mode-filter" role="group" aria-label="模式"></div>
+          </div>
+        </header>
+
+        <section class="view" id="view-overview" aria-label="总览">
+          <div class="overview-status" id="overview-status" hidden></div>
+          <div class="view" id="overview-content" hidden>
+            <div class="kpis" id="kpis"></div>
+            <div class="grid" id="overview-grid">
+              <article class="card span-7" data-card="time">
+                <div class="card-head">
+                  <div>
+                    <h2 class="card-title">游戏时长</h2>
+                    <p class="card-sub" id="time-sub">对战按每场对局时长累加，鲑鱼跑按波次估算</p>
+                  </div>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="time">查看表格</button></div>
+                </div>
+                <div class="time-stats" id="time-stats"></div>
+                <div class="legend" id="time-legend"></div>
+                <div class="chart" id="time-chart"></div>
+              </article>
+
+              <article class="card span-5" data-battle-only>
+                <div class="card-head">
+                  <div>
+                    <h2 class="card-title">模式分布</h2>
+                    <p class="card-sub">场次占比与各模式表现</p>
+                  </div>
+                </div>
+                <div class="chart" id="mode-bar"></div>
+                <div class="table-wrap" id="mode-table"></div>
+              </article>
+
+              <article class="card span-8" data-battle-only>
+                <div class="card-head">
+                  <div>
+                    <h2 class="card-title"><span class="mode-dot" style="background: var(--mode-x)" aria-hidden="true"></span>X 战力走势</h2>
+                    <p class="card-sub">每个规则单独计算；没有完成测定的规则保持为空，不借用其他规则的分数。</p>
+                  </div>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="x">查看表格</button></div>
+                </div>
+                <div class="rule-tabs" id="x-tabs" role="group" aria-label="选择规则"></div>
+                <div class="chart" id="x-chart"></div>
+              </article>
+
+              <article class="card span-4" data-card="form">
+                <div class="card-head">
+                  <div>
+                    <h2 class="card-title">近期状态</h2>
+                    <p class="card-sub" id="form-sub">最近 20 场结果与 20 场滚动胜率</p>
+                  </div>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="form">查看表格</button></div>
+                </div>
+                <div class="form-strip" id="form-strip" aria-label="最近 20 场结果"></div>
+                <div class="form-summary" id="form-summary"></div>
+                <div class="chart" id="form-chart"></div>
+              </article>
+
+              <article class="card span-7">
+                <div class="card-head">
+                  <div>
+                    <h2 class="card-title">活跃时段</h2>
+                    <p class="card-sub">按星期和小时统计（本地时间）</p>
+                  </div>
+                  <div class="card-actions">
+                    <div class="segmented small" id="heat-metric" role="group" aria-label="热力图指标">
+                      <button type="button" data-metric="count" aria-pressed="true">场次</button>
+                      <button type="button" data-metric="winrate" aria-pressed="false">胜率</button>
+                    </div>
+                    <button type="button" class="ghost" data-table-toggle="heat">查看表格</button>
+                  </div>
+                </div>
+                <div class="chart scroll-x" id="heat-chart"></div>
+                <div class="legend" id="heat-legend"></div>
+              </article>
+
+              <article class="card span-5" data-battle-only>
+                <div class="card-head">
+                  <div>
+                    <h2 class="card-title">场地 × 规则胜率</h2>
+                    <p class="card-sub">黄色高于 50%，蓝色低于 50%；少于 3 场不着色</p>
+                  </div>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="stage">查看表格</button></div>
+                </div>
+                <div class="chart" id="stage-chart"></div>
+                <div class="legend" id="stage-legend"></div>
+              </article>
+
+              <article class="card span-12" data-battle-only>
+                <div class="card-head">
+                  <div>
+                    <h2 class="card-title">常用武器</h2>
+                    <p class="card-sub">按场次排序，胜率条的竖线是 50%</p>
+                  </div>
+                </div>
+                <div class="table-wrap scroll-x" id="weapon-table"></div>
+              </article>
+
+              <article class="card span-12">
+                <div class="card-head">
+                  <div>
+                    <h2 class="card-title"><span class="mode-dot" style="background: var(--mode-salmon)" aria-hidden="true"></span>鲑鱼跑</h2>
+                    <p class="card-sub">只受时间范围影响，不受对战模式筛选影响</p>
+                  </div>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="salmon">查看表格</button></div>
+                </div>
+                <div class="salmon-grid" id="salmon-stats"></div>
+                <div class="salmon-cols">
+                  <div>
+                    <p class="subhead">各潮位的波次通关率</p>
+                    <div class="chart" id="salmon-chart"></div>
+                  </div>
+                  <div>
+                    <p class="subhead">当前打工</p>
+                    <div class="rotation" id="salmon-rotation"></div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="card span-12">
+                <div class="card-head">
+                  <div>
+                    <h2 class="card-title" id="recent-title">最近对战</h2>
+                    <p class="card-sub" id="recent-sub"></p>
+                  </div>
+                </div>
+                <div class="table-wrap scroll-x" id="recent-table"></div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-obs" aria-label="其他工具" hidden>
+          <article class="card obs-panel">
+            <div class="card-head">
+              <h2 class="card-title">OBS 数据卡片</h2>
+              <div class="card-actions">
+                <span class="service-state" id="obs-service-state" role="status"></span>
+                <button type="button" class="ghost" id="obs-service-toggle" hidden></button>
+              </div>
+            </div>
+            <div class="obs-layout">
+              <div class="obs-controls">
+                <div class="obs-field">
+                  <p class="subhead">OBS 地址</p>
+                  <div class="obs-url" id="obs-url" aria-live="polite"></div>
+                  <p class="obs-url-warning" id="obs-url-warning" hidden></p>
+                </div>
+                <div class="obs-field">
+                  <p class="subhead" id="obs-types-title">卡片类型</p>
+                  <div class="obs-options" id="obs-options" role="group" aria-labelledby="obs-types-title"></div>
+                  <p class="obs-hint">自动与其他类型互斥；其他类型可多选，哪种有新记录就显示哪种。</p>
+                </div>
+                <div class="obs-field">
+                  <div class="obs-field-head">
+                    <label class="subhead" for="obs-transparency">背景透明度</label>
+                    <span class="obs-value font-number" id="obs-transparency-value"></span>
+                  </div>
+                  <input type="range" class="obs-range" id="obs-transparency" min="0" max="100" step="5" value="0">
+                  <div class="obs-url obs-css" id="obs-css"></div>
+                  <p class="obs-hint">粘贴到 OBS 浏览器源属性里的“自定义 CSS”，对战和鲑鱼跑卡片都会生效。</p>
+                </div>
+              </div>
+              <div class="obs-preview-panel">
+                <div class="obs-preview-top">
+                  <p class="subhead" id="obs-preview-title">预览</p>
+                  <span class="obs-size font-number" id="obs-preview-size"></span>
+                </div>
+                <div class="obs-stage" id="obs-preview"></div>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="view" id="view-accounts" aria-label="账号管理" hidden>
+          <div class="grid">
+            <article class="card span-12">
+              <div class="card-head">
+                <div>
+                  <h2 class="card-title">账号</h2>
+                  <p class="card-sub">登录信息保存在系统钥匙串里，历史数据只保存在这台电脑上。</p>
+                </div>
+                <div class="card-actions"><button type="button" class="button-primary" id="login">添加账号</button></div>
+              </div>
+              <div class="paste-panel" id="paste-panel" hidden>
+                <p>在浏览器登录后，右键“选择此人”按钮，复制链接地址并粘贴到这里。</p>
+                <textarea id="login-link" autocomplete="off" spellcheck="false" placeholder="粘贴 Nintendo 账号选择链接"></textarea>
+                <div class="paste-actions">
+                  <button type="button" class="ghost" id="cancel-login">取消</button>
+                  <button type="button" class="button-primary" id="authenticate">开始认证</button>
+                </div>
+              </div>
+              <p class="account-message" id="message" role="status" aria-live="polite" hidden></p>
+              <div class="account-list" id="account-list" aria-label="已添加的账号"></div>
+            </article>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <dialog id="background-close-prompt" class="close-prompt" aria-labelledby="background-close-title">
       <h2 id="background-close-title">让小组件在后台运行？</h2>
       <p>隐藏主界面后，OBS 服务和数据同步会继续运行。之后可从状态栏图标重新打开，或选择退出应用。</p>
       <div class="close-prompt-actions">
-        <button id="cancel-close" class="secondary" type="button">取消</button>
-        <button id="exit-from-close" class="secondary" type="button">退出应用</button>
-        <button id="hide-to-tray" type="button">隐藏到状态栏</button>
+        <button id="cancel-close" class="ghost" type="button">取消</button>
+        <button id="exit-from-close" class="ghost" type="button">退出应用</button>
+        <button id="hide-to-tray" class="button-primary" type="button">隐藏到状态栏</button>
       </div>
     </dialog>
+    <dialog id="delete-account-dialog" class="close-prompt delete-prompt" aria-labelledby="delete-account-title">
+      <h2 id="delete-account-title">删除账号</h2>
+      <p>会移除这个账号的登录信息。本地的对战和打工记录默认保留，重新添加同一个账号后可以继续使用。</p>
+      <label class="delete-option">
+        <input type="checkbox" id="delete-local-data">
+        <span>同时删除本地数据<small>这个账号的对战、打工记录和统计，删除后无法恢复。</small></span>
+      </label>
+      <div class="delete-export" id="delete-export" hidden>
+        <p>删除前建议先导出一份数据到本地，导出的文件不会被删除。</p>
+        <div class="delete-export-actions">
+          <button type="button" class="ghost" id="delete-export-button">导出数据</button>
+          <button type="button" class="ghost" id="delete-export-reveal" hidden>在访达中显示</button>
+        </div>
+      </div>
+      <p class="delete-status" id="delete-account-status" role="status" aria-live="polite" hidden></p>
+      <div class="close-prompt-actions">
+        <button type="button" class="ghost" id="delete-account-cancel">取消</button>
+        <button type="button" class="button-danger" id="delete-account-confirm">删除账号</button>
+      </div>
+    </dialog>
+    <div class="tip" id="tip" role="status" hidden></div>
+
     <script src="./overlay-card-renderer.js"></script>
+    <script src="./game-names.js"></script>
+    <script src="./dashboard-data.js"></script>
+    <script src="./dashboard.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

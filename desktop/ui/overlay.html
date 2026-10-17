@@ -19,12 +19,7 @@
     <script>
       const root = document.querySelector('#root');
       const params = new URLSearchParams(window.location.search);
-      const salmonRunOnly = params.has('salmonrun');
-      const matchType = params.has('xmatch')
-        ? 'xmatch'
-        : params.has('bankaramatch')
-          ? 'bankaramatch'
-          : null;
+      const selectedTypes = ['bankaramatch', 'xmatch', 'salmonrun'].filter((type) => params.has(type));
       function fitOverlay() {
         const viewportWidth = window.innerWidth;
         const viewportHeight = window.innerHeight;
@@ -42,21 +37,44 @@
         root.style.height = `${cardHeight * safeScale}px`;
       }
 
+      async function fetchState(matchType) {
+        const apiUrl = matchType ? `/api/overlay?${matchType}` : '/api/overlay';
+        const response = await fetch(apiUrl, { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`Overlay 数据请求失败（HTTP ${response.status}）`);
+        }
+        const state = await response.json();
+        if (state?.error) throw new Error(state.error);
+        return state;
+      }
+
+      // 选了多种卡片时，显示其中最近一条记录对应的那种；有新记录就切过去。
+      async function loadSelectedState() {
+        const matchTypes = selectedTypes.filter((type) => type !== 'salmonrun');
+        const states = Object.fromEntries(await Promise.all(
+          matchTypes.map(async (type) => [type, await fetchState(type)])
+        ));
+        if (selectedTypes.includes('salmonrun')) {
+          // 每种对战状态都带有鲑鱼跑数据，只选了鲑鱼跑时才单独请求。
+          states.salmonrun = matchTypes.length ? states[matchTypes[0]] : await fetchState(null);
+        }
+        const type = selectedTypes.length > 1
+          ? window.Splat3OverlayCard.newestCardType(states)
+          : selectedTypes[0];
+        return { type, state: type ? states[type] : null };
+      }
+
       async function update() {
         try {
-          const apiUrl = matchType ? `/api/overlay?${matchType}` : '/api/overlay';
-          const response = await fetch(apiUrl, { cache: 'no-store' });
-          if (!response.ok) {
-            throw new Error(`Overlay 数据请求失败（HTTP ${response.status}）`);
-          }
-          const state = await response.json();
-          if (state?.error) throw new Error(state.error);
-          if (salmonRunOnly) {
-            window.Splat3OverlayCard.updateSalmonRun(root, state);
-          } else if (matchType) {
-            window.Splat3OverlayCard.update(root, state);
+          if (!selectedTypes.length) {
+            window.Splat3OverlayCard.updateAuto(root, await fetchState(null));
           } else {
-            window.Splat3OverlayCard.updateAuto(root, state);
+            const { type, state } = await loadSelectedState();
+            if (type === 'salmonrun') {
+              window.Splat3OverlayCard.updateSalmonRun(root, state);
+            } else if (type) {
+              window.Splat3OverlayCard.update(root, state);
+            }
           }
           fitOverlay();
         } catch (_) {

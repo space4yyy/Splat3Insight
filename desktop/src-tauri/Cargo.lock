@@ -3881,8 +3881,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "flate2",
- "objc2-app-kit",
- "objc2-foundation",
  "plist",
  "rusqlite",
  "serde",

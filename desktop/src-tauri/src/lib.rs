@@ -17,8 +17,6 @@ use splat3_widget_core::{
     AccountMetadata, AccountRegistry, AccountSecret, CachedSecretStore, KeyringSecretStore,
     SecretStore,
 };
-#[cfg(not(target_os = "macos"))]
-use tauri::PhysicalSize;
 #[cfg(target_os = "macos")]
 use tauri::RunEvent;
 use tauri::{
@@ -29,6 +27,7 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tokio::sync::watch;
 
+pub(crate) mod dashboard_store;
 pub(crate) mod history_store;
 pub(crate) mod overlay_server;
 mod sync_orchestrator;
@@ -43,7 +42,6 @@ struct AppState {
     auth_log_path: PathBuf,
     history_dir: PathBuf,
     preferences_path: PathBuf,
-    last_window_size: Mutex<(u32, u32)>,
     sync_runtime: Arc<SyncRuntime>,
     sync_trigger: Arc<tokio::sync::Notify>,
     overlay_service: overlay_server::OverlayServiceController,
@@ -114,9 +112,19 @@ fn should_show_main_window_on_reopen(has_visible_windows: bool) -> bool {
     !has_visible_windows
 }
 
-const DEFAULT_WINDOW_WIDTH: f64 = 560.0;
-const DEFAULT_WINDOW_HEIGHT: f64 = 570.0;
-const WINDOW_ASPECT_RATIO: f64 = DEFAULT_WINDOW_WIDTH / DEFAULT_WINDOW_HEIGHT;
+const DEFAULT_WINDOW_WIDTH: f64 = 1240.0;
+const DEFAULT_WINDOW_HEIGHT: f64 = 800.0;
+const MIN_WINDOW_WIDTH: f64 = 720.0;
+const MIN_WINDOW_HEIGHT: f64 = 560.0;
+
+/// Logical window size to restore. Sizes saved by the old compact window are
+/// smaller than the dashboard minimum, so they fall back to the default.
+fn restored_window_size(saved: Option<(f64, f64)>, work_area: (f64, f64)) -> (f64, f64) {
+    let (width, height) = saved
+        .filter(|(width, height)| *width >= MIN_WINDOW_WIDTH && *height >= MIN_WINDOW_HEIGHT)
+        .unwrap_or((DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT));
+    (width.min(work_area.0), height.min(work_area.1))
+}
 
 fn saved_display_from_monitor(monitor: &Monitor) -> SavedDisplay {
     SavedDisplay {
@@ -198,7 +206,7 @@ fn restore_window_placement(
     placement: Option<&SavedWindowPlacement>,
 ) -> Result<(), String> {
     let Some(placement) = placement else {
-        return Ok(());
+        return fit_default_window(window);
     };
     let monitors = window
         .available_monitors()
@@ -226,11 +234,10 @@ fn restore_window_placement(
     let work_area = monitor.work_area();
     let work_width = f64::from(work_area.size.width) / scale_factor;
     let work_height = f64::from(work_area.size.height) / scale_factor;
-    let width = placement
-        .width
-        .min(work_width)
-        .min(work_height * WINDOW_ASPECT_RATIO);
-    let height = width / WINDOW_ASPECT_RATIO;
+    let (width, height) = restored_window_size(
+        Some((placement.width, placement.height)),
+        (work_width, work_height),
+    );
 
     let old_scale_factor = window.scale_factor().unwrap_or(scale_factor).max(0.1);
     let old_inner_size = window
@@ -269,47 +276,34 @@ fn restore_window_placement(
         .map_err(|error| format!("恢复窗口位置失败：{error}"))
 }
 
+/// First launch: use the default size, shrunk to fit the main display.
+fn fit_default_window(window: &WebviewWindow) -> Result<(), String> {
+    let Some(monitor) = window
+        .primary_monitor()
+        .map_err(|error| format!("读取主显示器失败：{error}"))?
+    else {
+        return Ok(());
+    };
+    let scale_factor = monitor.scale_factor().max(0.1);
+    let work_area = monitor.work_area();
+    let (width, height) = restored_window_size(
+        None,
+        (
+            f64::from(work_area.size.width) / scale_factor,
+            f64::from(work_area.size.height) / scale_factor,
+        ),
+    );
+    window
+        .set_size(LogicalSize::new(width, height))
+        .map_err(|error| format!("设置窗口尺寸失败：{error}"))?;
+    window
+        .center()
+        .map_err(|error| format!("居中窗口失败：{error}"))
+}
+
 fn clamp_window_axis(position: f64, area_start: f64, area_size: f64, window_size: f64) -> i32 {
     let max_position = (area_start + area_size - window_size).max(area_start);
     position.clamp(area_start, max_position).round() as i32
-}
-
-#[cfg(target_os = "macos")]
-fn set_window_content_aspect_ratio(window: &WebviewWindow) -> Result<(), String> {
-    let pointer = window
-        .ns_window()
-        .map_err(|error| format!("读取 macOS 窗口句柄失败：{error}"))?;
-    let native_window = unsafe { &*pointer.cast::<objc2_app_kit::NSWindow>() };
-    native_window.setContentAspectRatio(objc2_foundation::NSSize::new(
-        DEFAULT_WINDOW_WIDTH,
-        DEFAULT_WINDOW_HEIGHT,
-    ));
-    Ok(())
-}
-
-#[cfg(any(not(target_os = "macos"), test))]
-fn aspect_corrected_size(previous: (u32, u32), requested: (u32, u32)) -> (u32, u32) {
-    let (width, height) = requested;
-    if width == 0 || height == 0 {
-        return previous;
-    }
-    if (f64::from(width) / f64::from(height) - WINDOW_ASPECT_RATIO).abs() < 0.002 {
-        return requested;
-    }
-
-    let width_change = width.abs_diff(previous.0) as f64;
-    let height_change_as_width = height.abs_diff(previous.1) as f64 * WINDOW_ASPECT_RATIO;
-    if width_change >= height_change_as_width {
-        (
-            width,
-            (f64::from(width) / WINDOW_ASPECT_RATIO).round().max(1.0) as u32,
-        )
-    } else {
-        (
-            (f64::from(height) * WINDOW_ASPECT_RATIO).round().max(1.0) as u32,
-            height,
-        )
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -993,8 +987,36 @@ fn export_history(
     Ok(path.display().to_string())
 }
 
+/// 删除账号默认只移除登录信息和账号列表里的这一项，本地历史保留，重新添加同一个账号后继续使用。
+/// `delete_local_data` 为真时一并删除本地历史：先记下待删除标记，中途中断时下次启动会补完。
+/// 导出文件是用户自己的备份，两种情况都保留。
+fn remove_account_entry<S: SecretStore>(
+    registry: &mut AccountRegistry<S>,
+    history_dir: &Path,
+    account_id: &str,
+    delete_local_data: bool,
+) -> Result<(), String> {
+    if delete_local_data {
+        registry.mark_account_deletion_pending(account_id)?;
+        history_store::delete_account(history_dir, account_id)?;
+        registry.remove(account_id)?;
+        return registry.clear_account_deletion_pending(account_id);
+    }
+    registry.remove(account_id)?;
+    // 以前没删完的“连同数据删除”以这次的选择为准，下次启动不再删数据。
+    if registry.is_account_deletion_pending(account_id) {
+        registry.clear_account_deletion_pending(account_id)?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
-fn remove_account(account_id: String, state: State<'_, AppState>) -> Result<(), String> {
+fn remove_account(
+    account_id: String,
+    delete_local_data: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let delete_local_data = delete_local_data.unwrap_or(false);
     let account_id = account_id.trim().to_owned();
     if account_id.is_empty() {
         return Err("账号 ID 不能为空".to_owned());
@@ -1021,16 +1043,22 @@ fn remove_account(account_id: String, state: State<'_, AppState>) -> Result<(), 
         .find(|account| account.account_id == account_id)
         .map(|account| account.display_name.clone())
         .unwrap_or_else(|| "未知账号".to_owned());
-    registry.mark_account_deletion_pending(&account_id)?;
-    history_store::delete_account(&state.history_dir, &account_id)?;
-    registry.remove(&account_id)?;
-    registry.clear_account_deletion_pending(&account_id)?;
+    remove_account_entry(
+        &mut registry,
+        &state.history_dir,
+        &account_id,
+        delete_local_data,
+    )?;
     write_account_log(
         &state.auth_log_path,
         "account-delete",
         &display_name,
         &account_id,
-        "账号及本地历史数据已删除",
+        if delete_local_data {
+            "账号及本地历史数据已删除"
+        } else {
+            "账号已删除，本地历史数据已保留"
+        },
     );
     state.sync_trigger.notify_one();
     Ok(())
@@ -1104,6 +1132,36 @@ fn get_overlay_state(
         ),
         Some(_) => Err("不支持的对战卡片类型".to_owned()),
         None => history_store::load_overlay_state(&state.history_dir, &account_id),
+    }
+}
+
+#[tauri::command]
+async fn get_dashboard_facts(
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<dashboard_store::DashboardFacts, String> {
+    let account_id = resolve_account_id(&state.registry, account_id)?;
+    let history_dir = state.history_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        dashboard_store::load_facts(&history_dir, &account_id)
+    })
+    .await
+    .map_err(|error| format!("读取面板数据失败：{error}"))?
+}
+
+/// Indexes existing archives in the background so the dashboard opens quickly.
+fn warm_up_dashboard_facts(history_dir: PathBuf, account_ids: Vec<String>) {
+    let spawned = std::thread::Builder::new()
+        .name("dashboard-facts".to_owned())
+        .spawn(move || {
+            for account_id in account_ids {
+                if let Err(error) = dashboard_store::ensure_facts(&history_dir, &account_id) {
+                    log_console_error("dashboard", &format!("整理面板数据失败：{error}"));
+                }
+            }
+        });
+    if let Err(error) = spawned {
+        log_console_error("dashboard", &format!("启动面板数据整理失败：{error}"));
     }
 }
 
@@ -1634,14 +1692,6 @@ pub fn run() {
             let main_window = app
                 .get_webview_window("main")
                 .ok_or_else(|| std::io::Error::other("主窗口未创建"))?;
-            #[cfg(target_os = "macos")]
-            if let Err(error) = set_window_content_aspect_ratio(&main_window) {
-                log_console_error("app-window", &error);
-            }
-            let initial_window_size = main_window
-                .inner_size()
-                .map(|size| (size.width, size.height))
-                .unwrap_or((DEFAULT_WINDOW_WIDTH as u32, DEFAULT_WINDOW_HEIGHT as u32));
 
             let metadata_path = config_dir.join("accounts.json");
             let history_dir = config_dir.join("history");
@@ -1672,12 +1722,18 @@ pub fn run() {
                     );
                 }
             }
+            let fact_account_ids: Vec<String> = registry
+                .accounts()
+                .iter()
+                .map(|account| account.account_id.clone())
+                .collect();
             let registry = Arc::new(Mutex::new(registry));
             let sync_runtime = Arc::new(SyncRuntime::new());
             let sync_trigger = Arc::new(tokio::sync::Notify::new());
             if let Err(error) = history_store::check_integrity(&history_dir) {
                 log_console_error("history", &error);
             }
+            warm_up_dashboard_facts(history_dir.clone(), fact_account_ids);
             let overlay_service = overlay_server::OverlayServiceController::new(
                 overlay_server::OverlayServerConfig {
                     accounts_path: metadata_path,
@@ -1690,7 +1746,6 @@ pub fn run() {
                 auth_log_path: config_dir.join("auth.log"),
                 history_dir: history_dir.clone(),
                 preferences_path: preferences_path.clone(),
-                last_window_size: Mutex::new(initial_window_size),
                 sync_runtime: Arc::clone(&sync_runtime),
                 sync_trigger: Arc::clone(&sync_trigger),
                 overlay_service: overlay_service.clone(),
@@ -1699,12 +1754,6 @@ pub fn run() {
                 restore_window_placement(&main_window, preferences.window_placement.as_ref())
             {
                 log_console_error("app-window", &error);
-            }
-            if let Ok(size) = main_window.inner_size() {
-                *app.state::<AppState>()
-                    .last_window_size
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = (size.width, size.height);
             }
 
             overlay_service.start().map_err(std::io::Error::other)?;
@@ -1724,34 +1773,6 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Resized(size) = event {
-                let app_state = window.app_handle().state::<AppState>();
-                #[cfg(not(target_os = "macos"))]
-                {
-                    let requested = (size.width, size.height);
-                    let mut last_size = app_state
-                        .last_window_size
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    let corrected = aspect_corrected_size(*last_size, requested);
-                    *last_size = corrected;
-                    if corrected != requested {
-                        if let Err(error) =
-                            window.set_size(PhysicalSize::new(corrected.0, corrected.1))
-                        {
-                            log_console_error("app-window", &format!("保持窗口比例失败：{error}"));
-                        }
-                    }
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    *app_state
-                        .last_window_size
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                        (size.width, size.height);
-                }
-            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 save_main_window_placement(window.app_handle());
                 api.prevent_close();
@@ -1772,6 +1793,7 @@ pub fn run() {
             start_overlay_service,
             stop_overlay_service,
             get_overlay_state,
+            get_dashboard_facts,
             begin_nintendo_login,
             cancel_nintendo_login,
             complete_nintendo_login,
@@ -1799,12 +1821,13 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        active_account_sync_state, append_timestamped_log, aspect_corrected_size,
-        build_account_views, choose_saved_display, format_token_refresh_error,
-        load_app_preferences, local_log_timestamp, should_show_main_window_on_reopen,
-        store_app_preferences, AppPreferences, HistoryErrorKind, HistorySyncSummary, SavedDisplay,
-        SavedWindowPlacement, SyncClaim, SyncError, SyncRuntime, TokenRefreshFailure,
-        LOG_BACKUP_COUNT, MAX_LOG_BYTES,
+        active_account_sync_state, append_timestamped_log, build_account_views,
+        choose_saved_display, format_token_refresh_error, history_store, load_app_preferences,
+        local_log_timestamp, remove_account_entry, restored_window_size,
+        should_show_main_window_on_reopen, store_app_preferences, AppPreferences, HistoryErrorKind,
+        HistorySyncSummary, SavedDisplay, SavedWindowPlacement, SyncClaim, SyncError, SyncRuntime,
+        TokenRefreshFailure, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, LOG_BACKUP_COUNT,
+        MAX_LOG_BYTES,
     };
     use splat3_widget_core::{
         AccountMetadata, AccountRegistry, AccountSecret, CachedSecretStore, SecretStore,
@@ -1885,9 +1908,18 @@ mod tests {
     }
 
     #[test]
-    fn proportional_resize_tracks_horizontal_or_vertical_drag() {
-        assert_eq!(aspect_corrected_size((560, 680), (700, 680)), (700, 850));
-        assert_eq!(aspect_corrected_size((560, 680), (560, 800)), (659, 800));
+    fn restored_window_size_keeps_saved_sizes_and_replaces_the_old_compact_window() {
+        let screen = (1920.0, 1050.0);
+        assert_eq!(
+            restored_window_size(Some((1400.0, 900.0)), screen),
+            (1400.0, 900.0)
+        );
+        assert_eq!(
+            restored_window_size(Some((560.0, 570.0)), screen),
+            (DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
+        );
+        assert_eq!(restored_window_size(None, (1280.0, 700.0)), (1240.0, 700.0));
+        assert_eq!(restored_window_size(Some((2400.0, 1400.0)), screen), screen);
     }
 
     #[derive(Clone)]
@@ -1955,6 +1987,64 @@ mod tests {
             .iter()
             .all(|account| account.splatnet_ready == Some(true)));
         assert_eq!(read_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn removing_an_account_keeps_local_history_unless_asked() {
+        let directory = tempdir().unwrap();
+        let history_dir = directory.path().join("history");
+        let store = CachedSecretStore::new(ReadCountingStore {
+            get_count: Arc::new(AtomicUsize::new(0)),
+            secret: None,
+            error: None,
+        });
+        let mut registry =
+            AccountRegistry::load(directory.path().join("accounts.json"), store).unwrap();
+        for id in ["keep", "drop"] {
+            registry
+                .upsert(
+                    AccountMetadata {
+                        account_id: id.to_owned(),
+                        display_name: id.to_owned(),
+                        language: None,
+                        country: None,
+                        splatnet_ready: Some(true),
+                        created_at_ms: 1,
+                        last_used_at_ms: 1,
+                    },
+                    AccountSecret {
+                        session_token: "test-session".to_owned(),
+                        game_web_token: None,
+                        bullet_token: None,
+                    },
+                )
+                .unwrap();
+        }
+        let connection = history_store::open_database(&history_dir).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE extension_test_data (account_id TEXT NOT NULL, value TEXT NOT NULL);
+                 INSERT INTO extension_test_data VALUES ('keep', 'k'), ('drop', 'd');",
+            )
+            .unwrap();
+        drop(connection);
+        // 上次没删完的“连同数据删除”，这次选择保留数据时以这次为准。
+        registry.mark_account_deletion_pending("keep").unwrap();
+
+        remove_account_entry(&mut registry, &history_dir, "keep", false).unwrap();
+        remove_account_entry(&mut registry, &history_dir, "drop", true).unwrap();
+
+        assert!(registry.accounts().is_empty());
+        assert!(registry.pending_account_deletions().is_empty());
+        let connection = history_store::open_database(&history_dir).unwrap();
+        let remaining: Vec<String> = connection
+            .prepare("SELECT account_id FROM extension_test_data ORDER BY account_id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(remaining, ["keep"]);
     }
 
     #[test]

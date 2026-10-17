@@ -12,12 +12,13 @@
       {
         "label": "main",
         "title": "Splat3 Insight",
-        "width": 560,
-        "height": 570,
-        "minWidth": 420,
-        "minHeight": 510,
+        "width": 1240,
+        "height": 800,
+        "minWidth": 720,
+        "minHeight": 560,
         "visible": false,
-        "resizable": true
+        "resizable": true,
+        "acceptFirstMouse": true
       }
     ],
     "security": {

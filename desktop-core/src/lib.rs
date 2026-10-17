@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+pub mod dashboard;
 pub mod history;
 pub mod nintendo_auth;
 pub mod overlay;
