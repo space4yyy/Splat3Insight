@@ -45,6 +45,10 @@
       weapon: nameOf(names?.weapons, row.weapon_id, row.weapon_name, 'weapons') || '未知武器',
       weaponId: row.weapon_id || row.weapon_name || null,
       weaponImage: typeof row.weapon_image === 'string' ? row.weapon_image : null,
+      sub: gameName('subWeapons', row.sub_weapon_name),
+      subImage: typeof row.sub_weapon_image === 'string' ? row.sub_weapon_image : null,
+      special: gameName('specialWeapons', row.special_weapon_name),
+      specialImage: typeof row.special_weapon_image === 'string' ? row.special_weapon_image : null,
       win: row.judgement === 'WIN',
       lose: LOSSES.has(row.judgement),
       duration: isNum(row.duration_seconds) ? row.duration_seconds : null,
@@ -58,6 +62,17 @@
       powerKind: row.power_kind || null,
       delta: null,
     };
+  }
+
+  // 头目鲑鱼的 id 是 base64 的 “CoopEnemy-23”，取出编号（和 OBS 卡片的图片编号一致）。
+  function enemyNumber(id) {
+    if (typeof id !== 'string' || !id || typeof atob !== 'function') return null;
+    try {
+      const match = /-(\d+)$/.exec(atob(id));
+      return match ? Number(match[1]) : null;
+    } catch {
+      return null;
+    }
   }
 
   // 打工时长没有原始数据，按波次估算：开场 60 秒，每波 100 秒，头目鲑鱼再加 100 秒。
@@ -78,6 +93,7 @@
       kingAppeared,
       kingDefeated: row.boss_defeated === true,
       kingName: gameName('bosses', row.boss_name),
+      kingId: enemyNumber(row.boss_id),
       goldenEggs: isNum(row.golden_eggs) ? row.golden_eggs : null,
       powerEggs: isNum(row.power_eggs) ? row.power_eggs : null,
       rescues: isNum(row.rescue_count) ? row.rescue_count : null,
@@ -86,6 +102,13 @@
       gradePoint: isNum(row.grade_point) ? row.grade_point : null,
       danger: isNum(row.danger_rate) ? row.danger_rate : null,
       scales: { gold: row.scale_gold, silver: row.scale_silver, bronze: row.scale_bronze },
+      goldenAssists: isNum(row.golden_assists) ? row.golden_assists : null,
+      supplied: (row.supplied_weapons || []).map((weapon) => ({
+        name: gameName('weapons', weapon?.name),
+        image: typeof weapon?.image === 'string' ? weapon.image : null,
+      })),
+      rotationStart: isNum(row.rotation_start_ms) ? row.rotation_start_ms : null,
+      rotationEnd: isNum(row.rotation_end_ms) ? row.rotation_end_ms : null,
       duration: 60 + playedWaves * 100 + (kingAppeared ? 100 : 0),
     };
   }

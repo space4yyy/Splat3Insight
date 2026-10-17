@@ -294,7 +294,8 @@
       const style = `flex: ${share.toFixed(1)} 1 0${color ? `; background: ${color}; color: ${inkOn(color)}` : ''}`;
       bar.append(el('span', { class: index === 0 ? 'mine' : 'theirs', style, text: format(value) }));
     });
-    const caption = score.kind === 'paint' ? '涂地比例' : battle.knockout ? '击溃' : '计数';
+    // 提前打满计数的比赛，游戏里显示“完胜！”；输的一方记作完败。
+    const caption = score.kind === 'paint' ? '涂地比例' : battle.knockout === 'WIN' ? '完胜' : battle.knockout === 'LOSE' ? '完败' : '计数';
     return el('div', {}, [bar, el('div', { class: 'score-labels' }, [el('span', { text: '我方' }), el('span', { text: caption }), el('span', { text: '对方' })])]);
   }
   // 游戏里的名牌：背景图、玩家名字和徽章。
@@ -438,7 +439,7 @@
     } else {
       kicker = [battleChip(item), swatch(modeColor(item.mode)), document.createTextNode(modeLabelOf(item))];
       title = `${ruleLabel(item)} · ${item.stage}`;
-      sub = [fmtFullTime(item.t), `用时 ${fmtClock(item.duration)}`, item.knockout ? '击溃' : null].filter(Boolean).join(' · ');
+      sub = [fmtFullTime(item.t), `用时 ${fmtClock(item.duration)}`, item.knockout ? (item.win ? '完胜' : '完败') : null].filter(Boolean).join(' · ');
     }
     return el('div', { class: 'drawer-head' }, [
       el('div', {}, [el('div', { class: 'drawer-kicker' }, kicker), el('h2', { class: 'drawer-title', id: 'drawer-title', text: title }), el('p', { class: 'drawer-sub', text: sub })]),
@@ -551,5 +552,5 @@
     }
   });
 
-  window.Splat3Records = Object.freeze({ render, open, close });
+  window.Splat3Records = Object.freeze({ render, open, close, img, iconWithName });
 })();

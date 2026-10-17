@@ -715,6 +715,13 @@ fn fill_coop_rotation(
         update
             .execute(params![account_id, record_id, encoded])
             .map_err(|error| format!("写入打工期时间失败：{error}"))?;
+        dashboard_store::update_coop_rotation(
+            transaction,
+            account_id,
+            record_id,
+            start_time,
+            end_time,
+        )?;
     }
     Ok(())
 }

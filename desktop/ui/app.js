@@ -8,10 +8,15 @@
   const $ = (selector) => document.querySelector(selector);
   const dashboard = window.Splat3Dashboard;
   const records = window.Splat3Records;
+  const analysis = window.Splat3Analysis;
   const cards = window.Splat3OverlayCard;
 
   const VIEWS = {
     overview: ['总览', '最近的状态、战力走势和常用配置，一页看完。'],
+    battles: ['对战', '规则、连胜连败、击倒和对局时长。'],
+    weapons: ['武器', '每把武器的表现、挑战战力，以及副武器和特殊武器。'],
+    stages: ['场地', '每张地图的胜率、出现时间和武器表现。'],
+    salmon: ['鲑鱼跑', '评级、头目鲑鱼、特殊波次、个人贡献和各期打工。'],
     log: ['对战记录', '所有对局，点一行查看详情。'],
     obs: ['其他工具', '直播用的 OBS 数据卡片等附加工具。'],
     accounts: ['账号管理', '添加、切换和管理 Nintendo 账号。'],
@@ -154,8 +159,10 @@
     $('#page-sub').textContent = VIEWS[view][1];
     dashboard.hideTip();
     $('#filters').hidden = true;
+    dashboard.setModeScope(view === 'salmon' ? 'salmon' : ['battles', 'weapons', 'stages'].includes(view) ? 'battles' : 'all');
     if (view !== 'log') records.close();
     if (view === 'overview') renderOverview();
+    else if (analysis.VIEWS.includes(view)) renderAnalysis(view);
     else if (view === 'log') renderLog();
     else if (view === 'obs') {
       renderObsPreview();
@@ -175,7 +182,7 @@
     else showView(view);
   }
 
-  // 总览和对战记录共用的提示：账号、数据整理和读取失败等状态；没有提示时才绘制页面。
+  // 总览、分析页和对战记录共用的提示：账号、数据整理和读取失败等状态；没有提示时才绘制页面。
   function dataNotice() {
     if (!app.accountsLoaded) return { title: '正在读取账号…' };
     if (!app.activeAccountId) {
@@ -211,8 +218,12 @@
   function renderLog() {
     if (!showDataNotice($('#log-status'), $('#log-content'))) records.render();
   }
+  function renderAnalysis(view) {
+    if (!showDataNotice($(`#${view}-status`), $(`#${view}-content`))) analysis.render(view);
+  }
   function renderDataView() {
     if (app.view === 'overview') renderOverview();
+    else if (analysis.VIEWS.includes(app.view)) renderAnalysis(app.view);
     else if (app.view === 'log') renderLog();
   }
   dashboard.onFiltersChange(renderDataView);
@@ -901,6 +912,7 @@
     cancelAnimationFrame(resizeFrame);
     resizeFrame = requestAnimationFrame(() => {
       if (app.view === 'overview') renderOverview();
+      else if (analysis.VIEWS.includes(app.view)) renderAnalysis(app.view);
       else if (app.view === 'obs') fitObsPreview();
     });
   }).observe($('.main'));
@@ -909,7 +921,7 @@
   renderSyncStatus(null);
   loadObsTransparency();
   renderObsTransparency();
-  // 字体加载完再画一次总览，场地名的宽度按实际字体计算。
+  // 字体加载完再画一次当前页面，场地名等标签的宽度按实际字体计算。
   document.fonts?.ready.then(() => {
     renderDataView();
   });

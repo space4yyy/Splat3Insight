@@ -8,6 +8,7 @@
     ink: token('--ink'), ink2: token('--ink-2'), ink3: token('--ink-3'),
     line: token('--line'), lineStrong: token('--line-strong'), panel: token('--panel'),
     accent: token('--accent'), brandBlue: token('--brand-blue'), winLine: token('--win-line'),
+    meterWin: token('--meter-win'), meterLose: token('--meter-lose'),
     salmon: token('--mode-salmon'), context: token('--context'), seq0: token('--seq-0'),
     seq: ['--seq-1', '--seq-2', '--seq-3', '--seq-4', '--seq-5'].map(token),
     div: ['--div-neg-3', '--div-neg-2', '--div-neg-1', '--div-mid', '--div-pos-1', '--div-pos-2', '--div-pos-3'].map(token),
@@ -184,7 +185,7 @@
       if (onRow) clickableRow(tr, () => onRow(rowIndex));
       row.forEach((cell, index) => {
         const column = columns[index];
-        const td = el('td', { class: [column.num ? 'num' : '', column.number ? 'font-number' : '', cell === '—' ? 'placeholder' : ''].filter(Boolean).join(' ') });
+        const td = el('td', { class: [column.num ? 'num' : '', column.number ? 'font-number' : '', column.wrap ? 'wrap' : '', cell === '—' ? 'placeholder' : ''].filter(Boolean).join(' ') });
         if (cell instanceof Node) td.append(cell); else td.textContent = cell;
         tr.append(td);
       });
@@ -1010,7 +1011,8 @@
       const key = button.getAttribute('data-table-toggle');
       state.tables[key] = !state.tables[key];
       button.textContent = state.tables[key] ? '查看图表' : '查看表格';
-      render();
+      // 由当前页面重新绘制（总览或分析页）。
+      filtersChanged();
     });
   }
 
@@ -1033,7 +1035,27 @@
       const [start, end] = rangeBounds(state.range);
       return state.mode === 'salmon' ? { salmon: true, rows: shiftsIn(start, end) } : { salmon: false, rows: battlesIn(start, end) };
     },
-    ui: Object.freeze({ el, fmtDateTime, count, pct, fixed, MODE, RULE_LABEL, ruleLabel, modeLabelOf, modeColor, powerNode, emptyState, clickableRow }),
+    // 分析页的数据：当前时间范围和模式下的对战，以及时间范围内的打工。
+    analysisSource() {
+      const [start, end] = rangeBounds(state.range);
+      return { start, end, mode: state.mode, battles: battlesIn(start, end), shifts: shiftsIn(start, end) };
+    },
+    tableOn: (key) => Boolean(state.tables[key]),
+    // 对战、武器、场地页不提供“打工”筛选；鲑鱼跑页只受时间范围影响，不显示模式筛选。
+    setModeScope(scope) {
+      modeFilter.hidden = scope === 'salmon';
+      modeFilter.querySelector('[data-mode="salmon"]').hidden = scope === 'battles';
+      if (scope === 'battles' && state.mode === 'salmon') {
+        state.mode = 'all';
+        for (const button of modeFilter.querySelectorAll('button[data-mode]')) button.setAttribute('aria-pressed', String(button.getAttribute('data-mode') === 'all'));
+      }
+    },
+    ui: Object.freeze({
+      el, fmtDateTime, fmtDate, fmtShortDate, fmtSince, count, pct, fixed, signed, deltaNode,
+      MODE, MODES, RULE_LABEL, RANKED_RULES, ruleLabel, modeLabelOf, modeColor, powerNode, emptyState, clickableRow,
+      svgEl, svgText, niceScale, columnPath, renderTable, textOn, divergingColor, showTip, hideTip, bindTip,
+      colors: () => COLOR,
+    }),
     onThemeChange() {
       COLOR = readColors();
     },

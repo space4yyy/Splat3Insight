@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::history::{BattleRecord, CoopRecord};
 
 /// Bump when the extraction below changes so stored facts are rebuilt.
-pub const DASHBOARD_FACTS_VERSION: i64 = 2;
+pub const DASHBOARD_FACTS_VERSION: i64 = 3;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BattleFact {
@@ -26,6 +26,11 @@ pub struct BattleFact {
     pub weapon_name: Option<String>,
     /// 我这场用的武器图片（带签名的原链接，桌面端按图片本身缓存）。
     pub weapon_image: Option<String>,
+    /// 副武器和特殊武器的名称（跟着账号语言）与图片，用来按副武器、特殊武器汇总。
+    pub sub_weapon_name: Option<String>,
+    pub sub_weapon_image: Option<String>,
+    pub special_weapon_name: Option<String>,
+    pub special_weapon_image: Option<String>,
     pub judgement: Option<String>,
     pub knockout: Option<String>,
     pub duration_seconds: Option<i64>,
@@ -45,6 +50,13 @@ pub struct CoopWaveFact {
     pub event_wave: Option<String>,
     pub boss_wave: bool,
     pub cleared: Option<bool>,
+}
+
+/// 打工期发放的一把武器（名称是英文，图片是带签名的原链接）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CoopWeaponFact {
+    pub name: Option<String>,
+    pub image: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -72,6 +84,11 @@ pub struct CoopFact {
     pub scale_gold: Option<i64>,
     pub scale_silver: Option<i64>,
     pub scale_bronze: Option<i64>,
+    pub golden_assists: Option<i64>,
+    pub supplied_weapons: Vec<CoopWeaponFact>,
+    /// 这场所在打工期的起止时间，来自 SplatNet 打工列表的分组。
+    pub rotation_start_time: Option<String>,
+    pub rotation_end_time: Option<String>,
 }
 
 pub fn battle_fact(record: &BattleRecord, raw: &Value) -> BattleFact {
@@ -88,6 +105,11 @@ pub fn battle_fact(record: &BattleRecord, raw: &Value) -> BattleFact {
         weapon_id: player.and_then(|player| text(player, "/weapon/id")),
         weapon_name: record.weapon.clone(),
         weapon_image: player.and_then(|player| text(player, "/weapon/image/url")),
+        sub_weapon_name: player.and_then(|player| text(player, "/weapon/subWeapon/name")),
+        sub_weapon_image: player.and_then(|player| text(player, "/weapon/subWeapon/image/url")),
+        special_weapon_name: player.and_then(|player| text(player, "/weapon/specialWeapon/name")),
+        special_weapon_image: player
+            .and_then(|player| text(player, "/weapon/specialWeapon/image/url")),
         judgement: record.judgement.clone(),
         knockout: text(raw, "/knockout"),
         duration_seconds: integer(raw, "/duration"),
@@ -144,6 +166,22 @@ pub fn coop_fact(record: &CoopRecord, raw: &Value) -> CoopFact {
         scale_gold: scale_count("gold"),
         scale_silver: scale_count("silver"),
         scale_bronze: scale_count("bronze"),
+        golden_assists: my_count(&["goldenAssistCount"]),
+        supplied_weapons: raw
+            .get("weapons")
+            .and_then(Value::as_array)
+            .map(|weapons| {
+                weapons
+                    .iter()
+                    .map(|weapon| CoopWeaponFact {
+                        name: text(weapon, "/name"),
+                        image: text(weapon, "/image/url"),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        rotation_start_time: record.rotation_start_time.clone(),
+        rotation_end_time: record.rotation_end_time.clone(),
     }
 }
 
@@ -260,7 +298,11 @@ mod tests {
             "duration": 214,
             "myTeam": { "players": [
                 { "isMyself": false, "weapon": { "id": "other" } },
-                { "isMyself": true, "weapon": { "id": "V2VhcG9uLTQw", "name": "斯普拉机动枪", "image": { "url": "https://example.test/w.png" } } }
+                { "isMyself": true, "weapon": {
+                    "id": "V2VhcG9uLTQw", "name": "斯普拉机动枪", "image": { "url": "https://example.test/w.png" },
+                    "subWeapon": { "name": "吸盘炸弹", "image": { "url": "https://example.test/sub.png" } },
+                    "specialWeapon": { "name": "螃蟹坦克", "image": { "url": "https://example.test/sp.png" } }
+                } }
             ] }
         });
         let fact = battle_fact(&battle_record(), &raw);
@@ -271,6 +313,16 @@ mod tests {
         assert_eq!(
             fact.weapon_image.as_deref(),
             Some("https://example.test/w.png")
+        );
+        assert_eq!(fact.sub_weapon_name.as_deref(), Some("吸盘炸弹"));
+        assert_eq!(
+            fact.sub_weapon_image.as_deref(),
+            Some("https://example.test/sub.png")
+        );
+        assert_eq!(fact.special_weapon_name.as_deref(), Some("螃蟹坦克"));
+        assert_eq!(
+            fact.special_weapon_image.as_deref(),
+            Some("https://example.test/sp.png")
         );
         assert_eq!(fact.knockout.as_deref(), Some("WIN"));
         assert_eq!(fact.duration_seconds, Some(214));
@@ -287,6 +339,8 @@ mod tests {
         assert_eq!(fact.weapon_id, None);
         assert_eq!(fact.knockout, None);
         assert_eq!(fact.duration_seconds, None);
+        assert_eq!(fact.sub_weapon_name, None);
+        assert_eq!(fact.special_weapon_image, None);
         assert_eq!(fact.rule_name.as_deref(), Some("真格区域"));
     }
 
@@ -303,15 +357,23 @@ mod tests {
             ],
             "bossResult": { "hasDefeatBoss": true, "boss": { "id": "Q29vcEVuZW15LTIz", "name": "横纲" } },
             "scale": { "gold": 1, "silver": 2, "bronze": 3 },
+            "weapons": [
+                { "name": "Splattershot", "image": { "url": "https://example.test/c1.png" } },
+                { "name": "Random", "image": null }
+            ],
             "myResult": {
                 "goldenDeliverCount": 14,
+                "goldenAssistCount": 6,
                 "deliverCount": 1203,
                 "rescueCount": 3,
                 "rescuedCount": 1,
                 "defeatEnemyCount": 11
             }
         });
-        let fact = coop_fact(&coop_record(Some(0)), &raw);
+        let mut record = coop_record(Some(0));
+        record.rotation_start_time = Some("2026-10-16T00:00:00Z".to_owned());
+        record.rotation_end_time = Some("2026-10-17T16:00:00Z".to_owned());
+        let fact = coop_fact(&record, &raw);
         assert_eq!(fact.cleared, Some(true));
         assert_eq!(fact.waves.len(), 4);
         assert!(fact.waves[..3]
@@ -334,6 +396,28 @@ mod tests {
             (Some(1), Some(2), Some(3))
         );
         assert_eq!(fact.grade_point, Some(640));
+        assert_eq!(fact.golden_assists, Some(6));
+        assert_eq!(
+            fact.supplied_weapons,
+            vec![
+                CoopWeaponFact {
+                    name: Some("Splattershot".to_owned()),
+                    image: Some("https://example.test/c1.png".to_owned()),
+                },
+                CoopWeaponFact {
+                    name: Some("Random".to_owned()),
+                    image: None,
+                },
+            ]
+        );
+        assert_eq!(
+            fact.rotation_start_time.as_deref(),
+            Some("2026-10-16T00:00:00Z")
+        );
+        assert_eq!(
+            fact.rotation_end_time.as_deref(),
+            Some("2026-10-17T16:00:00Z")
+        );
     }
 
     #[test]
@@ -357,5 +441,8 @@ mod tests {
         assert_eq!(fact.golden_eggs, None);
         assert_eq!(fact.rescue_count, Some(2));
         assert_eq!(fact.rescued_count, Some(1));
+        assert_eq!(fact.golden_assists, None);
+        assert!(fact.supplied_weapons.is_empty());
+        assert_eq!(fact.rotation_start_time, None);
     }
 }

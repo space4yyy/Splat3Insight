@@ -24,6 +24,10 @@
         <nav class="nav" id="nav">
           <div class="nav-label">数据分析</div>
           <button type="button" data-view="overview" aria-current="page">总览</button>
+          <button type="button" data-view="battles">对战</button>
+          <button type="button" data-view="weapons">武器</button>
+          <button type="button" data-view="stages">场地</button>
+          <button type="button" data-view="salmon">鲑鱼跑</button>
           <button type="button" data-view="log">对战记录</button>
           <div class="nav-label">附加功能</div>
           <button type="button" data-view="obs">其他工具</button>
@@ -188,6 +192,156 @@
           </div>
         </section>
 
+        <section class="view" id="view-battles" aria-label="对战" hidden>
+          <div class="overview-status" id="battles-status" hidden></div>
+          <div class="view" id="battles-content" hidden>
+            <div class="grid">
+              <article class="card span-7">
+                <div class="card-head">
+                  <h2 class="card-title">规则对比</h2>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="rules">查看表格</button></div>
+                </div>
+                <div class="legend" id="rule-legend"></div>
+                <div class="chart" id="rule-chart"></div>
+              </article>
+              <article class="card span-5">
+                <div class="card-head">
+                  <h2 class="card-title">连胜与连败之后</h2>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="streak">查看表格</button></div>
+                </div>
+                <div class="chart" id="streak-chart"></div>
+              </article>
+              <article class="card span-7">
+                <div class="card-head">
+                  <h2 class="card-title">击倒与死亡</h2>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="kd">查看表格</button></div>
+                </div>
+                <div class="chart" id="kd-chart"></div>
+              </article>
+              <article class="card span-5">
+                <div class="card-head">
+                  <div>
+                    <h2 class="card-title">对局时长</h2>
+                    <p class="card-sub">真格规则</p>
+                  </div>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="duration">查看表格</button></div>
+                </div>
+                <div class="time-stats" id="duration-stats"></div>
+                <div class="legend" id="duration-legend"></div>
+                <div class="chart" id="duration-chart"></div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-weapons" aria-label="武器" hidden>
+          <div class="overview-status" id="weapons-status" hidden></div>
+          <div class="view" id="weapons-content" hidden>
+            <div class="grid">
+              <article class="card span-12">
+                <div class="card-head">
+                  <h2 class="card-title">武器排行</h2>
+                </div>
+                <div class="table-wrap is-full scroll-x" id="weapon-ranking"></div>
+              </article>
+              <article class="card span-12">
+                <div class="card-head">
+                  <div>
+                    <h2 class="card-title" id="weapon-detail-title">武器详情</h2>
+                    <p class="card-sub" id="weapon-detail-sub"></p>
+                  </div>
+                  <div class="card-actions"><select class="card-select" id="weapon-select" aria-label="选择武器"></select></div>
+                </div>
+                <div class="weapon-detail" id="weapon-detail"></div>
+              </article>
+              <article class="card span-6">
+                <div class="card-head">
+                  <h2 class="card-title">副武器</h2>
+                </div>
+                <div class="table-wrap is-full scroll-x" id="sub-table"></div>
+              </article>
+              <article class="card span-6">
+                <div class="card-head">
+                  <h2 class="card-title">特殊武器</h2>
+                </div>
+                <div class="table-wrap is-full scroll-x" id="special-table"></div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-stages" aria-label="场地" hidden>
+          <div class="overview-status" id="stages-status" hidden></div>
+          <div class="view" id="stages-content" hidden>
+            <div class="grid">
+              <article class="card span-7">
+                <div class="card-head">
+                  <h2 class="card-title">场地排行</h2>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="stageRank">查看表格</button></div>
+                </div>
+                <div class="chart" id="stage-ranking"></div>
+              </article>
+              <article class="card span-5">
+                <div class="card-head">
+                  <h2 class="card-title">近期轮换</h2>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="stageTime">查看表格</button></div>
+                </div>
+                <div class="legend" id="stage-timeline-legend"></div>
+                <div class="chart" id="stage-timeline"></div>
+              </article>
+              <article class="card span-12">
+                <div class="card-head">
+                  <h2 class="card-title">场地 × 武器</h2>
+                </div>
+                <div class="scroll-x" id="stage-weapon"></div>
+                <div class="legend" id="stage-weapon-legend"></div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-salmon" aria-label="鲑鱼跑" hidden>
+          <div class="overview-status" id="salmon-status" hidden></div>
+          <div class="view" id="salmon-content" hidden>
+            <div class="grid">
+              <article class="card span-8">
+                <div class="card-head">
+                  <h2 class="card-title">评级走势</h2>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="grade">查看表格</button></div>
+                </div>
+                <div class="chart" id="grade-chart"></div>
+              </article>
+              <article class="card span-4">
+                <div class="card-head">
+                  <h2 class="card-title">头目鲑鱼</h2>
+                </div>
+                <div class="king-list" id="king-list"></div>
+                <div class="scale-row" id="king-scales"></div>
+              </article>
+              <article class="card span-6">
+                <div class="card-head">
+                  <h2 class="card-title">潮位 × 特殊波次</h2>
+                </div>
+                <div class="scroll-x" id="tide-event"></div>
+                <div class="legend" id="tide-event-legend"></div>
+              </article>
+              <article class="card span-6">
+                <div class="card-head">
+                  <h2 class="card-title">个人贡献</h2>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="contrib">查看表格</button></div>
+                </div>
+                <div class="chart" id="contrib-chart"></div>
+              </article>
+              <article class="card span-12">
+                <div class="card-head">
+                  <h2 class="card-title">各期打工</h2>
+                </div>
+                <div class="table-wrap scroll-x" id="rotation-table"></div>
+              </article>
+            </div>
+          </div>
+        </section>
+
         <section class="view" id="view-log" aria-label="对战记录" hidden>
           <div class="overview-status" id="log-status" hidden></div>
           <div class="view" id="log-content" hidden>
@@ -307,6 +461,8 @@
     <script src="./dashboard.js"></script>
     <script src="./record-detail.js"></script>
     <script src="./records.js"></script>
+    <script src="./analysis-data.js"></script>
+    <script src="./analysis.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

@@ -11,7 +11,8 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 use serde_json::Value;
 use splat3_widget_core::dashboard::{
-    battle_fact, coop_fact, BattleFact, CoopFact, CoopWaveFact, DASHBOARD_FACTS_VERSION,
+    battle_fact, coop_fact, BattleFact, CoopFact, CoopWaveFact, CoopWeaponFact,
+    DASHBOARD_FACTS_VERSION,
 };
 use splat3_widget_core::history::{BattleRecord, CoopRecord};
 use std::path::Path;
@@ -38,6 +39,10 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
                  weapon_id TEXT,
                  weapon_name TEXT,
                  weapon_image TEXT,
+                 sub_weapon_name TEXT,
+                 sub_weapon_image TEXT,
+                 special_weapon_name TEXT,
+                 special_weapon_image TEXT,
                  judgement TEXT,
                  knockout TEXT,
                  duration_seconds INTEGER,
@@ -77,30 +82,59 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
                  scale_gold INTEGER,
                  scale_silver INTEGER,
                  scale_bronze INTEGER,
+                 golden_assists INTEGER,
+                 weapons_json TEXT,
+                 rotation_start_ms INTEGER,
+                 rotation_end_ms INTEGER,
                  PRIMARY KEY (account_id, record_id)
              );
              CREATE INDEX IF NOT EXISTS idx_extension_dashboard_coop_time
                  ON extension_dashboard_coop(account_id, played_at_ms);",
         )
         .map_err(|error| format!("初始化面板数据表失败：{error}"))?;
-    // 第 2 版事实表增加了武器图片；旧数据库补上这一列，事实行会按版本号重建。
-    let has_weapon_image = connection
-        .prepare("PRAGMA table_info(extension_dashboard_battles)")
+    // 新版事实表增加的列：旧数据库补上这些列，事实行会按版本号重建。
+    add_missing_columns(
+        connection,
+        "extension_dashboard_battles",
+        &[
+            ("weapon_image", "TEXT"),
+            ("sub_weapon_name", "TEXT"),
+            ("sub_weapon_image", "TEXT"),
+            ("special_weapon_name", "TEXT"),
+            ("special_weapon_image", "TEXT"),
+        ],
+    )?;
+    add_missing_columns(
+        connection,
+        "extension_dashboard_coop",
+        &[
+            ("golden_assists", "INTEGER"),
+            ("weapons_json", "TEXT"),
+            ("rotation_start_ms", "INTEGER"),
+            ("rotation_end_ms", "INTEGER"),
+        ],
+    )
+}
+
+fn add_missing_columns(
+    connection: &Connection,
+    table: &str,
+    columns: &[(&str, &str)],
+) -> Result<(), String> {
+    let existing = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
         .and_then(|mut statement| {
             statement
                 .query_map([], |row| row.get::<_, String>(1))?
                 .collect::<Result<Vec<_>, _>>()
         })
-        .map_err(|error| format!("检查面板数据表失败：{error}"))?
-        .iter()
-        .any(|column| column == "weapon_image");
-    if !has_weapon_image {
-        connection
-            .execute(
-                "ALTER TABLE extension_dashboard_battles ADD COLUMN weapon_image TEXT",
-                [],
-            )
-            .map_err(|error| format!("升级面板数据表失败：{error}"))?;
+        .map_err(|error| format!("检查面板数据表失败：{error}"))?;
+    for (name, kind) in columns {
+        if !existing.iter().any(|column| column == name) {
+            connection
+                .execute(&format!("ALTER TABLE {table} ADD COLUMN {name} {kind}"), [])
+                .map_err(|error| format!("升级面板数据表失败：{error}"))?;
+        }
     }
     Ok(())
 }
@@ -156,8 +190,9 @@ fn write_battle(
                  account_id, record_id, played_at_ms, mode, bankara_mode, rule_code, rule_name,
                  stage_id, stage_name, weapon_id, weapon_name, judgement, knockout,
                  duration_seconds, kills, assists, deaths, specials, paint, power, power_kind,
-                 weapon_image
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                 weapon_image, sub_weapon_name, sub_weapon_image, special_weapon_name,
+                 special_weapon_image
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
             params![
                 account_id,
                 fact.record_id,
@@ -181,6 +216,10 @@ fn write_battle(
                 fact.power,
                 fact.power_kind,
                 fact.weapon_image,
+                fact.sub_weapon_name,
+                fact.sub_weapon_image,
+                fact.special_weapon_name,
+                fact.special_weapon_image,
             ],
         )
         .map_err(|error| format!("保存面板对战数据失败：{error}"))?;
@@ -190,14 +229,17 @@ fn write_battle(
 fn write_coop(connection: &Connection, account_id: &str, fact: &CoopFact) -> Result<(), String> {
     let waves_json = serde_json::to_string(&fact.waves)
         .map_err(|error| format!("序列化面板波次数据失败：{error}"))?;
+    let weapons_json = serde_json::to_string(&fact.supplied_weapons)
+        .map_err(|error| format!("序列化面板发放武器失败：{error}"))?;
     connection
         .execute(
             "INSERT OR REPLACE INTO extension_dashboard_coop(
                  account_id, record_id, played_at_ms, rule, stage_id, stage_name, result_wave,
                  cleared, waves_json, boss_appeared, boss_defeated, boss_id, boss_name,
                  danger_rate, grade_name, grade_point, golden_eggs, power_eggs, rescue_count,
-                 rescued_count, defeat_enemy_count, scale_gold, scale_silver, scale_bronze
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+                 rescued_count, defeat_enemy_count, scale_gold, scale_silver, scale_bronze,
+                 golden_assists, weapons_json, rotation_start_ms, rotation_end_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
             params![
                 account_id,
                 fact.record_id,
@@ -223,9 +265,36 @@ fn write_coop(connection: &Connection, account_id: &str, fact: &CoopFact) -> Res
                 fact.scale_gold,
                 fact.scale_silver,
                 fact.scale_bronze,
+                fact.golden_assists,
+                weapons_json,
+                played_at_ms(fact.rotation_start_time.as_deref()),
+                played_at_ms(fact.rotation_end_time.as_deref()),
             ],
         )
         .map_err(|error| format!("保存面板打工数据失败：{error}"))?;
+    Ok(())
+}
+
+/// 已归档的打工记录补上打工期后，同步更新事实行；已有的不改。
+pub(crate) fn update_coop_rotation(
+    connection: &Connection,
+    account_id: &str,
+    record_id: &str,
+    start_time: &str,
+    end_time: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE extension_dashboard_coop SET rotation_start_ms = ?3, rotation_end_ms = ?4
+             WHERE account_id = ?1 AND record_id = ?2 AND rotation_start_ms IS NULL",
+            params![
+                account_id,
+                record_id,
+                played_at_ms(Some(start_time)),
+                played_at_ms(Some(end_time))
+            ],
+        )
+        .map_err(|error| format!("更新面板打工期失败：{error}"))?;
     Ok(())
 }
 
@@ -366,6 +435,10 @@ pub(crate) struct BattleRow {
     weapon_id: Option<String>,
     weapon_name: Option<String>,
     weapon_image: Option<String>,
+    sub_weapon_name: Option<String>,
+    sub_weapon_image: Option<String>,
+    special_weapon_name: Option<String>,
+    special_weapon_image: Option<String>,
     judgement: Option<String>,
     knockout: Option<String>,
     duration_seconds: Option<i64>,
@@ -403,6 +476,10 @@ pub(crate) struct CoopRow {
     scale_gold: Option<i64>,
     scale_silver: Option<i64>,
     scale_bronze: Option<i64>,
+    golden_assists: Option<i64>,
+    supplied_weapons: Vec<CoopWeaponFact>,
+    rotation_start_ms: Option<i64>,
+    rotation_end_ms: Option<i64>,
 }
 
 /// Returns every fact with a known play time, oldest first.
@@ -424,7 +501,8 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
                 "SELECT record_id, played_at_ms, mode, bankara_mode, rule_code, rule_name,
                         stage_id, stage_name, weapon_id, weapon_name, judgement, knockout,
                         duration_seconds, kills, assists, deaths, specials, paint, power, power_kind,
-                        weapon_image
+                        weapon_image, sub_weapon_name, sub_weapon_image, special_weapon_name,
+                        special_weapon_image
                  FROM extension_dashboard_battles
                  WHERE account_id = ?1 AND played_at_ms IS NOT NULL
                  ORDER BY played_at_ms, record_id",
@@ -454,6 +532,10 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
                     power: row.get(18)?,
                     power_kind: row.get(19)?,
                     weapon_image: row.get(20)?,
+                    sub_weapon_name: row.get(21)?,
+                    sub_weapon_image: row.get(22)?,
+                    special_weapon_name: row.get(23)?,
+                    special_weapon_image: row.get(24)?,
                 })
             })
             .map_err(|error| format!("读取面板对战数据失败：{error}"))?;
@@ -467,7 +549,8 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
                 "SELECT record_id, played_at_ms, rule, stage_id, stage_name, result_wave, cleared,
                         waves_json, boss_appeared, boss_defeated, boss_id, boss_name, danger_rate,
                         grade_name, grade_point, golden_eggs, power_eggs, rescue_count,
-                        rescued_count, defeat_enemy_count, scale_gold, scale_silver, scale_bronze
+                        rescued_count, defeat_enemy_count, scale_gold, scale_silver, scale_bronze,
+                        golden_assists, weapons_json, rotation_start_ms, rotation_end_ms
                  FROM extension_dashboard_coop
                  WHERE account_id = ?1 AND played_at_ms IS NOT NULL
                  ORDER BY played_at_ms, record_id",
@@ -476,6 +559,7 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
         let rows = statement
             .query_map([account_id], |row| {
                 let waves_json: String = row.get(7)?;
+                let weapons_json: Option<String> = row.get(24)?;
                 Ok(CoopRow {
                     id: row.get(0)?,
                     played_at_ms: row.get(1)?,
@@ -500,6 +584,12 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
                     scale_gold: row.get(20)?,
                     scale_silver: row.get(21)?,
                     scale_bronze: row.get(22)?,
+                    golden_assists: row.get(23)?,
+                    supplied_weapons: weapons_json
+                        .and_then(|json| serde_json::from_str(&json).ok())
+                        .unwrap_or_default(),
+                    rotation_start_ms: row.get(25)?,
+                    rotation_end_ms: row.get(26)?,
                 })
             })
             .map_err(|error| format!("读取面板打工数据失败：{error}"))?;
@@ -603,12 +693,24 @@ mod tests {
             .unwrap()
     }
 
+    fn columns(history_dir: &Path, table: &str) -> Vec<String> {
+        history_store::open_database(history_dir)
+            .unwrap()
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
     #[test]
-    fn upgrades_an_existing_battle_fact_table_with_the_weapon_image_column() {
+    fn upgrades_existing_fact_tables_with_the_new_columns() {
         let directory = tempdir().unwrap();
         std::fs::create_dir_all(directory.path()).unwrap();
         let connection =
             rusqlite::Connection::open(directory.path().join("history.sqlite3")).unwrap();
+        // 第 1 版的两张事实表。
         connection
             .execute_batch(
                 "CREATE TABLE extension_dashboard_battles (
@@ -621,23 +723,117 @@ mod tests {
                      duration_seconds INTEGER, kills INTEGER, assists INTEGER, deaths INTEGER,
                      specials INTEGER, paint INTEGER, power REAL, power_kind TEXT,
                      PRIMARY KEY (account_id, record_id)
+                 );
+                 CREATE TABLE extension_dashboard_coop (
+                     account_id TEXT NOT NULL,
+                     record_id TEXT NOT NULL,
+                     played_at_ms INTEGER,
+                     rule TEXT, stage_id TEXT, stage_name TEXT, result_wave INTEGER, cleared INTEGER,
+                     waves_json TEXT NOT NULL, boss_appeared INTEGER NOT NULL, boss_defeated INTEGER,
+                     boss_id TEXT, boss_name TEXT, danger_rate REAL, grade_name TEXT, grade_point INTEGER,
+                     golden_eggs INTEGER, power_eggs INTEGER, rescue_count INTEGER, rescued_count INTEGER,
+                     defeat_enemy_count INTEGER, scale_gold INTEGER, scale_silver INTEGER, scale_bronze INTEGER,
+                     PRIMARY KEY (account_id, record_id)
                  );",
             )
             .unwrap();
         drop(connection);
 
-        let connection = history_store::open_database(directory.path()).unwrap();
-        let columns: Vec<String> = connection
-            .prepare("PRAGMA table_info(extension_dashboard_battles)")
-            .unwrap()
-            .query_map([], |row| row.get(1))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert!(columns.iter().any(|column| column == "weapon_image"));
+        let battles = columns(directory.path(), "extension_dashboard_battles");
+        for column in [
+            "weapon_image",
+            "sub_weapon_name",
+            "sub_weapon_image",
+            "special_weapon_name",
+            "special_weapon_image",
+        ] {
+            assert!(battles.iter().any(|name| name == column), "{column}");
+        }
+        let coop = columns(directory.path(), "extension_dashboard_coop");
+        for column in [
+            "golden_assists",
+            "weapons_json",
+            "rotation_start_ms",
+            "rotation_end_ms",
+        ] {
+            assert!(coop.iter().any(|name| name == column), "{column}");
+        }
         // 再打开一次不会重复加列。
-        drop(connection);
         history_store::open_database(directory.path()).unwrap();
+    }
+
+    #[test]
+    fn facts_carry_kits_assists_supplied_weapons_and_the_rotation() {
+        let directory = tempdir().unwrap();
+        let mut writer = history_store::HistoryRecordWriter::open(directory.path()).unwrap();
+        let mut armed = battle("b1", "2026-10-16T13:00:00Z", None);
+        armed.raw["myTeam"]["players"][0]["weapon"] = json!({
+            "id": "weapon-40",
+            "subWeapon": { "name": "吸盘炸弹", "image": { "url": "https://example.test/sub.png" } },
+            "specialWeapon": { "name": "螃蟹坦克", "image": { "url": "https://example.test/sp.png" } }
+        });
+        writer
+            .save("account", 1, HistoryFetchedRecord::Battle(armed))
+            .unwrap();
+        let mut shift = coop("c1", "2026-10-16T12:00:00Z");
+        shift.record.rotation_start_time = Some("2026-10-16T00:00:00Z".to_owned());
+        shift.record.rotation_end_time = Some("2026-10-17T16:00:00Z".to_owned());
+        shift.raw["myResult"]["goldenAssistCount"] = json!(5);
+        shift.raw["weapons"] = json!([
+            { "name": "Splattershot", "image": { "url": "https://example.test/c1.png" } }
+        ]);
+        writer
+            .save("account", 1, HistoryFetchedRecord::Coop(shift))
+            .unwrap();
+
+        let facts = load_facts(directory.path(), "account").unwrap();
+        let battle = &facts.battles[0];
+        assert_eq!(battle.sub_weapon_name.as_deref(), Some("吸盘炸弹"));
+        assert_eq!(battle.special_weapon_name.as_deref(), Some("螃蟹坦克"));
+        assert_eq!(
+            battle.special_weapon_image.as_deref(),
+            Some("https://example.test/sp.png")
+        );
+        let shift = &facts.coop[0];
+        assert_eq!(shift.golden_assists, Some(5));
+        assert_eq!(shift.supplied_weapons.len(), 1);
+        assert_eq!(
+            shift.supplied_weapons[0].name.as_deref(),
+            Some("Splattershot")
+        );
+        assert_eq!(shift.rotation_start_ms, Some(1_792_108_800_000));
+        assert_eq!(shift.rotation_end_ms, Some(1_792_252_800_000));
+    }
+
+    #[test]
+    fn a_backfilled_rotation_also_updates_the_coop_fact() {
+        let directory = tempdir().unwrap();
+        let mut writer = history_store::HistoryRecordWriter::open(directory.path()).unwrap();
+        writer
+            .save(
+                "account",
+                1,
+                HistoryFetchedRecord::Coop(coop("c1", "2026-10-16T12:00:00Z")),
+            )
+            .unwrap();
+        assert_eq!(
+            load_facts(directory.path(), "account").unwrap().coop[0].rotation_start_ms,
+            None
+        );
+        writer
+            .save(
+                "account",
+                2,
+                HistoryFetchedRecord::CoopRotation {
+                    start_time: "2026-10-16T00:00:00Z".to_owned(),
+                    end_time: "2026-10-17T16:00:00Z".to_owned(),
+                    record_ids: vec!["c1".to_owned()],
+                },
+            )
+            .unwrap();
+        let shift = &load_facts(directory.path(), "account").unwrap().coop[0];
+        assert_eq!(shift.rotation_start_ms, Some(1_792_108_800_000));
+        assert_eq!(shift.rotation_end_ms, Some(1_792_252_800_000));
     }
 
     #[test]

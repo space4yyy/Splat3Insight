@@ -469,12 +469,51 @@ dialog.close-prompt .delete-status { margin: 10px 0 0; color: var(--ink-2); font
 dialog.close-prompt .delete-status.is-error { color: var(--danger-text); }
 .delete-prompt .close-prompt-actions { margin-top: 20px; }
 
+/* 分析页：对战、武器、场地、鲑鱼跑 */
+.table-wrap.is-full { max-height: none; }
+.chart-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 22px; }
+.chart-block { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.chart-block > .subhead { margin: 0; }
+.card-select { max-width: 100%; padding: 4px 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; letter-spacing: inherit; }
+.weapon-detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, .9fr); gap: 16px 24px; }
+.stage-split { display: grid; gap: 4px; }
+.stage-split + .stage-split { margin-top: 8px; }
+.mini-label { margin: 0; color: var(--ink-3); font-size: 12px; letter-spacing: .06em; }
+table.data.compact td { padding: 5px 6px; }
+table.data.compact td:first-child { padding-left: 0; }
+table.data td.wrap { min-width: 200px; color: var(--ink-2); white-space: normal; }
+table.data.matrix td.rate-cell { padding: 3px 4px; }
+table.data.matrix th.center { text-align: center; }
+table.data.sticky-first th:first-child, table.data.sticky-first td:first-child { position: sticky; left: 0; z-index: 1; background: var(--panel); }
+table.data.sticky-first th:first-child { z-index: 2; }
+.rate-chip { display: block; min-width: 54px; padding: 3px 6px; border-radius: 6px; font-family: var(--font-number); text-align: center; }
+.rate-chip.is-thin { box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--ink-3); font-size: 12px; }
+.rate-chip.is-empty { color: var(--ink-3); }
+.legend-scale .thin-swatch { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.king-list { display: grid; gap: 14px; }
+.king-row { display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 12px; }
+.king-row img, .king-placeholder { width: 48px; height: 48px; object-fit: contain; }
+.king-placeholder { border-radius: 50%; background: var(--seq-0); }
+.king-body { display: grid; gap: 5px; min-width: 0; }
+.king-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.king-meta strong { font-size: 15px; }
+.king-foot { color: var(--ink-3); font-size: 12px; }
+.king-bar { height: 8px; overflow: hidden; border-radius: 4px; background: var(--seq-0); }
+.king-bar > span { display: block; height: 100%; border-radius: 4px; background: var(--mode-salmon); }
+.scale-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 13px; }
+.scale-inline { display: inline-flex; gap: 10px; }
+.scale-count { display: inline-flex; align-items: center; gap: 4px; color: var(--ink); font-family: var(--font-number); }
+.scale-count img { width: 18px; height: 18px; }
+.supplied-name { color: var(--ink-2); font-size: 12px; }
+.pill { display: inline-block; margin-left: 8px; padding: 0 8px; border-radius: 999px; background: var(--accent-2-wash); color: var(--accent-2-text); font-size: 12px; }
+
 @media (max-width: 1180px) {
   .span-8, .span-7, .span-5, .span-4 { grid-column: span 12; }
   .is-salmon [data-card="form"] { grid-column: span 12; }
 }
 @media (max-width: 1080px) {
   .obs-layout { grid-template-columns: minmax(0, 1fr); }
+  .weapon-detail { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 900px) {
   .app { grid-template-columns: minmax(0, 1fr); }
