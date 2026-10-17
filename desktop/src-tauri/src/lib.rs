@@ -32,6 +32,7 @@ pub(crate) mod history_store;
 pub(crate) mod image_cache;
 pub(crate) mod overlay_server;
 mod sync_orchestrator;
+mod sync_schedule;
 
 type Registry = AccountRegistry<CachedSecretStore<KeyringSecretStore>>;
 
@@ -507,7 +508,6 @@ impl Default for SyncStatus {
 }
 
 const HISTORY_WINDOW_SIZE: usize = 50;
-const BACKGROUND_SYNC_INTERVAL_SECS: u64 = 10;
 const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 const LOG_BACKUP_COUNT: usize = 3;
 
@@ -849,14 +849,15 @@ fn start_background_sync(
     auth_log_path: PathBuf,
     sync_runtime: Arc<SyncRuntime>,
     sync_trigger: Arc<tokio::sync::Notify>,
+    obs_activity: sync_schedule::ObsActivity,
 ) {
     tauri::async_runtime::spawn(async move {
         // Let the main webview paint before the first Keychain lookup can
         // display a macOS authorization prompt.
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         loop {
-            let next_sync_at = tokio::time::Instant::now()
-                + std::time::Duration::from_secs(BACKGROUND_SYNC_INTERVAL_SECS);
+            // Sync often while OBS shows the cards, every few minutes otherwise.
+            let next_sync_at = tokio::time::Instant::now() + obs_activity.sync_interval(now_ms());
             match active_account_sync_state(&registry) {
                 Ok(Some((account_id, true))) => {
                     let _ = sync_account(
@@ -1392,6 +1393,12 @@ async fn refresh_splatnet_tokens(
     Ok(())
 }
 
+/// 立即同步一次：左下角的“立即同步”，以及窗口回到前台时。
+#[tauri::command]
+fn request_sync(state: State<'_, AppState>) {
+    state.sync_trigger.notify_one();
+}
+
 #[tauri::command]
 async fn sync_history(
     account_id: String,
@@ -1789,6 +1796,11 @@ pub fn run() {
             let registry = Arc::new(Mutex::new(registry));
             let sync_runtime = Arc::new(SyncRuntime::new());
             let sync_trigger = Arc::new(tokio::sync::Notify::new());
+            // OBS 开始显示卡片时立即同步一次，之后按较短的间隔同步。
+            let obs_activity = {
+                let sync_trigger = Arc::clone(&sync_trigger);
+                sync_schedule::ObsActivity::new(move || sync_trigger.notify_one())
+            };
             if let Err(error) = history_store::check_integrity(&history_dir) {
                 log_console_error("history", &error);
             }
@@ -1811,6 +1823,7 @@ pub fn run() {
                 overlay_server::OverlayServerConfig {
                     accounts_path: metadata_path,
                     history_dir: history_dir.clone(),
+                    activity: obs_activity.clone(),
                 },
             );
             app.manage(AppState {
@@ -1841,6 +1854,7 @@ pub fn run() {
                 config_dir.join("auth.log"),
                 sync_runtime,
                 sync_trigger,
+                obs_activity,
             );
 
             Ok(())
@@ -1872,6 +1886,7 @@ pub fn run() {
             cancel_nintendo_login,
             complete_nintendo_login,
             refresh_splatnet_tokens,
+            request_sync,
             sync_history,
             set_active_account,
             hide_main_window,

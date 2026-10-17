@@ -215,6 +215,9 @@ button:focus-visible, [tabindex]:focus-visible, textarea:focus-visible { outline
 .theme-switch { display: grid; gap: 8px; padding: 12px 8px 0; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 12px; letter-spacing: .08em; }
 .sidebar-foot { display: grid; gap: 6px; margin-top: 4px; padding: 12px 10px 2px; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 12px; }
 .sidebar-foot .is-error { color: var(--danger-text); }
+.sidebar-sync-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.sync-now { flex: none; padding: 0; border: 0; background: none; color: var(--accent-2-text); font: inherit; letter-spacing: inherit; cursor: pointer; }
+.sync-now:hover { text-decoration: underline; }
 .status-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--good); vertical-align: 1px; }
 .status-dot.is-idle { background: var(--ink-3); }
 .status-dot.is-busy { background: var(--accent-2-text); }

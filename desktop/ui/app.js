@@ -587,7 +587,26 @@
     foot.replaceChildren(el('span', { class: `status-dot ${summary.tone}`.trim(), 'aria-hidden': 'true' }), document.createTextNode(summary.text));
     foot.title = status?.error || status?.message || '';
     foot.classList.toggle('is-error', status?.state === 'error');
+    // 有账号、已获取权限、当前没在同步时，可以立即同步一次。
+    const busy = ['preparing', 'syncing', 'refreshing'].includes(status?.state);
+    $('#sync-now').hidden = !status?.account_id || busy || Boolean(status?.message?.includes('权限'));
   }
+  async function requestSync() {
+    try {
+      await invoke('request_sync');
+    } catch (error) {
+      setMessage(String(error), true);
+    }
+    void refreshSyncStatus();
+  }
+  $('#sync-now').addEventListener('click', () => {
+    void requestSync();
+  });
+  // 窗口回到前台时，距上次同步超过 1 分钟就立即同步一次，打开就能看到最新数据。
+  const FOCUS_SYNC_AFTER_MS = 60000;
+  window.addEventListener('focus', () => {
+    if (app.lastCompletedSyncAt && Date.now() - app.lastCompletedSyncAt > FOCUS_SYNC_AFTER_MS) void requestSync();
+  });
   async function refreshSyncStatus() {
     try {
       const status = await invoke('get_sync_status');

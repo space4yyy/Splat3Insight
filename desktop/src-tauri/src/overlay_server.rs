@@ -214,6 +214,8 @@ fn try_reserve_connection(active: &AtomicUsize) -> bool {
 pub struct OverlayServerConfig {
     pub accounts_path: PathBuf,
     pub history_dir: PathBuf,
+    /// Card data requests tell the background sync that OBS is showing the cards.
+    pub(crate) activity: crate::sync_schedule::ObsActivity,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -780,6 +782,7 @@ fn route_request(
             body: GAME_NAMES.as_bytes().to_vec(),
         }),
         "/api/overlay" => {
+            config.activity.record_request(crate::now_ms());
             match load_overlay_state(config, overlay_match_category(request_target)) {
                 Ok(state) => Ok(HttpResponse {
                     status: "200 OK",
@@ -966,6 +969,7 @@ mod tests {
             &OverlayServerConfig {
                 accounts_path,
                 history_dir,
+                activity: Default::default(),
             },
         )
         .unwrap();
@@ -993,6 +997,7 @@ mod tests {
             &OverlayServerConfig {
                 accounts_path,
                 history_dir,
+                activity: Default::default(),
             },
         )
         .unwrap();
@@ -1000,6 +1005,30 @@ mod tests {
         assert_eq!(response.status, "200 OK");
         assert!(body.contains("\"selected\":null"));
         assert!(body.contains("\"sample_size\":0"));
+    }
+
+    #[test]
+    fn card_data_requests_tell_the_sync_that_obs_shows_the_cards() {
+        let directory = tempdir().unwrap();
+        let starts = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&starts);
+        let config = OverlayServerConfig {
+            accounts_path: directory.path().join("missing-accounts.json"),
+            history_dir: directory.path().join("history"),
+            activity: crate::sync_schedule::ObsActivity::new(move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+            }),
+        };
+
+        // Loading a card page is not enough; the card has to poll its data.
+        route_request("GET", "/overlay", &config).unwrap();
+        assert_eq!(starts.load(Ordering::Relaxed), 0);
+        assert!(!config.activity.is_live(crate::now_ms()));
+
+        route_request("GET", "/api/overlay", &config).unwrap();
+        route_request("GET", "/api/overlay?xmatch", &config).unwrap();
+        assert_eq!(starts.load(Ordering::Relaxed), 1);
+        assert!(config.activity.is_live(crate::now_ms()));
     }
 
     #[test]
@@ -1011,6 +1040,7 @@ mod tests {
             &OverlayServerConfig {
                 accounts_path: directory.path().join("missing-accounts.json"),
                 history_dir: directory.path().join("history"),
+                activity: Default::default(),
             },
         )
         .unwrap();
@@ -1031,6 +1061,7 @@ mod tests {
             &OverlayServerConfig {
                 accounts_path,
                 history_dir: directory.path().join("history"),
+                activity: Default::default(),
             },
         )
         .unwrap();
@@ -1049,6 +1080,7 @@ mod tests {
             &OverlayServerConfig {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
+                activity: Default::default(),
             },
         )
         .unwrap();
@@ -1066,6 +1098,7 @@ mod tests {
             &OverlayServerConfig {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
+                activity: Default::default(),
             },
         )
         .unwrap();
@@ -1083,6 +1116,7 @@ mod tests {
             &OverlayServerConfig {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
+                activity: Default::default(),
             },
         )
         .unwrap();
@@ -1101,6 +1135,7 @@ mod tests {
             &OverlayServerConfig {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
+                activity: Default::default(),
             },
         )
         .unwrap();
@@ -1120,6 +1155,7 @@ mod tests {
             &OverlayServerConfig {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
+                activity: Default::default(),
             },
         )
         .unwrap();
@@ -1138,6 +1174,7 @@ mod tests {
             &OverlayServerConfig {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
+                activity: Default::default(),
             },
         )
         .unwrap();
@@ -1157,6 +1194,7 @@ mod tests {
         let config = OverlayServerConfig {
             accounts_path: directory.path().join("accounts.json"),
             history_dir: directory.path().join("history"),
+            activity: Default::default(),
         };
 
         for card in obs_card_catalog() {
@@ -1184,6 +1222,7 @@ mod tests {
         let config = OverlayServerConfig {
             accounts_path: directory.path().join("accounts.json"),
             history_dir: directory.path().join("history"),
+            activity: Default::default(),
         };
 
         for path in [
@@ -1215,6 +1254,7 @@ mod tests {
             &OverlayServerConfig {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
+                activity: Default::default(),
             },
         )
         .unwrap();
