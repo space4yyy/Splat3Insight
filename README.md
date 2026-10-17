@@ -35,6 +35,8 @@ make dev
 npm --prefix desktop run tauri -- dev
 ```
 
+macOS 上可以先运行一次 `make dev-signing`：开发版会用本机固定的证书签名，钥匙串的“始终允许”在重新编译后依然有效，不用每次输入密码。
+
 ## 构建与检查
 
 ```sh

@@ -1,0 +1,4 @@
+# macOS 开发版启动前用本机开发证书签名（desktop/scripts/dev-signing.sh），
+# 让钥匙串的“始终允许”在重新编译后依然有效；没有配置证书时直接启动。
+[target.'cfg(target_os = "macos")']
+runner = ["desktop/scripts/dev-signing.sh", "run"]

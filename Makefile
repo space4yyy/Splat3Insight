@@ -1,10 +1,14 @@
-.PHONY: install dev build test fmt-check check clean
+.PHONY: install dev dev-signing build test fmt-check check clean
 
 install:
 	npm --prefix desktop install
 
 dev:
 	npm --prefix desktop run tauri -- dev
+
+# macOS：创建本机开发签名证书（只需一次），重新编译后不再反复要求钥匙串密码。
+dev-signing:
+	desktop/scripts/dev-signing.sh setup
 
 build:
 	npm --prefix desktop run tauri -- build
