@@ -11,6 +11,13 @@
   const analysis = window.Splat3Analysis;
   const cards = window.Splat3OverlayCard;
 
+  // Windows 上换成系统自己的叫法：凭据管理器、系统托盘、文件资源管理器。
+  if (/Windows/i.test(navigator.userAgent)) {
+    document.querySelectorAll('[data-windows]').forEach((node) => {
+      node.textContent = node.dataset.windows;
+    });
+  }
+
   const VIEWS = {
     overview: ['总览', '最近的状态、战力走势和常用配置，一页看完。'],
     battles: ['对战', '规则、连胜连败、击倒和对局时长。'],

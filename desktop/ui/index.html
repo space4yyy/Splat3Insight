@@ -406,7 +406,7 @@
               <div class="card-head">
                 <div>
                   <h2 class="card-title">账号</h2>
-                  <p class="card-sub">登录信息保存在系统钥匙串里，历史数据只保存在这台电脑上。</p>
+                  <p class="card-sub">登录信息保存在<span data-windows="凭据管理器">系统钥匙串</span>里，历史数据只保存在这台电脑上。</p>
                 </div>
                 <div class="card-actions"><button type="button" class="button-primary" id="login">添加账号</button></div>
               </div>
@@ -428,11 +428,11 @@
 
     <dialog id="background-close-prompt" class="close-prompt" aria-labelledby="background-close-title">
       <h2 id="background-close-title">让小组件在后台运行？</h2>
-      <p>隐藏主界面后，OBS 服务和数据同步会继续运行。之后可从状态栏图标重新打开，或选择退出应用。</p>
+      <p>隐藏主界面后，OBS 服务和数据同步会继续运行。之后可从<span data-windows="系统托盘">状态栏</span>图标重新打开，或选择退出应用。</p>
       <div class="close-prompt-actions">
         <button id="cancel-close" class="ghost" type="button">取消</button>
         <button id="exit-from-close" class="ghost" type="button">退出应用</button>
-        <button id="hide-to-tray" class="button-primary" type="button">隐藏到状态栏</button>
+        <button id="hide-to-tray" class="button-primary" type="button" data-windows="隐藏到系统托盘">隐藏到状态栏</button>
       </div>
     </dialog>
     <dialog id="delete-account-dialog" class="close-prompt delete-prompt" aria-labelledby="delete-account-title">
@@ -446,7 +446,7 @@
         <p>删除前建议先导出一份数据到本地，导出的文件不会被删除。</p>
         <div class="delete-export-actions">
           <button type="button" class="ghost" id="delete-export-button">导出数据</button>
-          <button type="button" class="ghost" id="delete-export-reveal" hidden>在访达中显示</button>
+          <button type="button" class="ghost" id="delete-export-reveal" data-windows="在文件资源管理器中显示" hidden>在访达中显示</button>
         </div>
       </div>
       <p class="delete-status" id="delete-account-status" role="status" aria-live="polite" hidden></p>

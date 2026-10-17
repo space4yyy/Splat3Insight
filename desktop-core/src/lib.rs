@@ -136,18 +136,15 @@ impl KeyringSecretStore {
 impl SecretStore for KeyringSecretStore {
     fn put(&self, account_id: &str, secret: &AccountSecret) -> Result<(), String> {
         let entry = self.entry(account_id)?;
-        let encoded = serde_json::to_string(secret).map_err(|error| error.to_string())?;
         entry
-            .set_password(&encoded)
+            .set_secret(&encode_secret(secret)?)
             .map_err(|error| error.to_string())
     }
 
     fn get(&self, account_id: &str) -> Result<Option<AccountSecret>, String> {
         let entry = self.entry(account_id)?;
-        match entry.get_password() {
-            Ok(encoded) => serde_json::from_str(&encoded)
-                .map(Some)
-                .map_err(|error| error.to_string()),
+        match entry.get_secret() {
+            Ok(encoded) => decode_secret(&encoded).map(Some),
             Err(error) if is_missing_credential(&error) => Ok(None),
             Err(error) => Err(error.to_string()),
         }
@@ -161,6 +158,29 @@ impl SecretStore for KeyringSecretStore {
             Err(error) => Err(error.to_string()),
         }
     }
+}
+
+/// Stores the secret as UTF-8 JSON bytes. `set_password` writes UTF-16 on Windows, twice
+/// the bytes, and the three tokens can then exceed Credential Manager's 2560-byte limit.
+/// The Keychain stores passwords as UTF-8 either way, so macOS entries are unchanged.
+fn encode_secret(secret: &AccountSecret) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(secret).map_err(|error| error.to_string())
+}
+
+/// Reads UTF-8 JSON, or the UTF-16 JSON that `set_password` wrote on Windows before.
+fn decode_secret(encoded: &[u8]) -> Result<AccountSecret, String> {
+    serde_json::from_slice(encoded).or_else(|error| {
+        let units = (encoded.len() % 2 == 0).then(|| {
+            encoded
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect::<Vec<_>>()
+        });
+        units
+            .and_then(|units| String::from_utf16(&units).ok())
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .ok_or_else(|| error.to_string())
+    })
 }
 
 fn is_missing_credential(error: &keyring::Error) -> bool {
@@ -411,6 +431,23 @@ mod tests {
             game_web_token: Some(format!("game-{value}")),
             bullet_token: Some(format!("bullet-{value}")),
         }
+    }
+
+    #[test]
+    fn keyring_secrets_are_utf8_json_and_older_utf16_entries_still_read() {
+        let secret = secret("a");
+        let encoded = encode_secret(&secret).unwrap();
+        assert_eq!(encoded, serde_json::to_vec(&secret).unwrap());
+        assert_eq!(decode_secret(&encoded).unwrap(), secret);
+
+        // Windows entries written by `set_password` hold UTF-16LE text.
+        let utf16 = serde_json::to_string(&secret)
+            .unwrap()
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        assert_eq!(decode_secret(&utf16).unwrap(), secret);
+        assert!(decode_secret(b"not json").is_err());
     }
 
     #[test]
