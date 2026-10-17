@@ -44,7 +44,14 @@
   let salmonRun = null;
   let filterListener = null;
   let openRecordListener = null;
-  const state = { range: '30d', mode: 'all', rule: 'AREA', heatMetric: 'count', tables: {} };
+  const state = { range: '30d', mode: 'all', coopRule: 'all', rule: 'AREA', heatMetric: 'count', tables: {} };
+  // 打工模式（SplatNet 的 rule），名称取游戏里的说法。
+  const COOP_RULES = [
+    { key: 'REGULAR', label: '鲑鱼跑' },
+    { key: 'BIG_RUN', label: '大型跑' },
+    { key: 'TEAM_CONTEST', label: '团队打工竞赛' },
+  ];
+  const COOP_RULE_LABEL = Object.fromEntries(COOP_RULES.map((rule) => [rule.key, rule.label]));
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const ruleLabel = (battle) => RULE_LABEL[battle.rule] || battle.ruleName || '未知规则';
@@ -982,6 +989,9 @@
     ({ battles, shifts, xSettlements } = data.prepare(facts));
     xRules = new Set(xSettlements.map((item) => item.rule));
     if (!xRules.has(state.rule)) state.rule = RANKED_RULES.find((rule) => xRules.has(rule)) || RANKED_RULES[0];
+    coopRules = COOP_RULES.filter((rule) => shifts.some((shift) => shift.rule === rule.key));
+    if (!coopRules.some((rule) => rule.key === state.coopRule)) state.coopRule = 'all';
+    renderCoopRuleFilter();
   }
 
   const modeFilter = document.getElementById('mode-filter');
@@ -992,6 +1002,17 @@
     { key: 'salmon', label: '打工', color: () => COLOR.salmon },
   ]) {
     modeFilter.append(el('button', { type: 'button', 'data-mode': option.key, 'aria-pressed': 'false' }, [el('span', { class: 'mode-dot', style: `background:${option.color()}`, 'aria-hidden': 'true' }), document.createTextNode(option.label)]));
+  }
+  // 鲑鱼跑页的打工模式筛选：只在记录里有不止一种打工模式时显示。
+  const coopRuleFilter = document.getElementById('coop-rule-filter');
+  let coopRules = [];
+  let modeScope = 'all';
+  function renderCoopRuleFilter() {
+    coopRuleFilter.replaceChildren(
+      el('button', { type: 'button', 'data-coop-rule': 'all', 'aria-pressed': String(state.coopRule === 'all'), text: '全部模式' }),
+      ...coopRules.map((rule) => el('button', { type: 'button', 'data-coop-rule': rule.key, 'aria-pressed': String(state.coopRule === rule.key), text: rule.label })),
+    );
+    coopRuleFilter.hidden = modeScope !== 'salmon' || coopRules.length < 2;
   }
   function bindSegmented(container, attribute, apply) {
     container.addEventListener('click', (event) => {
@@ -1005,6 +1026,7 @@
   const filtersChanged = () => (filterListener ? filterListener() : render());
   bindSegmented(document.getElementById('range-filter'), 'data-range', (value) => { state.range = value; filtersChanged(); });
   bindSegmented(modeFilter, 'data-mode', (value) => { state.mode = value; filtersChanged(); });
+  bindSegmented(coopRuleFilter, 'data-coop-rule', (value) => { state.coopRule = value; filtersChanged(); });
   bindSegmented(document.getElementById('heat-metric'), 'data-metric', (value) => { state.heatMetric = value; renderHeat(); });
   for (const button of document.querySelectorAll('[data-table-toggle]')) {
     button.addEventListener('click', () => {
@@ -1035,14 +1057,17 @@
       const [start, end] = rangeBounds(state.range);
       return state.mode === 'salmon' ? { salmon: true, rows: shiftsIn(start, end) } : { salmon: false, rows: battlesIn(start, end) };
     },
-    // 分析页的数据：当前时间范围和模式下的对战，以及时间范围内的打工。
+    // 分析页的数据：当前时间范围和模式下的对战，以及时间范围内、所选打工模式的打工。
     analysisSource() {
       const [start, end] = rangeBounds(state.range);
-      return { start, end, mode: state.mode, battles: battlesIn(start, end), shifts: shiftsIn(start, end) };
+      const inCoopRule = (shift) => state.coopRule === 'all' || shift.rule === state.coopRule;
+      return { start, end, mode: state.mode, battles: battlesIn(start, end), shifts: shiftsIn(start, end).filter(inCoopRule) };
     },
     tableOn: (key) => Boolean(state.tables[key]),
-    // 对战、武器、场地页不提供“打工”筛选；鲑鱼跑页只受时间范围影响，不显示模式筛选。
+    // 对战、武器、场地页不提供“打工”筛选；鲑鱼跑页把对战模式筛选换成打工模式筛选。
     setModeScope(scope) {
+      modeScope = scope;
+      coopRuleFilter.hidden = scope !== 'salmon' || coopRules.length < 2;
       modeFilter.hidden = scope === 'salmon';
       modeFilter.querySelector('[data-mode="salmon"]').hidden = scope === 'battles';
       if (scope === 'battles' && state.mode === 'salmon') {
@@ -1052,7 +1077,7 @@
     },
     ui: Object.freeze({
       el, fmtDateTime, fmtDate, fmtShortDate, fmtSince, count, pct, fixed, signed, deltaNode,
-      MODE, MODES, RULE_LABEL, RANKED_RULES, ruleLabel, modeLabelOf, modeColor, powerNode, emptyState, clickableRow,
+      MODE, MODES, RULE_LABEL, RANKED_RULES, COOP_RULE_LABEL, ruleLabel, modeLabelOf, modeColor, powerNode, emptyState, clickableRow,
       svgEl, svgText, niceScale, columnPath, renderTable, textOn, divergingColor, showTip, hideTip, bindTip,
       colors: () => COLOR,
     }),

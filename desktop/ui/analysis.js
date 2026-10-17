@@ -9,7 +9,7 @@
   const { WATER } = window.Splat3DashboardData;
   const {
     el, fmtDateTime, fmtDate, fmtShortDate, fmtSince, count, pct, fixed, signed,
-    MODE, RULE_LABEL, modeColor, emptyState, clickableRow,
+    MODE, RULE_LABEL, COOP_RULE_LABEL, modeColor, emptyState, clickableRow,
     svgEl, svgText, niceScale, columnPath, renderTable, textOn, divergingColor, showTip, hideTip, bindTip,
   } = dashboard.ui;
   let COLOR = dashboard.ui.colors();
@@ -696,7 +696,8 @@
   function renderGradeChart(list, start, end) {
     const box = $('grade-chart');
     const graded = list.filter((shift) => analysis.gradeLadder(shift) != null);
-    if (!graded.length) { noShifts(box); return; }
+    if (!list.length) { noShifts(box); return; }
+    if (!graded.length) { emptyState(box, '没有评级记录', '换一个打工模式看看。'); return; }
     if (dashboard.tableOn('grade')) {
       renderTable(box, [{ label: '时间', number: true }, { label: '场地' }, { label: '结果' }, { label: '评级', num: true }], [...graded].reverse().map((shift) => [
         fmtDateTime(shift.t), shift.stage, shiftResult(shift), gradeText(shift.gradeName, shift.gradePoint),
@@ -824,7 +825,10 @@
       const hasScales = group.scales.gold || group.scales.silver || group.scales.bronze;
       return [
         el('span', {}, [document.createTextNode(`${fmtDateTime(range[0])} – ${fmtDateTime(range[1])}`), group.ongoing ? el('span', { class: 'pill', text: '进行中' }) : null]),
-        group.stage,
+        // 鲑鱼跑以外的打工模式（大型跑、团队打工竞赛）在场地后面标出来。
+        group.rule && group.rule !== 'REGULAR'
+          ? el('span', {}, [document.createTextNode(group.stage), el('span', { class: 'pill', text: COOP_RULE_LABEL[group.rule] ?? group.rule })])
+          : group.stage,
         suppliedCell(group.supplied),
         String(group.n),
         pct(group.cleared / group.n, 0),

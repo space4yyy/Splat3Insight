@@ -316,6 +316,7 @@
           last: group.last,
           ongoing: group.end != null && group.end > now,
           stage: lastShift.stage,
+          rule: lastShift.rule,
           supplied: lastShift.supplied || [],
           n: list.length,
           cleared: list.filter((shift) => shift.cleared).length,

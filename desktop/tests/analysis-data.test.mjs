@@ -260,4 +260,7 @@ test('rotations group by their window, fall back to stage and weapons, and list 
   deepEqual(regular.grade, { name: '达人', point: 420 });
   assert.equal(groups[0].start, null);
   assert.equal(groups[0].first, 120 * HOUR);
+  // 大型跑和同时段的鲑鱼跑分成两期，各自带着打工模式。
+  assert.equal(groups[3].rule, 'BIG_RUN');
+  assert.equal(regular.rule, 'REGULAR');
 });
