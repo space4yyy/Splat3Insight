@@ -489,3 +489,20 @@
 .empty {
   display: none;
 }
+
+/* 数字变化时短暂发光，配合渲染器里的数字滚动。不写起止帧，前后沿用元素原本的样式。 */
+@keyframes overlay-card-number-changed {
+  20% {
+    text-shadow: 0 0 0.12em currentColor, 0 0 0.4em currentColor;
+  }
+}
+
+.is-number-changed {
+  animation: overlay-card-number-changed 1.2s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-number-changed {
+    animation: none;
+  }
+}

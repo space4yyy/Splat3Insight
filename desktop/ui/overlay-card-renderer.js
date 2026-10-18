@@ -24,6 +24,74 @@
   const mountedCardTypes = new WeakMap();
   const isNumber = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
   const displayNumber = (value, digits = 0) => isNumber(value) ? Number(value).toFixed(digits) : '—';
+
+  // 数字变化时滚动到新值并短暂发亮；第一次显示、没有变化或不是数字时直接替换。
+  // target 可以是元素，也可以是元素里的文字节点（击倒、死亡、K/D 的数字后面还跟着单位）。
+  const NUMBER_PATTERN = /^([^\d-]*)(-?\d+(?:\.\d+)?)(.*)$/;
+  const NUMBER_ROLL_MS = 800;
+  const NUMBER_GLOW_MS = 1200;
+  const rollingNumbers = new WeakMap();
+  const glowTimers = new WeakMap();
+  const reducedMotion = () => Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+  function showNumber(target, text) {
+    const isTextNode = target.nodeType === 3;
+    const element = isTextNode ? target.parentElement : target;
+    const write = (value) => {
+      if (isTextNode) target.nodeValue = value;
+      else target.textContent = value;
+    };
+    const previousRoll = rollingNumbers.get(target);
+    const current = previousRoll ? previousRoll.text : (isTextNode ? target.nodeValue : target.textContent);
+    if (current === text) return;
+    if (previousRoll) previousRoll.stop();
+    const shownBefore = element.dataset.numberShown === 'true';
+    element.dataset.numberShown = 'true';
+    if (!shownBefore || !window.requestAnimationFrame || reducedMotion()) {
+      write(text);
+      return;
+    }
+    const from = NUMBER_PATTERN.exec(current);
+    const to = NUMBER_PATTERN.exec(text);
+    if (from && to && from[1] === to[1] && from[3] === to[3]) {
+      const start = Number(from[2]);
+      const end = Number(to[2]);
+      const digits = to[2].split('.')[1]?.length ?? 0;
+      let began = null;
+      const roll = { text, frame: 0, timer: 0 };
+      roll.stop = () => {
+        window.cancelAnimationFrame?.(roll.frame);
+        clearTimeout(roll.timer);
+        if (rollingNumbers.get(target) === roll) rollingNumbers.delete(target);
+      };
+      const finish = () => {
+        roll.stop();
+        write(text);
+      };
+      const step = (now) => {
+        began ??= now;
+        const progress = Math.min(1, Math.max(0, (now - began) / NUMBER_ROLL_MS));
+        if (progress >= 1) {
+          finish();
+          return;
+        }
+        const eased = 1 - (1 - progress) ** 3;
+        write(`${to[1]}${(start + (end - start) * eased).toFixed(digits)}${to[3]}`);
+        roll.frame = window.requestAnimationFrame(step);
+      };
+      rollingNumbers.set(target, roll);
+      roll.frame = window.requestAnimationFrame(step);
+      // 页面在后台时浏览器可能不再刷新画面，到点直接写上最终值。
+      roll.timer = setTimeout(finish, NUMBER_ROLL_MS + 200);
+    } else {
+      write(text);
+    }
+    clearTimeout(glowTimers.get(element));
+    element.classList.remove('is-number-changed');
+    void element.offsetWidth;
+    element.classList.add('is-number-changed');
+    glowTimers.set(element, setTimeout(() => element.classList.remove('is-number-changed'), NUMBER_GLOW_MS));
+  }
+
   // 规则优先用卡片自己的简称（真格鱼虎等），其余查官方文本。
   const localizeRule = (value) => {
     const label = String(value ?? '').trim();
@@ -150,23 +218,23 @@
     refs.mode.classList.toggle('mode-event-match', battle.mode === 'EVENT_MATCH');
     refs.mode.classList.toggle('mode-private-battle', isPrivateBattle);
 
-    refs.wins.textContent = `Win ${displayNumber(summary.win)}`;
-    refs.losses.textContent = `Lose ${displayNumber(summary.lose)}`;
-    refs.winRate.textContent = `${displayNumber(summary.win_rate)}%`;
+    showNumber(refs.wins, `Win ${displayNumber(summary.win)}`);
+    showNumber(refs.losses, `Lose ${displayNumber(summary.lose)}`);
+    showNumber(refs.winRate, `${displayNumber(summary.win_rate)}%`);
 
-    refs.power.textContent = displayNumber(battle.power, 1);
+    showNumber(refs.power, displayNumber(battle.power, 1));
     setPlaceholder(refs.power, battle.power);
-    refs.delta.textContent = delta;
+    showNumber(refs.delta, delta);
     refs.delta.classList.toggle('positive', battle.power_delta > 0);
     refs.delta.classList.toggle('negative', battle.power_delta < 0);
     setPlaceholder(refs.delta, battle.power_delta);
 
-    refs.killValue.nodeValue = displayNumber(battle.kills);
-    refs.assists.textContent = `(${displayNumber(battle.assists)})k`;
+    showNumber(refs.killValue, displayNumber(battle.kills));
+    showNumber(refs.assists, `(${displayNumber(battle.assists)})k`);
     setPlaceholder(refs.kills, battle.kills);
-    refs.deathValue.nodeValue = displayNumber(battle.deaths);
+    showNumber(refs.deathValue, displayNumber(battle.deaths));
     setPlaceholder(refs.deaths, battle.deaths);
-    refs.kdValue.nodeValue = kd;
+    showNumber(refs.kdValue, kd);
     refs.kd.classList.toggle('is-placeholder', !hasKills || !hasDeaths);
     return true;
   }
@@ -213,13 +281,13 @@
   }
 
   function fillSalmonTotals(scope, fields, data) {
-    fields['gold-scale'].textContent = `x${displayNumber(data.gold_scale)}`;
-    fields['silver-scale'].textContent = `x${displayNumber(data.silver_scale)}`;
-    fields['bronze-scale'].textContent = `x${displayNumber(data.bronze_scale)}`;
-    fields['total-count'].textContent = isNumber(data.clear_count) && isNumber(data.failure_count)
+    showNumber(fields['gold-scale'], `x${displayNumber(data.gold_scale)}`);
+    showNumber(fields['silver-scale'], `x${displayNumber(data.silver_scale)}`);
+    showNumber(fields['bronze-scale'], `x${displayNumber(data.bronze_scale)}`);
+    showNumber(fields['total-count'], isNumber(data.clear_count) && isNumber(data.failure_count)
       ? `x${displayNumber(Number(data.clear_count) + Number(data.failure_count))}`
-      : '—';
-    fields['failure-count'].textContent = displayNumber(data.failure_count);
+      : '—');
+    showNumber(fields['failure-count'], displayNumber(data.failure_count));
     const bossAsset = salmonBossIcons[Number(data.boss_enemy_id)];
     const bossCountAvailable = isNumber(data.boss_encounter_count) && isNumber(data.boss_undefeated_count);
     const bossWidget = scope.querySelector('[data-salmon-boss]');
@@ -232,8 +300,8 @@
       gauge.style.setProperty('--boss-wave-y-scale', `${waveYScale * 100}%`);
       gauge.dataset.bossProgress = String(progress);
       gauge.setAttribute('aria-label', `头目出现进度 ${progress}/5`);
-      fields['boss-encounter-count'].textContent = `x${displayNumber(data.boss_encounter_count)}`;
-      fields['boss-undefeated-count'].textContent = `(${displayNumber(data.boss_undefeated_count)})`;
+      showNumber(fields['boss-encounter-count'], `x${displayNumber(data.boss_encounter_count)}`);
+      showNumber(fields['boss-undefeated-count'], `(${displayNumber(data.boss_undefeated_count)})`);
       bossWidget.hidden = false;
     } else {
       bossWidget.hidden = true;
@@ -320,20 +388,20 @@ ${SALMON_TOTALS_HTML}
 
     const stage = String(data.stage ?? '').trim();
     refs.fields.stage.textContent = localizeCoopStage(stage);
-    refs.fields['defeat-enemy-count'].textContent = `x${displayNumber(data.defeat_enemy_count)}`;
-    refs.fields['golden-egg-count'].textContent = `x${displayNumber(data.golden_egg_count)}`;
-    refs.fields['power-egg-count'].textContent = `x${displayNumber(data.power_egg_count)}`;
-    refs.fields['rescued-count'].textContent = `x${displayNumber(data.rescued_count)}`;
-    refs.fields['rescue-count'].textContent = `x${displayNumber(data.rescue_count)}`;
+    showNumber(refs.fields['defeat-enemy-count'], `x${displayNumber(data.defeat_enemy_count)}`);
+    showNumber(refs.fields['golden-egg-count'], `x${displayNumber(data.golden_egg_count)}`);
+    showNumber(refs.fields['power-egg-count'], `x${displayNumber(data.power_egg_count)}`);
+    showNumber(refs.fields['rescued-count'], `x${displayNumber(data.rescued_count)}`);
+    showNumber(refs.fields['rescue-count'], `x${displayNumber(data.rescue_count)}`);
     fillSalmonTotals(refs.card, refs.fields, data);
     refs.fields.grade.textContent = localizeGrade(data.grade);
-    refs.fields['grade-point'].textContent = isNumber(data.grade_point) ? displayNumber(data.grade_point) : '';
+    showNumber(refs.fields['grade-point'], isNumber(data.grade_point) ? displayNumber(data.grade_point) : '');
     if (isNumber(data.danger_rate)) {
       const dangerRate = Number(data.danger_rate);
       const dangerPercent = dangerRate < 10 ? dangerRate * 100 : dangerRate;
-      refs.fields['danger-rate'].textContent = `${Number(dangerPercent.toFixed(1))}%`;
+      showNumber(refs.fields['danger-rate'], `${Number(dangerPercent.toFixed(1))}%`);
     } else {
-      refs.fields['danger-rate'].textContent = '—';
+      showNumber(refs.fields['danger-rate'], '—');
     }
     return true;
   }
