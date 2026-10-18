@@ -992,6 +992,49 @@ fn export_history(
     Ok(path.display().to_string())
 }
 
+/// 导入本应用导出的历史文件。文件内容作为原始字节传入，账号 ID 放在 `Account-Id` 请求头里。
+#[tauri::command]
+async fn import_history(
+    request: tauri::ipc::Request<'_>,
+    state: State<'_, AppState>,
+) -> Result<history_store::ImportSummary, String> {
+    let requested_account_id = request
+        .headers()
+        .get("account-id")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    let account_id = resolve_account_id(&state.registry, requested_account_id)?;
+    let archive = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => bytes.clone(),
+        // 自定义协议不可用时 Tauri 改走 postMessage，字节会变成数字数组。
+        tauri::ipc::InvokeBody::Json(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|item| item.as_u64().and_then(|byte| u8::try_from(byte).ok()))
+            .collect::<Option<Vec<u8>>>()
+            .ok_or_else(|| "没有读到导入文件".to_owned())?,
+        tauri::ipc::InvokeBody::Json(_) => return Err("没有读到导入文件".to_owned()),
+    };
+    let history_dir = state.history_dir.clone();
+    let import_account_id = account_id.clone();
+    let summary = tauri::async_runtime::spawn_blocking(move || {
+        history_store::import(&history_dir, &import_account_id, &archive)
+    })
+    .await
+    .map_err(|error| format!("导入历史数据失败：{error}"))??;
+    let display_name = account_display_name(&state.registry, &account_id);
+    write_account_log(
+        &state.auth_log_path,
+        "history-import",
+        &display_name,
+        &account_id,
+        &format!(
+            "历史数据已导入：新增 {} 条对战、{} 条打工，{} 条本地已有",
+            summary.added_battle_count, summary.added_coop_count, summary.skipped_count
+        ),
+    );
+    Ok(summary)
+}
+
 /// 删除账号默认只移除登录信息和账号列表里的这一项，本地历史保留，重新添加同一个账号后继续使用。
 /// `delete_local_data` 为真时一并删除本地历史：先记下待删除标记，中途中断时下次启动会补完。
 /// 导出文件是用户自己的备份，两种情况都保留。
@@ -1875,6 +1918,7 @@ pub fn run() {
             list_accounts,
             get_sync_status,
             export_history,
+            import_history,
             remove_account,
             get_overlay_service_status,
             start_overlay_service,

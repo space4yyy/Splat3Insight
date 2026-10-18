@@ -366,6 +366,7 @@
         actions.append(accountActionButton('获取权限', (button) => refreshPermission(id, button)));
       }
       actions.append(accountActionButton('导出', (button) => exportAccount(id, button)));
+      actions.append(accountActionButton('导入', (button) => chooseImportFile(id, button)));
       actions.append(accountActionButton('删除', () => openDeleteDialog(id, name)));
       return el('div', { class: 'account-row' }, [
         el('span', { class: account.active ? 'avatar' : 'avatar is-idle', 'aria-hidden': 'true', text: accountInitial(name) }),
@@ -403,6 +404,44 @@
       button.disabled = false;
     }
   }
+
+  // 导入：读入本应用导出的 .json.gz，本地已有的记录不会重复写入。
+  const importInput = $('#import-file');
+  let importTarget = null;
+  let importing = false;
+  function chooseImportFile(accountId, button) {
+    if (importing) return;
+    importTarget = { accountId, button };
+    importInput.value = '';
+    importInput.click();
+  }
+  importInput.addEventListener('change', async () => {
+    const file = importInput.files?.[0];
+    const target = importTarget;
+    importTarget = null;
+    if (!file || !target || importing) return;
+    importing = true;
+    target.button.disabled = true;
+    setMessage('正在导入…');
+    try {
+      const archive = new Uint8Array(await file.arrayBuffer());
+      const summary = await invoke('import_history', archive, { headers: { 'Account-Id': target.accountId } });
+      await refreshAccounts();
+      const { added_battle_count: battles, added_coop_count: coop, skipped_count: skipped } = summary;
+      setMessage(battles + coop
+        ? `导入完成：新增 ${battles} 条对战、${coop} 条打工${skipped ? `，${skipped} 条本地已有` : ''}。`
+        : '文件里的记录本地都已有。');
+      if (target.accountId === app.activeAccountId) {
+        await loadFacts({ force: true });
+        refreshOverlayStates();
+      }
+    } catch (error) {
+      setMessage(`导入历史数据失败：${String(error)}`, true);
+    } finally {
+      importing = false;
+      target.button.disabled = false;
+    }
+  });
 
   // 删除账号：默认只移除登录信息、保留本地数据；勾选后一并删除，并提示先导出一份备份。
   const deleteDialog = $('#delete-account-dialog');

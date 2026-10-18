@@ -452,6 +452,7 @@ table.data tr.is-me td { background: var(--panel-raised); color: var(--ink); }
 .paste-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .account-message { margin: 0; color: var(--ink-2); font-size: 13px; overflow-wrap: anywhere; }
 .account-message.is-error { color: var(--danger-text); }
+.file-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); opacity: 0; pointer-events: none; }
 
 /* 后台运行提示 */
 dialog.close-prompt { width: min(420px, calc(100% - 32px)); padding: 22px; border: 1px solid var(--line-strong); border-radius: 18px; background: var(--panel); color: var(--ink); box-shadow: 0 24px 80px var(--shadow); }

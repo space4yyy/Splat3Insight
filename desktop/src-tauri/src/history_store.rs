@@ -3,14 +3,15 @@ use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+#[cfg(test)]
+use splat3_widget_core::history::ArchivedCoop;
 use splat3_widget_core::history::{
-    parse_battle, ArchivedBattle, BattleRecord, HistoryCache, HistoryFetchedRecord,
+    parse_battle, ArchivedBattle, BattleRecord, CoopRecord, HistoryCache, HistoryFetchedRecord,
     HistorySyncSummary,
 };
-#[cfg(test)]
-use splat3_widget_core::history::{ArchivedCoop, CoopRecord};
 use splat3_widget_core::overlay::{
     archived_battle_power_track_key, OverlayMatchCategory, OverlayState, RecentSummary,
     SalmonRunCard,
@@ -24,6 +25,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const DATABASE_FILE: &str = "history.sqlite3";
 const LEGACY_DIRECTORY: &str = "legacy-json";
 const EXPORT_DIRECTORY: &str = "exports";
+/// 导出文件的格式版本，和 `write_complete_archive` 写出的一致。
+const EXPORT_SCHEMA_VERSION: i64 = 2;
+/// 导入时每批提交的记录数，不长时间占住数据库，后台同步照常进行。
+const IMPORT_BATCH_SIZE: usize = 100;
 const DATABASE_SCHEMA_VERSION: i64 = 2;
 const NO_OVERLAY_TRACK: &str = "none";
 const CACHED_POWER_TRACK_KEY: &str = "__s3w_overlay_power_track_v1";
@@ -932,12 +937,7 @@ fn reparse_event_match_records(history_dir: &Path, account_id: &str) -> Result<(
             continue;
         }
         let raw = decode_raw_json(&raw_bytes, &raw_encoding)?;
-        if let Some(parsed) = parse_battle(&raw, &record_id) {
-            if parsed.power.is_some() {
-                record.power = parsed.power;
-                record.power_kind = parsed.power_kind;
-            }
-        }
+        refresh_event_power(&mut record, &raw);
         let track_key = archived_battle_power_track_key(&record, &raw)
             .unwrap_or_else(|| NO_OVERLAY_TRACK.to_owned());
         let updated_json = serde_json::to_string(&record)
@@ -952,6 +952,19 @@ fn reparse_event_match_records(history_dir: &Path, account_id: &str) -> Result<(
             .map_err(|error| format!("更新活动赛卡片数据失败：{error}"))?;
     }
     Ok(())
+}
+
+/// 活动比赛的战力字段是后来才解析的，旧版本存下的记录可能没有这个值，按原始 JSON 补上。
+fn refresh_event_power(record: &mut BattleRecord, raw: &Value) {
+    if record.mode != "EVENT_MATCH" {
+        return;
+    }
+    if let Some(parsed) = parse_battle(raw, &record.id) {
+        if parsed.power.is_some() {
+            record.power = parsed.power;
+            record.power_kind = parsed.power_kind;
+        }
+    }
 }
 
 pub(crate) fn save_overlay_state(
@@ -1409,6 +1422,447 @@ fn write_complete_archive(
         .finish()
         .map_err(|error| format!("完成历史数据导出失败：{error}"))?;
     Ok(())
+}
+
+/// 导入的结果：新加入的对战和打工记录数，以及本地已有、没有重复写入的记录数。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub(crate) struct ImportSummary {
+    pub(crate) added_battle_count: usize,
+    pub(crate) added_coop_count: usize,
+    pub(crate) skipped_count: usize,
+}
+
+/// 导入本应用导出的历史文件（`export` 写出的 .json.gz，也接受解压后的 JSON）。
+///
+/// 先完整读一遍，确认文件完整、属于这个账号，再读第二遍写入本地没有的记录；
+/// 本地已有的记录保持不变。文件逐条读取，不会整份放进内存。
+pub(crate) fn import(
+    history_dir: &Path,
+    account_id: &str,
+    archive: &[u8],
+) -> Result<ImportSummary, String> {
+    let header = read_archive(archive, &mut ImportCheck)?;
+    if header.schema_version.is_none()
+        || header.account_id.is_none()
+        || !header.has_battles
+        || !header.has_coop
+    {
+        return Err("不是本应用导出的历史文件".to_owned());
+    }
+    if header.schema_version != Some(EXPORT_SCHEMA_VERSION) {
+        return Err("这个导出文件的版本不受支持".to_owned());
+    }
+    if header.account_id.as_deref() != Some(account_id) {
+        return Err("这份文件是另一个账号导出的，没有导入".to_owned());
+    }
+
+    let (known_battles, known_coop) = load_known_record_ids(history_dir, account_id, None)?;
+    let mut writer = ImportWriter {
+        connection: open_database(history_dir)?,
+        account_id,
+        known_battles,
+        known_coop,
+        in_batch: 0,
+        batch: ImportSummary::default(),
+        summary: ImportSummary::default(),
+    };
+    let written = read_archive(archive, &mut writer).and_then(|_| writer.commit());
+    if written.is_err() {
+        writer.rollback();
+    }
+    let summary = writer.summary.clone();
+    drop(writer);
+
+    if summary.added_battle_count > 0 {
+        let state = match load_overlay_cache(history_dir, account_id)? {
+            Some(cache) => OverlayState::from_history(&cache),
+            None => empty_overlay_state(),
+        };
+        save_overlay_state(history_dir, account_id, &state)?;
+    }
+    written.map_err(|error| format!("导入中断：{error}"))?;
+    Ok(summary)
+}
+
+/// 导入时每一遍对每条记录做的事：第一遍只检查，第二遍写入。
+trait ImportPass {
+    /// 原始 JSON 读成什么：检查时只确认是对象，写入时读成完整的值。
+    type Raw: de::DeserializeOwned;
+
+    fn battle(&mut self, item: ImportedRecord<BattleRecord, Self::Raw>) -> Result<(), String>;
+    fn coop(&mut self, item: ImportedRecord<CoopRecord, Self::Raw>) -> Result<(), String>;
+    fn measurement(&mut self, item: ImportedMeasurement<Self::Raw>) -> Result<(), String>;
+}
+
+#[derive(Deserialize)]
+struct ImportedRecord<T, R> {
+    record: T,
+    raw: R,
+}
+
+#[derive(Deserialize)]
+struct ImportedMeasurement<R> {
+    record_id: String,
+    payload_hash: String,
+    fetched_at_ms: i64,
+    raw: R,
+}
+
+/// 检查那一遍里的原始 JSON：只确认是一个对象，不在内存里建出来。
+struct RawObject;
+
+impl<'de> Deserialize<'de> for RawObject {
+    fn deserialize<D: de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ObjectVisitor;
+
+        impl<'de> Visitor<'de> for ObjectVisitor {
+            type Value = RawObject;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a JSON object")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<RawObject, A::Error> {
+                while map
+                    .next_entry::<de::IgnoredAny, de::IgnoredAny>()?
+                    .is_some()
+                {}
+                Ok(RawObject)
+            }
+        }
+
+        deserializer.deserialize_map(ObjectVisitor)
+    }
+}
+
+#[derive(Default)]
+struct ArchiveHeader {
+    schema_version: Option<i64>,
+    account_id: Option<String>,
+    has_battles: bool,
+    has_coop: bool,
+}
+
+/// 逐条读取导出文件，每读出一条就交给 `pass`。
+fn read_archive(archive: &[u8], pass: &mut impl ImportPass) -> Result<ArchiveHeader, String> {
+    let reader: Box<dyn Read + '_> = if archive.starts_with(&[0x1f, 0x8b]) {
+        Box::new(GzDecoder::new(archive))
+    } else {
+        Box::new(archive)
+    };
+    let mut failure = None;
+    let mut deserializer = serde_json::Deserializer::from_reader(std::io::BufReader::new(reader));
+    let parsed = serde::Deserializer::deserialize_map(
+        &mut deserializer,
+        ArchiveReader {
+            pass,
+            failure: &mut failure,
+        },
+    )
+    .and_then(|header| deserializer.end().map(|()| header));
+    if let Some(message) = failure {
+        return Err(message);
+    }
+    parsed.map_err(|error| match error.classify() {
+        serde_json::error::Category::Io | serde_json::error::Category::Eof => {
+            "导入文件不完整或已损坏".to_owned()
+        }
+        _ => "不是本应用导出的历史文件".to_owned(),
+    })
+}
+
+struct ArchiveReader<'a, P> {
+    pass: &'a mut P,
+    failure: &'a mut Option<String>,
+}
+
+impl<'de, P: ImportPass> Visitor<'de> for ArchiveReader<'_, P> {
+    type Value = ArchiveHeader;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("an exported history archive")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ArchiveHeader, A::Error> {
+        let mut header = ArchiveHeader::default();
+        while let Some(key) = map.next_key::<String>()? {
+            let kind = match key.as_str() {
+                "schema_version" => {
+                    header.schema_version = Some(map.next_value()?);
+                    continue;
+                }
+                "account_id" => {
+                    header.account_id = Some(map.next_value()?);
+                    continue;
+                }
+                "battles" => {
+                    header.has_battles = true;
+                    ItemKind::Battle
+                }
+                "coop" => {
+                    header.has_coop = true;
+                    ItemKind::Coop
+                }
+                "x_battle_measurements" => ItemKind::Measurement,
+                _ => {
+                    map.next_value::<de::IgnoredAny>()?;
+                    continue;
+                }
+            };
+            map.next_value_seed(ItemList {
+                kind,
+                pass: &mut *self.pass,
+                failure: &mut *self.failure,
+            })?;
+        }
+        Ok(header)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ItemKind {
+    Battle,
+    Coop,
+    Measurement,
+}
+
+struct ItemList<'a, P> {
+    kind: ItemKind,
+    pass: &'a mut P,
+    failure: &'a mut Option<String>,
+}
+
+impl<'de, P: ImportPass> DeserializeSeed<'de> for ItemList<'_, P> {
+    type Value = ();
+
+    fn deserialize<D: de::Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
+        deserializer.deserialize_seq(self)
+    }
+}
+
+impl<'de, P: ImportPass> Visitor<'de> for ItemList<'_, P> {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a list of archived records")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
+        loop {
+            let handled = match self.kind {
+                ItemKind::Battle => match seq.next_element()? {
+                    Some(item) => self.pass.battle(item),
+                    None => return Ok(()),
+                },
+                ItemKind::Coop => match seq.next_element()? {
+                    Some(item) => self.pass.coop(item),
+                    None => return Ok(()),
+                },
+                ItemKind::Measurement => match seq.next_element()? {
+                    Some(item) => self.pass.measurement(item),
+                    None => return Ok(()),
+                },
+            };
+            if let Err(message) = handled {
+                *self.failure = Some(message);
+                return Err(de::Error::custom("import stopped"));
+            }
+        }
+    }
+}
+
+/// 第一遍：只确认每条记录都读得出来，不写入。
+struct ImportCheck;
+
+impl ImportPass for ImportCheck {
+    type Raw = RawObject;
+
+    fn battle(&mut self, item: ImportedRecord<BattleRecord, RawObject>) -> Result<(), String> {
+        check_imported(&[&item.record.id])
+    }
+
+    fn coop(&mut self, item: ImportedRecord<CoopRecord, RawObject>) -> Result<(), String> {
+        check_imported(&[&item.record.id])
+    }
+
+    fn measurement(&mut self, item: ImportedMeasurement<RawObject>) -> Result<(), String> {
+        check_imported(&[&item.record_id, &item.payload_hash])
+    }
+}
+
+fn check_imported(identifiers: &[&str]) -> Result<(), String> {
+    if identifiers.iter().any(|identifier| identifier.is_empty()) {
+        return Err("导入文件里有不完整的记录".to_owned());
+    }
+    Ok(())
+}
+
+/// 第二遍：写入本地没有的记录，和同步时一样建卡片索引和面板数据。
+struct ImportWriter<'a> {
+    connection: Connection,
+    account_id: &'a str,
+    known_battles: HashSet<String>,
+    known_coop: HashSet<String>,
+    in_batch: usize,
+    /// 还没提交的这一批。
+    batch: ImportSummary,
+    /// 已经提交的部分。
+    summary: ImportSummary,
+}
+
+impl ImportWriter<'_> {
+    fn begin(&mut self) -> Result<(), String> {
+        if self.in_batch == 0 {
+            self.connection
+                .execute_batch("BEGIN IMMEDIATE")
+                .map_err(|error| format!("开启导入事务失败：{error}"))?;
+        }
+        Ok(())
+    }
+
+    fn wrote(&mut self) -> Result<(), String> {
+        self.in_batch += 1;
+        if self.in_batch >= IMPORT_BATCH_SIZE {
+            self.commit()?;
+        }
+        Ok(())
+    }
+
+    fn commit(&mut self) -> Result<(), String> {
+        if self.in_batch > 0 {
+            self.connection
+                .execute_batch("COMMIT")
+                .map_err(|error| format!("提交导入事务失败：{error}"))?;
+            self.in_batch = 0;
+            let batch = std::mem::take(&mut self.batch);
+            self.summary.added_battle_count += batch.added_battle_count;
+            self.summary.added_coop_count += batch.added_coop_count;
+            self.summary.skipped_count += batch.skipped_count;
+        }
+        Ok(())
+    }
+
+    fn rollback(&mut self) {
+        if self.in_batch > 0 {
+            let _ = self.connection.execute_batch("ROLLBACK");
+            self.in_batch = 0;
+            self.batch = ImportSummary::default();
+        }
+    }
+}
+
+impl ImportPass for ImportWriter<'_> {
+    type Raw = Value;
+
+    fn battle(&mut self, item: ImportedRecord<BattleRecord, Value>) -> Result<(), String> {
+        let ImportedRecord { mut record, raw } = item;
+        if !self.known_battles.insert(record.id.clone()) {
+            self.summary.skipped_count += 1;
+            return Ok(());
+        }
+        refresh_event_power(&mut record, &raw);
+        let track_key = archived_battle_power_track_key(&record, &raw);
+        self.begin()?;
+        let inserted = insert_new_record(
+            &self.connection,
+            self.account_id,
+            "battle",
+            &record.id,
+            record.played_time.as_deref(),
+            &record,
+            &raw,
+            track_key.as_deref().unwrap_or(NO_OVERLAY_TRACK),
+        )?;
+        if inserted {
+            dashboard_store::upsert_battle(&self.connection, self.account_id, &record, &raw)?;
+            self.batch.added_battle_count += 1;
+        } else {
+            self.batch.skipped_count += 1;
+        }
+        self.wrote()
+    }
+
+    fn coop(&mut self, item: ImportedRecord<CoopRecord, Value>) -> Result<(), String> {
+        let ImportedRecord { record, raw } = item;
+        if !self.known_coop.insert(record.id.clone()) {
+            self.summary.skipped_count += 1;
+            return Ok(());
+        }
+        self.begin()?;
+        let inserted = insert_new_record(
+            &self.connection,
+            self.account_id,
+            "coop",
+            &record.id,
+            record.played_time.as_deref(),
+            &record,
+            &raw,
+            NO_OVERLAY_TRACK,
+        )?;
+        if inserted {
+            dashboard_store::upsert_coop(&self.connection, self.account_id, &record, &raw)?;
+            self.batch.added_coop_count += 1;
+        } else {
+            self.batch.skipped_count += 1;
+        }
+        self.wrote()
+    }
+
+    fn measurement(&mut self, item: ImportedMeasurement<Value>) -> Result<(), String> {
+        let raw_json = encode_raw_json(&item.raw)?;
+        self.begin()?;
+        self.connection
+            .execute(
+                "INSERT OR IGNORE INTO x_battle_measurement_snapshots(
+                     account_id, record_id, payload_hash, fetched_at_ms, raw_json, raw_encoding
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'gzip')",
+                params![
+                    self.account_id,
+                    item.record_id,
+                    item.payload_hash,
+                    item.fetched_at_ms,
+                    raw_json
+                ],
+            )
+            .map_err(|error| format!("导入 X 赛结算原始数据失败：{error}"))?;
+        self.wrote()
+    }
+}
+
+/// 写入一条本地还没有的记录；已有同一 ID 的记录时什么也不改，返回 false。
+#[allow(clippy::too_many_arguments)]
+fn insert_new_record<T: Serialize>(
+    connection: &Connection,
+    account_id: &str,
+    record_type: &str,
+    record_id: &str,
+    played_time: Option<&str>,
+    record: &T,
+    raw: &Value,
+    overlay_track_key: &str,
+) -> Result<bool, String> {
+    let record_json =
+        serde_json::to_string(record).map_err(|error| format!("序列化历史记录失败：{error}"))?;
+    let raw_json = encode_raw_json(raw)?;
+    let inserted = connection
+        .execute(
+            "INSERT INTO history_records(
+                 account_id, record_type, record_id, played_time,
+                 record_json, raw_json, raw_encoding, overlay_track_key
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'gzip', ?7)
+             ON CONFLICT(account_id, record_type, record_id) DO NOTHING",
+            params![
+                account_id,
+                record_type,
+                record_id,
+                played_time,
+                record_json,
+                raw_json,
+                overlay_track_key
+            ],
+        )
+        .map_err(|error| format!("导入历史记录失败：{error}"))?;
+    Ok(inserted > 0)
 }
 
 pub(crate) fn delete_account(history_dir: &Path, account_id: &str) -> Result<(), String> {
@@ -2589,6 +3043,167 @@ mod tests {
             .unwrap();
         assert_eq!(salmon.gold_scale, Some(7));
         assert_eq!(salmon.clear_count, 3);
+    }
+
+    /// Two battles, one shift and one X settlement, exported; returns the file's bytes.
+    fn exported_sample(directory: &Path) -> Vec<u8> {
+        let mut cache = sample_cache();
+        let mut second = cache.battles[0].clone();
+        second.record.id = "battle-2".to_owned();
+        second.record.played_time = Some("2026-09-21T00:00:00Z".to_owned());
+        second.raw = json!({ "id": "battle-2", "full": [4, 5, 6] });
+        cache.battles.push(second);
+        cache
+            .coop
+            .push(sample_coop("coop-1", "2026-09-22T01:00:00Z".to_owned()));
+        save_cache(directory, "account", &cache).unwrap();
+        HistoryRecordWriter::open(directory)
+            .unwrap()
+            .save(
+                "account",
+                456,
+                HistoryFetchedRecord::XBattleSettlement {
+                    record_id: "battle-1".to_owned(),
+                    power_after: 2110.0,
+                    payload_hash: "c".repeat(64),
+                    raw_group: json!({ "xMatchMeasurement": { "state": "COMPLETED" } }),
+                },
+            )
+            .unwrap();
+        fs::read(export(directory, "account").unwrap()).unwrap()
+    }
+
+    fn count_rows(directory: &Path, sql: &str) -> i64 {
+        open_database(directory)
+            .unwrap()
+            .query_row(sql, [], |row| row.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn import_restores_an_export_and_keeps_records_already_present() {
+        let source = tempdir().unwrap();
+        let archive = exported_sample(source.path());
+
+        // The new computer already synced battle-1 and keeps its own copy.
+        let target = tempdir().unwrap();
+        let mut local = sample_cache();
+        local.battles[0].record.kills = Some(1);
+        save_cache(target.path(), "account", &local).unwrap();
+
+        let summary = import(target.path(), "account", &archive).unwrap();
+        assert_eq!(
+            summary,
+            ImportSummary {
+                added_battle_count: 1,
+                added_coop_count: 1,
+                skipped_count: 1,
+            }
+        );
+        let original = load_cache(source.path(), "account").unwrap().unwrap();
+        let restored = load_cache(target.path(), "account").unwrap().unwrap();
+        let battle = |cache: &HistoryCache, id: &str| {
+            cache
+                .battles
+                .iter()
+                .find(|battle| battle.record.id == id)
+                .cloned()
+                .unwrap()
+        };
+        assert_eq!(battle(&restored, "battle-2"), battle(&original, "battle-2"));
+        assert_eq!(restored.coop, original.coop);
+        assert_eq!(battle(&restored, "battle-1").record.kills, Some(1));
+        assert_eq!(
+            count_rows(
+                target.path(),
+                "SELECT COUNT(*) FROM x_battle_measurement_snapshots"
+            ),
+            1
+        );
+        assert_eq!(
+            count_rows(
+                target.path(),
+                "SELECT COUNT(*) FROM extension_dashboard_battles"
+            ),
+            2
+        );
+        assert_eq!(
+            count_rows(
+                target.path(),
+                "SELECT COUNT(*) FROM extension_dashboard_coop"
+            ),
+            1
+        );
+        // The OBS snapshot now shows the imported, more recent battle.
+        let snapshot: String = open_database(target.path())
+            .unwrap()
+            .query_row("SELECT state_json FROM overlay_snapshots", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let snapshot: OverlayState = serde_json::from_str(&snapshot).unwrap();
+        assert_eq!(snapshot.selected.unwrap().id, "battle-2");
+
+        // Importing the same file again adds nothing.
+        assert_eq!(
+            import(target.path(), "account", &archive).unwrap(),
+            ImportSummary {
+                added_battle_count: 0,
+                added_coop_count: 0,
+                skipped_count: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn import_refuses_other_accounts_and_damaged_files_without_writing() {
+        let source = tempdir().unwrap();
+        let archive = exported_sample(source.path());
+        let target = tempdir().unwrap();
+
+        let refused =
+            |account_id: &str, bytes: &[u8]| import(target.path(), account_id, bytes).unwrap_err();
+        assert_eq!(
+            refused("other", &archive),
+            "这份文件是另一个账号导出的，没有导入"
+        );
+        assert_eq!(
+            refused("account", &archive[..archive.len() / 2]),
+            "导入文件不完整或已损坏"
+        );
+        assert_eq!(
+            refused("account", b"not an export"),
+            "不是本应用导出的历史文件"
+        );
+        assert_eq!(
+            refused("account", br#"{"schema_version":2,"account_id":"account"}"#),
+            "不是本应用导出的历史文件"
+        );
+        assert_eq!(
+            refused(
+                "account",
+                br#"{"schema_version":3,"account_id":"account","battles":[],"coop":[]}"#
+            ),
+            "这个导出文件的版本不受支持"
+        );
+        assert_eq!(
+            count_rows(target.path(), "SELECT COUNT(*) FROM history_records"),
+            0
+        );
+
+        // A decompressed export imports too.
+        let mut plain = Vec::new();
+        GzDecoder::new(archive.as_slice())
+            .read_to_end(&mut plain)
+            .unwrap();
+        assert_eq!(
+            import(target.path(), "account", &plain).unwrap(),
+            ImportSummary {
+                added_battle_count: 2,
+                added_coop_count: 1,
+                skipped_count: 0,
+            }
+        );
     }
 
     #[test]
