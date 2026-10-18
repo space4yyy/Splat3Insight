@@ -36,6 +36,11 @@
     node.addEventListener('error', () => node.remove());
     return node;
   }
+  // 鳞片统一写成「鳞片图 x数量」，和 OBS 鲑鱼跑卡片一致。
+  const scaleCounts = (scales) => [['gold', '金'], ['silver', '银'], ['bronze', '铜']].map(([key, label]) => el('span', { class: 'scale-count', title: `${label}鳞片` }, [
+    el('img', { src: `images/scale-${key}.png`, alt: `${label}鳞片`, width: '18', height: '18' }),
+    document.createTextNode(`x${scales[key] ?? '—'}`),
+  ]));
   const iconWithName = (url, name, className = 'weapon-icon') => el('span', { class: 'icon-name' }, [img(url, className, name), document.createTextNode(name ?? '—')]);
   // 团队颜色上的文字：按亮度选深色或白色。
   function inkOn(color) {
@@ -377,7 +382,7 @@
   const weaponIcons = (weapons) => el('span', { class: 'weapon-icons' }, weapons.length ? weapons.map((weapon) => img(weapon.image, 'weapon-icon', weapon.name) || el('span', { class: 'muted', text: weapon.name ?? '—' })) : [document.createTextNode('—')]);
   function shiftSections(item, shift, raw) {
     const scale = shift.scale && [shift.scale.gold, shift.scale.silver, shift.scale.bronze].some((value) => value != null)
-      ? `金 ${count(shift.scale.gold)} · 银 ${count(shift.scale.silver)} · 铜 ${count(shift.scale.bronze)}`
+      ? el('span', { class: 'scale-inline' }, scaleCounts(shift.scale))
       : '—';
     const waveRows = shift.waves.map((wave) => [
       wave.number == null ? '—' : `第 ${wave.number} 波`,
@@ -552,5 +557,5 @@
     }
   });
 
-  window.Splat3Records = Object.freeze({ render, open, close, img, iconWithName });
+  window.Splat3Records = Object.freeze({ render, open, close, img, iconWithName, scaleCounts });
 })();

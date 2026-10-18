@@ -183,10 +183,6 @@
     }
     return row;
   }
-  const scaleCounts = (scales) => [['gold', '金'], ['silver', '银'], ['bronze', '铜']].map(([key, label]) => el('span', { class: 'scale-count', title: `${label}鳞片` }, [
-    el('img', { src: `images/scale-${key}.png`, alt: `${label}鳞片`, width: '18', height: '18' }),
-    document.createTextNode(String(scales[key])),
-  ]));
 
   // ---------- 对战 ----------
   function renderRuleChart(list) {
@@ -746,7 +742,7 @@
         ]),
       ]));
     }
-    scalesBox.append(el('span', { text: '鳞片' }), ...scaleCounts(analysis.scaleTotals(list)));
+    scalesBox.append(el('span', { text: '鳞片' }), ...records.scaleCounts(analysis.scaleTotals(list)));
   }
   function renderTideEvents(list) {
     const box = $('tide-event');
@@ -834,7 +830,7 @@
         pct(group.cleared / group.n, 0),
         fixed(group.avgGoldenEggs),
         group.king ? `${group.king.name ?? '头目鲑鱼'} ${group.king.defeated} / ${group.king.appeared}` : '—',
-        hasScales ? el('span', { class: 'scale-inline' }, scaleCounts(group.scales)) : '—',
+        hasScales ? el('span', { class: 'scale-inline' }, records.scaleCounts(group.scales)) : '—',
         group.grade ? gradeText(group.grade.name, group.grade.point) : '—',
       ];
     }));
