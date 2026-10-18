@@ -1620,7 +1620,7 @@ fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
     TrayIconBuilder::with_id("main-tray")
         .icon(tauri::include_image!("./icons/44x44.png"))
         .icon_as_template(false)
-        .tooltip("斯普拉遁3直播小组件")
+        .tooltip("Splat3 Insight")
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(move |app, event| match event.id().as_ref() {
