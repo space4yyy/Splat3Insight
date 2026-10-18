@@ -26,8 +26,7 @@
     salmon: ['鲑鱼跑', '评级、头目鲑鱼、特殊波次、个人贡献和各期打工。'],
     log: ['对战记录', '所有对局，点一行查看详情。'],
     obs: ['其他工具', '直播用的 OBS 数据卡片等附加工具。'],
-    accounts: ['账号管理', '添加、切换和管理 Nintendo 账号。'],
-    settings: ['设置', '外观和开机启动。'],
+    settings: ['设置', '账号、外观和开机启动。'],
   };
   const OBS_SELECTION_KEY = 'splat3-obs-card-selection';
   const OBS_TRANSPARENCY_KEY = 'splat3-obs-card-transparency';
@@ -189,6 +188,8 @@
 
   // 页面切换
   function showView(view) {
+    // 账号管理并进了设置页，旧的 #accounts 链接也打开设置。
+    if (view === 'accounts') view = 'settings';
     if (!VIEWS[view]) view = 'overview';
     app.view = view;
     for (const button of document.querySelectorAll('#nav button[data-view]')) {
@@ -208,8 +209,10 @@
     else if (view === 'obs') {
       renderObsPreview();
       refreshOverlayStates();
-    } else if (view === 'settings') refreshAutostart();
-    else if (view === 'accounts') refreshAccounts().catch((error) => setMessage(String(error), true));
+    } else if (view === 'settings') {
+      refreshAutostart();
+      refreshAccounts().catch((error) => setMessage(String(error), true));
+    }
   }
   $('#nav').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-view]');
@@ -358,7 +361,7 @@
     } else if (action) {
       setAccountMenu(false);
       if (action.getAttribute('data-account-action') === 'add') startLogin();
-      else goTo('accounts');
+      else goTo('settings');
     }
   });
   document.addEventListener('click', (event) => {
@@ -411,7 +414,7 @@
     }));
   }
 
-  // 获取 SplatNet 权限：账号管理里的「获取权限」和侧栏的「等待授权」共用。
+  // 获取 SplatNet 权限：设置页账号列表里的「获取权限」和侧栏的「等待授权」共用。
   async function refreshPermission(accountId, button) {
     if (app.authorizing) return;
     app.authorizing = true;
@@ -599,7 +602,7 @@
   const loginLink = $('#login-link');
   const authenticateButton = $('#authenticate');
   function startLogin() {
-    goTo('accounts');
+    goTo('settings');
     if (!loginButton.disabled) loginButton.click();
   }
   loginButton.addEventListener('click', async () => {

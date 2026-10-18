@@ -31,7 +31,6 @@
           <button type="button" data-view="log">对战记录</button>
           <div class="nav-label">附加功能</div>
           <button type="button" data-view="obs">其他工具</button>
-          <button type="button" data-view="accounts">账号管理</button>
           <button type="button" data-view="settings">设置</button>
         </nav>
         <div class="sidebar-foot">
@@ -395,26 +394,8 @@
         </section>
 
         <section class="view" id="view-settings" aria-label="设置" hidden>
-          <article class="card settings-panel">
-            <div class="settings-row">
-              <span class="settings-label" id="theme-label">外观</span>
-              <div class="segmented" id="theme-switch" role="group" aria-labelledby="theme-label">
-                <button type="button" data-theme-choice="system" aria-pressed="true">跟随系统</button>
-                <button type="button" data-theme-choice="light" aria-pressed="false">浅色</button>
-                <button type="button" data-theme-choice="dark" aria-pressed="false">深色</button>
-              </div>
-            </div>
-            <div class="settings-row">
-              <label class="settings-label" for="autostart">开机启动</label>
-              <input type="checkbox" class="switch" id="autostart" role="switch" disabled>
-            </div>
-            <p class="settings-message" id="settings-message" role="status" aria-live="polite" hidden></p>
-          </article>
-        </section>
-
-        <section class="view" id="view-accounts" aria-label="账号管理" hidden>
-          <div class="grid">
-            <article class="card span-12">
+          <div class="settings-stack">
+            <article class="card">
               <div class="card-head">
                 <div>
                   <h2 class="card-title">账号</h2>
@@ -434,8 +415,27 @@
               <div class="account-list" id="account-list" aria-label="已添加的账号"></div>
               <input type="file" class="file-input" id="import-file" accept=".gz,.json" tabindex="-1" aria-hidden="true">
             </article>
+            <article class="card settings-panel">
+              <h2 class="card-title">通用</h2>
+              <div class="settings-list">
+                <div class="settings-row">
+                  <span class="settings-label" id="theme-label">外观</span>
+                  <div class="segmented" id="theme-switch" role="group" aria-labelledby="theme-label">
+                    <button type="button" data-theme-choice="system" aria-pressed="true">跟随系统</button>
+                    <button type="button" data-theme-choice="light" aria-pressed="false">浅色</button>
+                    <button type="button" data-theme-choice="dark" aria-pressed="false">深色</button>
+                  </div>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="autostart">开机启动</label>
+                  <input type="checkbox" class="switch" id="autostart" role="switch" disabled>
+                </div>
+              </div>
+              <p class="settings-message" id="settings-message" role="status" aria-live="polite" hidden></p>
+            </article>
           </div>
         </section>
+
       </div>
     </div>
 
