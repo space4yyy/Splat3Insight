@@ -6,7 +6,6 @@ use splat3_widget_core::history::{
     HistoryFetchProgress, HistoryFetchedRecord, HistoryProgressCallback, HistoryRecordCallback,
     HistorySyncSummary, SplatNetDataClient, SplatNetDataConfig,
 };
-use splat3_widget_core::overlay::OverlayState;
 use splat3_widget_core::SecretStore;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -225,14 +224,21 @@ pub(super) async fn sync_account_inner(
     let record_account_id = account_id.to_owned();
     let x_settlement_updates = Arc::new(AtomicUsize::new(0));
     let x_settlement_updates_for_callback = Arc::clone(&x_settlement_updates);
+    let rotation_updates = Arc::new(AtomicUsize::new(0));
+    let rotation_updates_for_callback = Arc::clone(&rotation_updates);
     let on_record: HistoryRecordCallback = Arc::new(move |record: HistoryFetchedRecord| {
         let is_x_settlement = matches!(&record, HistoryFetchedRecord::XBattleSettlement { .. });
         let changed = record_writer_for_callback
             .lock()
             .map_err(|_| "历史记录写入器已锁定".to_owned())?
             .save(&record_account_id, fetched_at_ms, record)?;
-        if is_x_settlement && changed {
-            x_settlement_updates_for_callback.fetch_add(1, Ordering::Relaxed);
+        if changed {
+            let updates = if is_x_settlement {
+                &x_settlement_updates_for_callback
+            } else {
+                &rotation_updates_for_callback
+            };
+            updates.fetch_add(1, Ordering::Relaxed);
         }
         Ok(changed)
     });
@@ -287,6 +293,7 @@ pub(super) async fn sync_account_inner(
     let added_coop_count = cache.coop.len();
     let unavailable_detail_count = unavailable_detail_count.load(Ordering::Relaxed);
     let x_settlement_update_count = x_settlement_updates.load(Ordering::Relaxed);
+    let rotation_update_count = rotation_updates.load(Ordering::Relaxed);
     if unavailable_detail_count > 0
         && (initial_sync || added_battle_count > 0 || added_coop_count > 0)
     {
@@ -314,32 +321,15 @@ pub(super) async fn sync_account_inner(
         );
     }
     if initial_sync || added_battle_count > 0 || x_settlement_update_count > 0 {
-        if let Some(overlay_cache) = history_store::load_overlay_cache(history_dir, account_id)
-            .map_err(|error| {
-                account_auth_error(
-                    auth_log_path,
-                    "overlay-cache",
-                    &metadata.display_name,
-                    account_id,
-                    error,
-                )
-            })?
-        {
-            history_store::save_overlay_state(
-                history_dir,
+        history_store::rebuild_overlay_snapshot(history_dir, account_id).map_err(|error| {
+            account_auth_error(
+                auth_log_path,
+                "overlay-cache",
+                &metadata.display_name,
                 account_id,
-                &OverlayState::from_history(&overlay_cache),
+                error,
             )
-            .map_err(|error| {
-                account_auth_error(
-                    auth_log_path,
-                    "overlay-cache",
-                    &metadata.display_name,
-                    account_id,
-                    error,
-                )
-            })?;
-        }
+        })?;
     }
     history_store::mark_sync_complete(history_dir, account_id, fetched_at_ms).map_err(|error| {
         account_auth_error(
@@ -363,6 +353,7 @@ pub(super) async fn sync_account_inner(
         .unwrap_or_default();
     summary.added_battle_count = added_battle_count;
     summary.added_coop_count = added_coop_count;
+    summary.records_updated = x_settlement_update_count > 0 || rotation_update_count > 0;
     write_account_log(
         auth_log_path,
         "history-sync",

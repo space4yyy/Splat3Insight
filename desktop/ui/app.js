@@ -38,7 +38,6 @@
     'x-match': '同步 X 比赛记录后显示最近比赛。',
     'salmon-run': '同步打工历史后显示鲑鱼跑卡片。',
   };
-  const FACTS_REFRESH_INTERVAL_MS = 60000;
 
   const app = {
     view: 'overview',
@@ -289,7 +288,6 @@
     }
     const firstLoad = app.facts.accountId !== accountId || app.facts.status !== 'ready';
     if (!force && app.facts.accountId === accountId && app.facts.status === 'loading') return;
-    if (!force && !firstLoad && Date.now() - app.facts.loadedAt < FACTS_REFRESH_INTERVAL_MS) return;
     const requestId = ++factsRequest;
     if (firstLoad) {
       app.facts = { accountId, status: 'loading', error: null, loadedAt: 0 };
@@ -383,6 +381,8 @@
     }
   }
 
+  // 导出在后台进行，期间账号列表可能重画：按账号记下正在导出的，按钮保持不可点。
+  const exporting = new Set();
   function accountActionButton(label, run, className = 'ghost') {
     const button = el('button', { type: 'button', class: className, text: label });
     button.addEventListener('click', () => run(button));
@@ -403,7 +403,9 @@
       if (account.splatnet_ready === false || (account.active && account.splatnet_ready === null)) {
         actions.append(accountActionButton('获取权限', (button) => refreshPermission(id, button)));
       }
-      actions.append(accountActionButton('导出', (button) => exportAccount(id, button)));
+      const exportButton = accountActionButton('导出', (button) => exportAccount(id, button));
+      exportButton.disabled = exporting.has(id);
+      actions.append(exportButton);
       actions.append(accountActionButton('导入', (button) => chooseImportFile(id, button)));
       actions.append(accountActionButton('删除', () => openDeleteDialog(id, name)));
       return el('div', { class: 'account-row' }, [
@@ -447,14 +449,18 @@
   }
 
   async function exportAccount(accountId, button) {
+    if (exporting.has(accountId)) return;
+    exporting.add(accountId);
     button.disabled = true;
+    setMessage('正在导出…');
     try {
       const path = await invoke('export_history', { accountId });
       setMessage(`历史数据已导出：${path}`);
     } catch (error) {
       setMessage(`导出历史数据失败：${String(error)}`, true);
     } finally {
-      button.disabled = false;
+      exporting.delete(accountId);
+      renderAccountList();
     }
   }
 
@@ -732,8 +738,10 @@
       if (status?.state === 'completed' && completedAt && completedAt !== app.lastCompletedSyncAt) {
         app.lastCompletedSyncAt = completedAt;
         await refreshAccounts();
+        // 有新记录或已有记录更新过才重新读取面板数据；读取失败过、或者过了零点（“今天”“近 7 天”跟着日期变）也读一次。
         const added = (status.added_battle_count || 0) + (status.added_coop_count || 0);
-        await loadFacts({ force: added > 0 });
+        if (added > 0 || status.records_updated) await loadFacts({ force: true });
+        else if (app.facts.status !== 'ready' || new Date(app.facts.loadedAt).toDateString() !== new Date().toDateString()) await loadFacts();
         refreshOverlayStates();
       }
       // 同步失败或停下等待权限时，账号可能刚被标为需要重新获取权限；重新读取账号列表，「获取权限」才会出现。

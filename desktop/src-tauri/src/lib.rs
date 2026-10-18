@@ -311,6 +311,8 @@ struct SyncStatus {
     initial: bool,
     added_battle_count: usize,
     added_coop_count: usize,
+    /// 已有记录被更新过（X 赛结算分数、补上的打工期）。
+    records_updated: bool,
     battle_count: usize,
     coop_count: usize,
     started_at_ms: Option<i64>,
@@ -489,6 +491,7 @@ impl Default for SyncStatus {
             initial: false,
             added_battle_count: 0,
             added_coop_count: 0,
+            records_updated: false,
             battle_count: 0,
             coop_count: 0,
             started_at_ms: None,
@@ -787,6 +790,7 @@ async fn sync_account(
             );
             status.added_battle_count = summary.added_battle_count;
             status.added_coop_count = summary.added_coop_count;
+            status.records_updated = summary.records_updated;
             status.battle_count = summary.battle_count;
             status.coop_count = summary.coop_count;
             status.completed_at_ms = Some(now_ms());
@@ -982,12 +986,19 @@ fn resolve_account_id(
 }
 
 #[tauri::command]
-fn export_history(
+async fn export_history(
     account_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let account_id = resolve_account_id(&state.registry, account_id)?;
-    let path = history_store::export(&state.history_dir, &account_id)?;
+    let history_dir = state.history_dir.clone();
+    let export_account_id = account_id.clone();
+    // 记录多时导出要几十秒，放到后台线程，窗口照常可用。
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        history_store::export(&history_dir, &export_account_id)
+    })
+    .await
+    .map_err(|error| format!("导出历史数据失败：{error}"))??;
     let display_name = account_display_name(&state.registry, &account_id);
     write_account_log(
         &state.auth_log_path,
@@ -1066,7 +1077,7 @@ fn remove_account_entry<S: SecretStore>(
 }
 
 #[tauri::command]
-fn remove_account(
+async fn remove_account(
     account_id: String,
     delete_local_data: Option<bool>,
     state: State<'_, AppState>,
@@ -1077,33 +1088,36 @@ fn remove_account(
         return Err("账号 ID 不能为空".to_owned());
     }
 
-    let mut registry = state
-        .registry
-        .lock()
-        .map_err(|_| "account registry is locked")?;
-    if !registry
-        .accounts()
-        .iter()
-        .any(|account| account.account_id == account_id)
-    {
-        return Err(format!("unknown account: {account_id}"));
-    }
-    if state.sync_runtime.is_in_progress(&account_id)? {
-        return Err("该账号正在同步，请等待同步完成后再删除".to_owned());
-    }
+    let registry = Arc::clone(&state.registry);
+    let sync_runtime = Arc::clone(&state.sync_runtime);
+    let history_dir = state.history_dir.clone();
+    let removed_account_id = account_id.clone();
+    // 连同本地历史删除时，记录多的账号要好几秒，放到后台线程，窗口照常可用。
+    let display_name = tauri::async_runtime::spawn_blocking(move || {
+        let account_id = removed_account_id;
+        let mut registry = registry.lock().map_err(|_| "account registry is locked")?;
+        if !registry
+            .accounts()
+            .iter()
+            .any(|account| account.account_id == account_id)
+        {
+            return Err(format!("unknown account: {account_id}"));
+        }
+        if sync_runtime.is_in_progress(&account_id)? {
+            return Err("该账号正在同步，请等待同步完成后再删除".to_owned());
+        }
 
-    let display_name = registry
-        .accounts()
-        .iter()
-        .find(|account| account.account_id == account_id)
-        .map(|account| account.display_name.clone())
-        .unwrap_or_else(|| "未知账号".to_owned());
-    remove_account_entry(
-        &mut registry,
-        &state.history_dir,
-        &account_id,
-        delete_local_data,
-    )?;
+        let display_name = registry
+            .accounts()
+            .iter()
+            .find(|account| account.account_id == account_id)
+            .map(|account| account.display_name.clone())
+            .unwrap_or_else(|| "未知账号".to_owned());
+        remove_account_entry(&mut registry, &history_dir, &account_id, delete_local_data)?;
+        Ok(display_name)
+    })
+    .await
+    .map_err(|error| format!("删除账号失败：{error}"))??;
     write_account_log(
         &state.auth_log_path,
         "account-delete",
@@ -1148,7 +1162,7 @@ fn stop_overlay_service(
 }
 
 #[tauri::command]
-fn get_overlay_state(
+async fn get_overlay_state(
     account_id: Option<String>,
     match_type: Option<String>,
     state: State<'_, AppState>,
@@ -1174,20 +1188,23 @@ fn get_overlay_state(
         account_id
     };
 
-    match match_type.as_deref() {
-        Some("xmatch") => history_store::load_overlay_state_for_match_category(
-            &state.history_dir,
+    let category = match match_type.as_deref() {
+        Some("xmatch") => Some(OverlayMatchCategory::XMatch),
+        Some("bankaramatch") => Some(OverlayMatchCategory::BankaraMatch),
+        Some(_) => return Err("不支持的对战卡片类型".to_owned()),
+        None => None,
+    };
+    let history_dir = state.history_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || match category {
+        Some(category) => history_store::load_overlay_state_for_match_category(
+            &history_dir,
             &account_id,
-            OverlayMatchCategory::XMatch,
+            category,
         ),
-        Some("bankaramatch") => history_store::load_overlay_state_for_match_category(
-            &state.history_dir,
-            &account_id,
-            OverlayMatchCategory::BankaraMatch,
-        ),
-        Some(_) => Err("不支持的对战卡片类型".to_owned()),
-        None => history_store::load_overlay_state(&state.history_dir, &account_id),
-    }
+        None => history_store::load_overlay_state(&history_dir, &account_id),
+    })
+    .await
+    .map_err(|error| format!("读取卡片数据失败：{error}"))?
 }
 
 #[tauri::command]
@@ -1221,11 +1238,15 @@ async fn get_history_record(
     .map_err(|error| format!("读取记录详情失败：{error}"))?
 }
 
-/// Indexes existing archives in the background so the dashboard opens quickly.
-fn warm_up_dashboard_facts(history_dir: PathBuf, account_ids: Vec<String>) {
+/// Checks the archive and indexes it for the dashboard in the background:
+/// the integrity check reads the whole database, so it must not hold up the window.
+fn warm_up_history(history_dir: PathBuf, account_ids: Vec<String>) {
     let spawned = std::thread::Builder::new()
-        .name("dashboard-facts".to_owned())
+        .name("history-warm-up".to_owned())
         .spawn(move || {
+            if let Err(error) = history_store::check_integrity(&history_dir) {
+                log_console_error("history", &error);
+            }
             for account_id in account_ids {
                 if let Err(error) = dashboard_store::ensure_facts(&history_dir, &account_id) {
                     log_console_error("dashboard", &format!("整理面板数据失败：{error}"));
@@ -1761,10 +1782,7 @@ pub fn run() {
                 let sync_trigger = Arc::clone(&sync_trigger);
                 sync_schedule::ObsActivity::new(move || sync_trigger.notify_one())
             };
-            if let Err(error) = history_store::check_integrity(&history_dir) {
-                log_console_error("history", &error);
-            }
-            warm_up_dashboard_facts(history_dir.clone(), fact_account_ids);
+            warm_up_history(history_dir.clone(), fact_account_ids);
             match splat3_widget_core::images::ImageClient::new() {
                 Ok(client) => {
                     let image_cache = Arc::new(image_cache::ImageCache {
@@ -2410,6 +2428,7 @@ mod tests {
             fetched_at_ms: 123,
             added_battle_count: 1,
             added_coop_count: 0,
+            records_updated: false,
         };
         runtime.complete("account-a", &owner, Ok(result.clone()));
 

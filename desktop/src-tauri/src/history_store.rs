@@ -141,6 +141,23 @@ pub(crate) fn open_database(history_dir: &Path) -> Result<Connection, String> {
             .execute_batch("ALTER TABLE history_records ADD COLUMN overlay_track_key TEXT;")
             .map_err(|error| format!("升级卡片历史索引失败：{error}"))?;
     }
+    // 固定显示 X 赛、蛮颓比赛的卡片数据，和自动卡片一起存。旧版本只存了自动卡片。
+    for column in ["x_match_json", "bankara_match_json"] {
+        let has_column: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('overlay_snapshots') WHERE name = ?1",
+                [column],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("检查卡片缓存版本失败：{error}"))?;
+        if has_column == 0 {
+            connection
+                .execute_batch(&format!(
+                    "ALTER TABLE overlay_snapshots ADD COLUMN {column} TEXT;"
+                ))
+                .map_err(|error| format!("升级卡片缓存失败：{error}"))?;
+        }
+    }
     connection
         .execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_history_records_overlay_track
@@ -256,7 +273,7 @@ pub(crate) fn load_cache(
             "SELECT record_type, record_json, raw_json, raw_encoding
              FROM history_records
              WHERE account_id = ?1
-             ORDER BY played_time IS NULL, played_time DESC, rowid DESC",
+             ORDER BY played_time DESC, rowid DESC",
         )
         .map_err(|error| format!("准备历史记录查询失败：{error}"))?;
     let rows = statement
@@ -308,7 +325,7 @@ pub(crate) fn load_known_record_ids(
         let sql = if limit_per_type.is_some() {
             "SELECT record_id FROM history_records
              WHERE account_id = ?1 AND record_type = ?2
-             ORDER BY played_time IS NULL, played_time DESC, rowid DESC LIMIT ?3"
+             ORDER BY played_time DESC, rowid DESC LIMIT ?3"
         } else {
             "SELECT record_id FROM history_records
              WHERE account_id = ?1 AND record_type = ?2"
@@ -373,6 +390,7 @@ pub(crate) fn load_summary(
         fetched_at_ms,
         added_battle_count: 0,
         added_coop_count: 0,
+        records_updated: false,
     }))
 }
 
@@ -386,7 +404,7 @@ pub(crate) fn load_overlay_cache(
             .prepare(
                 "SELECT record_id, record_json, overlay_track_key FROM history_records
                  WHERE account_id = ?1 AND record_type = 'battle'
-                 ORDER BY played_time IS NULL, played_time DESC, rowid DESC",
+                 ORDER BY played_time DESC, rowid DESC",
             )
             .map_err(|error| format!("准备卡片历史查询失败：{error}"))?;
         let rows = statement
@@ -465,12 +483,14 @@ fn load_salmon_run_card(
     account_id: &str,
 ) -> Result<Option<SalmonRunCard>, String> {
     let connection = open_database(history_dir)?;
+    // SQLite 把 NULL 当作最小值，降序时没有时间的记录自然排在最后。这样写能直接按时间索引
+    // 读到这一期为止，不用每次把全部打工记录连同原始 JSON 排一遍序。
     let mut statement = connection
         .prepare(
             "SELECT played_time, record_json, raw_json, raw_encoding
              FROM history_records
              WHERE account_id = ?1 AND record_type = 'coop'
-             ORDER BY played_time IS NULL, played_time DESC, rowid DESC",
+             ORDER BY played_time DESC, rowid DESC",
         )
         .map_err(|error| format!("准备鲑鱼跑卡片查询失败：{error}"))?;
     let mut rows = statement
@@ -679,13 +699,14 @@ fn coop_rotation_window(record: &Value) -> Option<(String, String)> {
 }
 
 /// 给列表里已归档的打工记录补上这一期的起止时间；已经有的不改，原始 JSON 不动。
+/// 返回是否补上了任何一条。
 fn fill_coop_rotation(
     transaction: &rusqlite::Transaction<'_>,
     account_id: &str,
     start_time: &str,
     end_time: &str,
     record_ids: &[String],
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let mut select = transaction
         .prepare(
             "SELECT record_json FROM history_records
@@ -698,6 +719,7 @@ fn fill_coop_rotation(
              WHERE account_id = ?1 AND record_type = 'coop' AND record_id = ?2",
         )
         .map_err(|error| format!("准备补写打工期时间失败：{error}"))?;
+    let mut filled = false;
     for record_id in record_ids {
         let Some(record_json) = select
             .query_row(params![account_id, record_id], |row| {
@@ -734,8 +756,9 @@ fn fill_coop_rotation(
             start_time,
             end_time,
         )?;
+        filled = true;
     }
-    Ok(())
+    Ok(filled)
 }
 
 /// 一期工的标识：场地加上这一期发放的四把武器（随机武器期是问号武器，同样固定）。
@@ -780,19 +803,112 @@ fn value_as_i64(value: &Value) -> Option<i64> {
     })
 }
 
+/// 卡片的三种数据：自动卡片，以及固定显示 X 赛、蛮颓比赛的卡片。同步写入新对战后一起算好
+/// 存下来，OBS 每次请求只读存好的结果，不用每次重新解析全部对战。鲑鱼跑数据每次现读。
+pub(crate) struct OverlaySnapshot {
+    overlay: OverlayState,
+    x_match: OverlayState,
+    bankara_match: OverlayState,
+}
+
+impl OverlaySnapshot {
+    fn from_history(cache: Option<&HistoryCache>) -> Self {
+        let Some(cache) = cache else {
+            return Self {
+                overlay: empty_overlay_state(),
+                x_match: empty_overlay_state(),
+                bankara_match: empty_overlay_state(),
+            };
+        };
+        Self {
+            overlay: OverlayState::from_history(cache),
+            x_match: OverlayState::from_history_for_match_category(
+                cache,
+                OverlayMatchCategory::XMatch,
+            ),
+            bankara_match: OverlayState::from_history_for_match_category(
+                cache,
+                OverlayMatchCategory::BankaraMatch,
+            ),
+        }
+    }
+
+    fn into_state(self, category: Option<OverlayMatchCategory>) -> OverlayState {
+        match category {
+            None => self.overlay,
+            Some(OverlayMatchCategory::XMatch) => self.x_match,
+            Some(OverlayMatchCategory::BankaraMatch) => self.bankara_match,
+        }
+    }
+}
+
+/// 按卡片历史重新计算三种卡片数据并存下来。
+pub(crate) fn rebuild_overlay_snapshot(
+    history_dir: &Path,
+    account_id: &str,
+) -> Result<OverlaySnapshot, String> {
+    let cache = load_overlay_cache(history_dir, account_id)?;
+    let snapshot = OverlaySnapshot::from_history(cache.as_ref());
+    save_overlay_snapshot(history_dir, account_id, &snapshot)?;
+    Ok(snapshot)
+}
+
+fn save_overlay_snapshot(
+    history_dir: &Path,
+    account_id: &str,
+    snapshot: &OverlaySnapshot,
+) -> Result<(), String> {
+    let encode = |state: &OverlayState| {
+        serde_json::to_string(state).map_err(|error| format!("序列化卡片缓存失败：{error}"))
+    };
+    let connection = open_database(history_dir)?;
+    connection
+        .execute(
+            "INSERT INTO overlay_snapshots(
+                 account_id, state_json, x_match_json, bankara_match_json, updated_at_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(account_id) DO UPDATE SET
+                 state_json = excluded.state_json,
+                 x_match_json = excluded.x_match_json,
+                 bankara_match_json = excluded.bankara_match_json,
+                 updated_at_ms = excluded.updated_at_ms",
+            params![
+                account_id,
+                encode(&snapshot.overlay)?,
+                encode(&snapshot.x_match)?,
+                encode(&snapshot.bankara_match)?,
+                now_ms()
+            ],
+        )
+        .map_err(|error| format!("保存卡片缓存失败：{error}"))?;
+    Ok(())
+}
+
 pub(crate) fn load_overlay_state(
     history_dir: &Path,
     account_id: &str,
+) -> Result<OverlayState, String> {
+    load_card_state(history_dir, account_id, None)
+}
+
+pub(crate) fn load_overlay_state_for_match_category(
+    history_dir: &Path,
+    account_id: &str,
+    category: OverlayMatchCategory,
+) -> Result<OverlayState, String> {
+    load_card_state(history_dir, account_id, Some(category))
+}
+
+fn load_card_state(
+    history_dir: &Path,
+    account_id: &str,
+    category: Option<OverlayMatchCategory>,
 ) -> Result<OverlayState, String> {
     let connection = open_database(history_dir)?;
     if overlay_migration_pending(&connection, account_id)? {
         drop(connection);
         reparse_event_match_records(history_dir, account_id)?;
-        let state = match load_overlay_cache(history_dir, account_id)? {
-            Some(cache) => OverlayState::from_history(&cache),
-            None => empty_overlay_state(),
-        };
-        save_overlay_state(history_dir, account_id, &state)?;
+        let snapshot = rebuild_overlay_snapshot(history_dir, account_id)?;
         let connection = open_database(history_dir)?;
         for migration in OVERLAY_MIGRATIONS {
             connection
@@ -806,63 +922,29 @@ pub(crate) fn load_overlay_state(
                 .map_err(|error| format!("保存卡片数据版本失败：{error}"))?;
         }
         drop(connection);
-        return attach_salmon_run_card(history_dir, account_id, state);
+        return attach_salmon_run_card(history_dir, account_id, snapshot.into_state(category));
     }
-    let snapshot = connection
+    let column = match category {
+        None => "state_json",
+        Some(OverlayMatchCategory::XMatch) => "x_match_json",
+        Some(OverlayMatchCategory::BankaraMatch) => "bankara_match_json",
+    };
+    let stored = connection
         .query_row(
-            "SELECT state_json FROM overlay_snapshots WHERE account_id = ?1",
+            &format!("SELECT {column} FROM overlay_snapshots WHERE account_id = ?1"),
             [account_id],
-            |row| row.get::<_, String>(0),
+            |row| row.get::<_, Option<String>>(0),
         )
         .optional()
-        .map_err(|error| format!("读取卡片缓存失败：{error}"))?;
-    if let Some(snapshot) = snapshot {
-        match serde_json::from_str(&snapshot) {
-            Ok(state) => {
-                drop(connection);
-                return attach_salmon_run_card(history_dir, account_id, state);
-            }
-            Err(_) => {
-                connection
-                    .execute(
-                        "DELETE FROM overlay_snapshots WHERE account_id = ?1",
-                        [account_id],
-                    )
-                    .map_err(|error| format!("清理损坏的卡片缓存失败：{error}"))?;
-            }
-        }
-    }
+        .map_err(|error| format!("读取卡片缓存失败：{error}"))?
+        .flatten();
     drop(connection);
-
-    let state = match load_overlay_cache(history_dir, account_id)? {
-        Some(cache) => OverlayState::from_history(&cache),
-        None => OverlayState {
-            selected: None,
-            salmon_run: None,
-            recent_summary: RecentSummary {
-                sample_size: 0,
-                win: 0,
-                lose: 0,
-                win_rate: 0.0,
-            },
-        },
+    // 没有缓存、缓存损坏，或是旧版本只存了自动卡片：重新计算三种卡片并存下来。
+    let state = match stored.and_then(|json| serde_json::from_str(&json).ok()) {
+        Some(state) => state,
+        None => rebuild_overlay_snapshot(history_dir, account_id)?.into_state(category),
     };
-    save_overlay_state(history_dir, account_id, &state)?;
     attach_salmon_run_card(history_dir, account_id, state)
-}
-
-pub(crate) fn load_overlay_state_for_match_category(
-    history_dir: &Path,
-    account_id: &str,
-    category: OverlayMatchCategory,
-) -> Result<OverlayState, String> {
-    let current_state = load_overlay_state(history_dir, account_id)?;
-    let mut state = match load_overlay_cache(history_dir, account_id)? {
-        Some(cache) => OverlayState::from_history_for_match_category(&cache, category),
-        None => empty_overlay_state(),
-    };
-    state.salmon_run = current_state.salmon_run;
-    Ok(state)
 }
 
 fn overlay_migration_pending(connection: &Connection, account_id: &str) -> Result<bool, String> {
@@ -967,6 +1049,8 @@ fn refresh_event_power(record: &mut BattleRecord, raw: &Value) {
     }
 }
 
+/// 测试用：只换掉自动卡片的缓存，另外两种卡片下次读取时重新计算。
+#[cfg(test)]
 pub(crate) fn save_overlay_state(
     history_dir: &Path,
     account_id: &str,
@@ -981,6 +1065,8 @@ pub(crate) fn save_overlay_state(
              VALUES (?1, ?2, ?3)
              ON CONFLICT(account_id) DO UPDATE SET
                  state_json = excluded.state_json,
+                 x_match_json = NULL,
+                 bankara_match_json = NULL,
                  updated_at_ms = excluded.updated_at_ms",
             params![account_id, state_json, now_ms()],
         )
@@ -1040,7 +1126,11 @@ pub(crate) fn save_cache(
     transaction
         .commit()
         .map_err(|error| format!("提交历史数据库事务失败：{error}"))?;
-    save_overlay_state(history_dir, account_id, &OverlayState::from_history(cache))
+    save_overlay_snapshot(
+        history_dir,
+        account_id,
+        &OverlaySnapshot::from_history(Some(cache)),
+    )
 }
 
 pub(crate) struct HistoryRecordWriter {
@@ -1054,6 +1144,7 @@ impl HistoryRecordWriter {
         })
     }
 
+    /// 返回是否更新了已有的记录（X 赛结算分数、打工期起止时间）。
     pub(crate) fn save(
         &mut self,
         account_id: &str,
@@ -1064,7 +1155,7 @@ impl HistoryRecordWriter {
             .connection
             .transaction()
             .map_err(|error| format!("开启历史断点事务失败：{error}"))?;
-        let overlay_changed = match record {
+        let updated_existing = match record {
             HistoryFetchedRecord::Battle(record) => {
                 let track_key = archived_battle_power_track_key(&record.record, &record.raw);
                 upsert_record(
@@ -1083,6 +1174,7 @@ impl HistoryRecordWriter {
                     &record.record,
                     &record.raw,
                 )?;
+                clear_overlay_snapshot(&transaction, account_id)?;
                 false
             }
             HistoryFetchedRecord::Coop(record) => {
@@ -1109,29 +1201,32 @@ impl HistoryRecordWriter {
                 power_after,
                 payload_hash,
                 raw_group,
-            } => save_x_battle_settlement(
-                &transaction,
-                account_id,
-                fetched_at_ms,
-                &record_id,
-                power_after,
-                &payload_hash,
-                &raw_group,
-            )?,
+            } => {
+                let changed = save_x_battle_settlement(
+                    &transaction,
+                    account_id,
+                    fetched_at_ms,
+                    &record_id,
+                    power_after,
+                    &payload_hash,
+                    &raw_group,
+                )?;
+                if changed {
+                    clear_overlay_snapshot(&transaction, account_id)?;
+                }
+                changed
+            }
             HistoryFetchedRecord::CoopRotation {
                 start_time,
                 end_time,
                 record_ids,
-            } => {
-                fill_coop_rotation(
-                    &transaction,
-                    account_id,
-                    &start_time,
-                    &end_time,
-                    &record_ids,
-                )?;
-                false
-            }
+            } => fill_coop_rotation(
+                &transaction,
+                account_id,
+                &start_time,
+                &end_time,
+                &record_ids,
+            )?,
         };
         transaction
             .execute(
@@ -1146,8 +1241,22 @@ impl HistoryRecordWriter {
         transaction
             .commit()
             .map_err(|error| format!("提交历史断点事务失败：{error}"))?;
-        Ok(overlay_changed)
+        Ok(updated_existing)
     }
+}
+
+/// 对战数据变了：卡片缓存作废，同步完成后重新计算。同步中途失败时，下次读取卡片也会重新计算。
+fn clear_overlay_snapshot(
+    transaction: &rusqlite::Transaction<'_>,
+    account_id: &str,
+) -> Result<(), String> {
+    transaction
+        .execute(
+            "DELETE FROM overlay_snapshots WHERE account_id = ?1",
+            [account_id],
+        )
+        .map_err(|error| format!("清理卡片缓存失败：{error}"))?;
+    Ok(())
 }
 
 fn save_x_battle_settlement(
@@ -1305,7 +1414,7 @@ fn write_complete_archive(
         .prepare(
             "SELECT record_json, raw_json, raw_encoding FROM history_records
              WHERE account_id = ?1 AND record_type = 'battle'
-             ORDER BY played_time IS NULL, played_time DESC, rowid DESC",
+             ORDER BY played_time DESC, rowid DESC",
         )
         .map_err(|error| format!("准备对战数据导出失败：{error}"))?;
     let battle_rows = battle_statement
@@ -1320,16 +1429,8 @@ fn write_complete_archive(
     for row in battle_rows {
         let (record_json, raw_json, raw_encoding) =
             row.map_err(|error| format!("读取对战导出记录失败：{error}"))?;
-        let record = serde_json::from_str::<Value>(&record_json)
-            .map_err(|error| format!("解析对战导出记录失败：{error}"))?;
-        let raw = decode_raw_json(&raw_json, &raw_encoding)?;
-        if !first {
-            encoder
-                .write_all(b",")
-                .map_err(|error| format!("写入导出文件失败：{error}"))?;
-        }
-        first = false;
-        serde_json::to_writer(&mut encoder, &json!({ "record": record, "raw": raw }))
+        let raw = decode_raw_bytes(&raw_json, &raw_encoding)?;
+        write_export_item(&mut encoder, &mut first, &record_json, &raw)
             .map_err(|error| format!("生成对战导出数据失败：{error}"))?;
     }
     drop(battle_statement);
@@ -1342,7 +1443,7 @@ fn write_complete_archive(
         .prepare(
             "SELECT record_json, raw_json, raw_encoding FROM history_records
              WHERE account_id = ?1 AND record_type = 'coop'
-             ORDER BY played_time IS NULL, played_time DESC, rowid DESC",
+             ORDER BY played_time DESC, rowid DESC",
         )
         .map_err(|error| format!("准备打工数据导出失败：{error}"))?;
     let coop_rows = coop_statement
@@ -1357,16 +1458,8 @@ fn write_complete_archive(
     for row in coop_rows {
         let (record_json, raw_json, raw_encoding) =
             row.map_err(|error| format!("读取打工导出记录失败：{error}"))?;
-        let record = serde_json::from_str::<Value>(&record_json)
-            .map_err(|error| format!("解析打工导出记录失败：{error}"))?;
-        let raw = decode_raw_json(&raw_json, &raw_encoding)?;
-        if !first {
-            encoder
-                .write_all(b",")
-                .map_err(|error| format!("写入导出文件失败：{error}"))?;
-        }
-        first = false;
-        serde_json::to_writer(&mut encoder, &json!({ "record": record, "raw": raw }))
+        let raw = decode_raw_bytes(&raw_json, &raw_encoding)?;
+        write_export_item(&mut encoder, &mut first, &record_json, &raw)
             .map_err(|error| format!("生成打工导出数据失败：{error}"))?;
     }
     drop(coop_statement);
@@ -1424,6 +1517,35 @@ fn write_complete_archive(
     Ok(())
 }
 
+/// 写出一条 `{"record": …, "raw": …}`：归档里存的就是 JSON 文本，确认完整后原样写出，
+/// 不用解析成对象再序列化一遍。
+fn write_export_item(
+    encoder: &mut impl Write,
+    first: &mut bool,
+    record_json: &str,
+    raw: &[u8],
+) -> Result<(), String> {
+    serde_json::from_str::<de::IgnoredAny>(record_json)
+        .map_err(|error| format!("解析记录失败：{error}"))?;
+    serde_json::from_slice::<de::IgnoredAny>(raw)
+        .map_err(|error| format!("解析原始记录失败：{error}"))?;
+    let separator: &[u8] = if *first { b"" } else { b"," };
+    *first = false;
+    for part in [
+        separator,
+        b"{\"record\":",
+        record_json.as_bytes(),
+        b",\"raw\":",
+        raw,
+        b"}",
+    ] {
+        encoder
+            .write_all(part)
+            .map_err(|error| format!("写入导出文件失败：{error}"))?;
+    }
+    Ok(())
+}
+
 /// 导入的结果：新加入的对战和打工记录数，以及本地已有、没有重复写入的记录数。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct ImportSummary {
@@ -1474,11 +1596,7 @@ pub(crate) fn import(
     drop(writer);
 
     if summary.added_battle_count > 0 {
-        let state = match load_overlay_cache(history_dir, account_id)? {
-            Some(cache) => OverlayState::from_history(&cache),
-            None => empty_overlay_state(),
-        };
-        save_overlay_state(history_dir, account_id, &state)?;
+        rebuild_overlay_snapshot(history_dir, account_id)?;
     }
     written.map_err(|error| format!("导入中断：{error}"))?;
     Ok(summary)
@@ -2041,17 +2159,20 @@ pub(crate) fn load_record_raw(
 }
 
 pub(crate) fn decode_raw_json(bytes: &[u8], encoding: &str) -> Result<Value, String> {
-    let decoded = if encoding == "gzip" {
-        let mut decoder = GzDecoder::new(bytes);
-        let mut decoded = Vec::new();
-        decoder
-            .read_to_end(&mut decoded)
-            .map_err(|error| format!("解压原始记录失败：{error}"))?;
-        decoded
-    } else {
-        bytes.to_vec()
-    };
-    serde_json::from_slice(&decoded).map_err(|error| format!("解析原始记录失败：{error}"))
+    serde_json::from_slice(&decode_raw_bytes(bytes, encoding)?)
+        .map_err(|error| format!("解析原始记录失败：{error}"))
+}
+
+/// 解压后的原始 JSON 文本。
+fn decode_raw_bytes(bytes: &[u8], encoding: &str) -> Result<Vec<u8>, String> {
+    if encoding != "gzip" {
+        return Ok(bytes.to_vec());
+    }
+    let mut decoded = Vec::new();
+    GzDecoder::new(bytes)
+        .read_to_end(&mut decoded)
+        .map_err(|error| format!("解压原始记录失败：{error}"))?;
+    Ok(decoded)
 }
 
 /// 其他模块的测试共用的样例数据。
@@ -2288,6 +2409,97 @@ mod tests {
         assert_eq!(
             cached.selected.as_ref().and_then(|battle| battle.power),
             Some(2200.0)
+        );
+    }
+
+    #[test]
+    fn match_cards_are_stored_with_the_snapshot_and_rebuilt_after_new_battles() {
+        let directory = tempdir().unwrap();
+        let mut cache = sample_cache();
+        let mut anarchy = cache.battles[0].clone();
+        anarchy.record.id = "battle-2".to_owned();
+        anarchy.record.played_time = Some("2026-09-21T00:00:00Z".to_owned());
+        anarchy.record.mode = "BANKARA".to_owned();
+        anarchy.record.bankara_mode = Some("OPEN".to_owned());
+        anarchy.record.power = Some(1800.0);
+        anarchy.record.power_kind = Some("team".to_owned());
+        anarchy.raw = json!({ "id": "battle-2" });
+        cache.battles.push(anarchy);
+        save_cache(directory.path(), "account", &cache).unwrap();
+        let selected = |state: OverlayState| state.selected.map(|battle| battle.id);
+        let match_card = |category| {
+            selected(
+                load_overlay_state_for_match_category(directory.path(), "account", category)
+                    .unwrap(),
+            )
+        };
+        assert_eq!(
+            selected(load_overlay_state(directory.path(), "account").unwrap()),
+            Some("battle-2".to_owned())
+        );
+
+        // 固定卡片读的是存好的结果：卡片历史读不出来也照常显示。
+        let connection = open_database(directory.path()).unwrap();
+        connection
+            .execute("UPDATE history_records SET record_json = 'not-json'", [])
+            .unwrap();
+        drop(connection);
+        assert_eq!(
+            match_card(OverlayMatchCategory::XMatch),
+            Some("battle-1".to_owned())
+        );
+        assert_eq!(
+            match_card(OverlayMatchCategory::BankaraMatch),
+            Some("battle-2".to_owned())
+        );
+
+        // 旧版本只存了自动卡片：读取固定卡片时补算并存下来。
+        save_cache(directory.path(), "account", &cache).unwrap();
+        let connection = open_database(directory.path()).unwrap();
+        connection
+            .execute(
+                "UPDATE overlay_snapshots SET x_match_json = NULL, bankara_match_json = NULL",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        assert_eq!(
+            match_card(OverlayMatchCategory::XMatch),
+            Some("battle-1".to_owned())
+        );
+        let stored: Option<String> = open_database(directory.path())
+            .unwrap()
+            .query_row(
+                "SELECT bankara_match_json FROM overlay_snapshots WHERE account_id = 'account'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(stored.is_some());
+
+        // 写入新对战后缓存作废，下次读取按新记录重新计算。
+        let mut newer = cache.battles[0].clone();
+        newer.record.id = "battle-3".to_owned();
+        newer.record.played_time = Some("2026-09-22T00:00:00Z".to_owned());
+        let mut writer = HistoryRecordWriter::open(directory.path()).unwrap();
+        writer
+            .save("account", 456, HistoryFetchedRecord::Battle(newer))
+            .unwrap();
+        drop(writer);
+        let snapshots: i64 = open_database(directory.path())
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM overlay_snapshots", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(snapshots, 0);
+        assert_eq!(
+            match_card(OverlayMatchCategory::XMatch),
+            Some("battle-3".to_owned())
+        );
+        assert_eq!(
+            selected(load_overlay_state(directory.path(), "account").unwrap()),
+            Some("battle-3".to_owned())
         );
     }
 
@@ -2945,29 +3157,29 @@ mod tests {
         let mut writer = HistoryRecordWriter::open(directory.path()).unwrap();
         let coop = sample_coop("coop-1", "2026-09-22T01:00:00Z".to_owned());
         let raw = coop.raw.clone();
-        writer
+        assert!(!writer
             .save("account", 1, HistoryFetchedRecord::Coop(coop))
-            .unwrap();
+            .unwrap());
         let rotation = |start: &str, end: &str| HistoryFetchedRecord::CoopRotation {
             start_time: start.to_owned(),
             end_time: end.to_owned(),
             record_ids: vec!["coop-1".to_owned(), "not-archived".to_owned()],
         };
-        writer
+        assert!(writer
             .save(
                 "account",
                 2,
                 rotation("2026-09-21T16:00:00Z", "2026-09-23T08:00:00Z"),
             )
-            .unwrap();
-        // 已经有起止时间的不再改写。
-        writer
+            .unwrap());
+        // 已经有起止时间的不再改写，也不算更新。
+        assert!(!writer
             .save(
                 "account",
                 3,
                 rotation("2026-09-23T08:00:00Z", "2026-09-25T00:00:00Z"),
             )
-            .unwrap();
+            .unwrap());
         drop(writer);
 
         let loaded = load_cache(directory.path(), "account").unwrap().unwrap();

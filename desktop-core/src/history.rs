@@ -233,6 +233,9 @@ pub struct HistorySyncSummary {
     pub fetched_at_ms: i64,
     pub added_battle_count: usize,
     pub added_coop_count: usize,
+    /// 已有记录被更新过（X 赛结算分数、补上的打工期），面板数据也要重新读取。
+    #[serde(default)]
+    pub records_updated: bool,
 }
 
 impl HistoryCache {
@@ -243,6 +246,7 @@ impl HistoryCache {
             fetched_at_ms: self.fetched_at_ms,
             added_battle_count: 0,
             added_coop_count: 0,
+            records_updated: false,
         }
     }
 

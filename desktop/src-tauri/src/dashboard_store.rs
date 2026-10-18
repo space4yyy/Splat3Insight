@@ -15,6 +15,7 @@ use splat3_widget_core::dashboard::{
     DASHBOARD_FACTS_VERSION,
 };
 use splat3_widget_core::history::{BattleRecord, CoopRecord};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -358,9 +359,11 @@ fn backfill(
         "battle" => "extension_dashboard_battles",
         _ => "extension_dashboard_coop",
     };
+    // 按行号顺序读，每批只读到这 200 条为止。走时间索引的话，每一批都要先把剩下的全部记录
+    // 连同原始 JSON 读出来按行号排序，记录多时重建会慢到几分钟。
     let missing_sql = format!(
         "SELECT r.rowid, r.record_json, r.raw_json, r.raw_encoding
-         FROM history_records r
+         FROM history_records r NOT INDEXED
          LEFT JOIN {fact_table} f ON f.account_id = r.account_id AND f.record_id = r.record_id
          WHERE r.account_id = ?1 AND r.record_type = ?2 AND f.record_id IS NULL AND r.rowid > ?3
          ORDER BY r.rowid
@@ -418,8 +421,31 @@ fn backfill(
 pub(crate) struct DashboardFacts {
     pub(crate) account_id: String,
     pub(crate) fetched_at_ms: Option<i64>,
+    /// 行里用到的图片链接，每个只存一份，行里的图片字段是这里的下标。同一把武器的链接
+    /// 每场都一样，记录多时能少传几十 MB。
+    pub(crate) images: Vec<String>,
     pub(crate) battles: Vec<BattleRow>,
     pub(crate) coop: Vec<CoopRow>,
+}
+
+/// 图片链接表：同一个链接只记一次。
+#[derive(Default)]
+struct ImageTable {
+    links: Vec<String>,
+    positions: HashMap<String, usize>,
+}
+
+impl ImageTable {
+    fn add(&mut self, link: Option<String>) -> Option<usize> {
+        let link = link?;
+        if let Some(position) = self.positions.get(&link) {
+            return Some(*position);
+        }
+        let position = self.links.len();
+        self.positions.insert(link.clone(), position);
+        self.links.push(link);
+        Some(position)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -434,11 +460,11 @@ pub(crate) struct BattleRow {
     stage_name: Option<String>,
     weapon_id: Option<String>,
     weapon_name: Option<String>,
-    weapon_image: Option<String>,
+    weapon_image: Option<usize>,
     sub_weapon_name: Option<String>,
-    sub_weapon_image: Option<String>,
+    sub_weapon_image: Option<usize>,
     special_weapon_name: Option<String>,
-    special_weapon_image: Option<String>,
+    special_weapon_image: Option<usize>,
     judgement: Option<String>,
     knockout: Option<String>,
     duration_seconds: Option<i64>,
@@ -477,9 +503,15 @@ pub(crate) struct CoopRow {
     scale_silver: Option<i64>,
     scale_bronze: Option<i64>,
     golden_assists: Option<i64>,
-    supplied_weapons: Vec<CoopWeaponFact>,
+    supplied_weapons: Vec<SuppliedWeaponRow>,
     rotation_start_ms: Option<i64>,
     rotation_end_ms: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SuppliedWeaponRow {
+    name: Option<String>,
+    image: Option<usize>,
 }
 
 /// Returns every fact with a known play time, oldest first.
@@ -495,6 +527,7 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
         .optional()
         .map_err(|error| format!("读取历史同步时间失败：{error}"))?;
 
+    let mut images = ImageTable::default();
     let battles = {
         let mut statement = connection
             .prepare(
@@ -531,11 +564,11 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
                     paint: row.get(17)?,
                     power: row.get(18)?,
                     power_kind: row.get(19)?,
-                    weapon_image: row.get(20)?,
+                    weapon_image: images.add(row.get(20)?),
                     sub_weapon_name: row.get(21)?,
-                    sub_weapon_image: row.get(22)?,
+                    sub_weapon_image: images.add(row.get(22)?),
                     special_weapon_name: row.get(23)?,
-                    special_weapon_image: row.get(24)?,
+                    special_weapon_image: images.add(row.get(24)?),
                 })
             })
             .map_err(|error| format!("读取面板对战数据失败：{error}"))?;
@@ -586,8 +619,14 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
                     scale_bronze: row.get(22)?,
                     golden_assists: row.get(23)?,
                     supplied_weapons: weapons_json
-                        .and_then(|json| serde_json::from_str(&json).ok())
-                        .unwrap_or_default(),
+                        .and_then(|json| serde_json::from_str::<Vec<CoopWeaponFact>>(&json).ok())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|weapon| SuppliedWeaponRow {
+                            name: weapon.name,
+                            image: images.add(weapon.image),
+                        })
+                        .collect(),
                     rotation_start_ms: row.get(25)?,
                     rotation_end_ms: row.get(26)?,
                 })
@@ -600,6 +639,7 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
     Ok(DashboardFacts {
         account_id: account_id.to_owned(),
         fetched_at_ms,
+        images: images.links,
         battles,
         coop,
     })
@@ -766,15 +806,20 @@ mod tests {
     fn facts_carry_kits_assists_supplied_weapons_and_the_rotation() {
         let directory = tempdir().unwrap();
         let mut writer = history_store::HistoryRecordWriter::open(directory.path()).unwrap();
-        let mut armed = battle("b1", "2026-10-16T13:00:00Z", None);
-        armed.raw["myTeam"]["players"][0]["weapon"] = json!({
-            "id": "weapon-40",
-            "subWeapon": { "name": "吸盘炸弹", "image": { "url": "https://example.test/sub.png" } },
-            "specialWeapon": { "name": "螃蟹坦克", "image": { "url": "https://example.test/sp.png" } }
-        });
-        writer
-            .save("account", 1, HistoryFetchedRecord::Battle(armed))
-            .unwrap();
+        for (id, played_time) in [
+            ("b1", "2026-10-16T13:00:00Z"),
+            ("b2", "2026-10-16T13:10:00Z"),
+        ] {
+            let mut armed = battle(id, played_time, None);
+            armed.raw["myTeam"]["players"][0]["weapon"] = json!({
+                "id": "weapon-40",
+                "subWeapon": { "name": "吸盘炸弹", "image": { "url": "https://example.test/sub.png" } },
+                "specialWeapon": { "name": "螃蟹坦克", "image": { "url": "https://example.test/sp.png" } }
+            });
+            writer
+                .save("account", 1, HistoryFetchedRecord::Battle(armed))
+                .unwrap();
+        }
         let mut shift = coop("c1", "2026-10-16T12:00:00Z");
         shift.record.rotation_start_time = Some("2026-10-16T00:00:00Z".to_owned());
         shift.record.rotation_end_time = Some("2026-10-17T16:00:00Z".to_owned());
@@ -788,18 +833,34 @@ mod tests {
 
         let facts = load_facts(directory.path(), "account").unwrap();
         let battle = &facts.battles[0];
+        let link =
+            |position: Option<usize>| position.map(|position| facts.images[position].as_str());
         assert_eq!(battle.sub_weapon_name.as_deref(), Some("吸盘炸弹"));
         assert_eq!(battle.special_weapon_name.as_deref(), Some("螃蟹坦克"));
         assert_eq!(
-            battle.special_weapon_image.as_deref(),
+            link(battle.special_weapon_image),
             Some("https://example.test/sp.png")
         );
+        // 两场用的是同一套图片：每个链接只传一份。
+        assert_eq!(facts.battles[1].sub_weapon_image, battle.sub_weapon_image);
         let shift = &facts.coop[0];
         assert_eq!(shift.golden_assists, Some(5));
         assert_eq!(shift.supplied_weapons.len(), 1);
         assert_eq!(
             shift.supplied_weapons[0].name.as_deref(),
             Some("Splattershot")
+        );
+        assert_eq!(
+            link(shift.supplied_weapons[0].image),
+            Some("https://example.test/c1.png")
+        );
+        assert_eq!(
+            facts.images,
+            [
+                "https://example.test/sub.png",
+                "https://example.test/sp.png",
+                "https://example.test/c1.png"
+            ]
         );
         assert_eq!(shift.rotation_start_ms, Some(1_792_108_800_000));
         assert_eq!(shift.rotation_end_ms, Some(1_792_252_800_000));

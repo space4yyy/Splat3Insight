@@ -60,6 +60,19 @@ test('normalized records carry kits, assists, supplied weapons, the rotation and
   assert.equal(shifts[0].kingName, '横纲');
 });
 
+test('image links listed once in the facts are looked up by position', () => {
+  const { battles, shifts } = data.prepare({
+    images: ['https://example.test/weapon.png', 'https://example.test/sub.png'],
+    battles: [{ id: 'b1', played_at_ms: 1, mode: 'X_MATCH', weapon_image: 0, sub_weapon_image: 1, special_weapon_image: 7 }],
+    coop: [{ id: 'c1', played_at_ms: 2, cleared: true, waves: [], supplied_weapons: [{ name: 'Splattershot', image: 0 }, { name: null, image: null }] }],
+  });
+  assert.equal(battles[0].weaponImage, 'https://example.test/weapon.png');
+  assert.equal(battles[0].subImage, 'https://example.test/sub.png');
+  assert.equal(battles[0].specialImage, null);
+  assert.equal(shifts[0].supplied[0].image, 'https://example.test/weapon.png');
+  assert.equal(shifts[0].supplied[1].image, null);
+});
+
 test('rule breakdown counts knockouts by side and splits the modes', () => {
   const rows = analysis.ruleBreakdown([
     battle({ rule: 'TURF_WAR', mode: 'regular', result: 'win', duration: 180 }),

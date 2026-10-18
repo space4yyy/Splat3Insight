@@ -33,7 +33,11 @@
   }
   const nameOf = (names, id, name, kind) => (id && names?.has(id) ? names.get(id) : gameName(kind, name));
 
-  function normalizeBattle(row, names) {
+  // 图片链接在 facts.images 里只存一份，行里的图片字段是它的下标；直接给出链接的也照常使用。
+  const linkIn = (links) => (value) => (typeof value === 'string' ? value : Number.isInteger(value) ? links?.[value] ?? null : null);
+  const ownLinks = linkIn([]);
+
+  function normalizeBattle(row, names, link = ownLinks) {
     return {
       id: row.id,
       t: row.played_at_ms,
@@ -44,11 +48,11 @@
       stage: nameOf(names?.stages, row.stage_id, row.stage_name, 'stages') || '未知场地',
       weapon: nameOf(names?.weapons, row.weapon_id, row.weapon_name, 'weapons') || '未知武器',
       weaponId: row.weapon_id || row.weapon_name || null,
-      weaponImage: typeof row.weapon_image === 'string' ? row.weapon_image : null,
+      weaponImage: link(row.weapon_image),
       sub: gameName('subWeapons', row.sub_weapon_name),
-      subImage: typeof row.sub_weapon_image === 'string' ? row.sub_weapon_image : null,
+      subImage: link(row.sub_weapon_image),
       special: gameName('specialWeapons', row.special_weapon_name),
-      specialImage: typeof row.special_weapon_image === 'string' ? row.special_weapon_image : null,
+      specialImage: link(row.special_weapon_image),
       win: row.judgement === 'WIN',
       lose: LOSSES.has(row.judgement),
       duration: isNum(row.duration_seconds) ? row.duration_seconds : null,
@@ -76,7 +80,7 @@
   }
 
   // 打工时长没有原始数据，按波次估算：开场 60 秒，每波 100 秒，头目鲑鱼再加 100 秒。
-  function normalizeShift(row, names) {
+  function normalizeShift(row, names, link = ownLinks) {
     const waves = (row.waves || [])
       .filter((wave) => !wave.boss_wave)
       .map((wave) => ({ water: WATER[wave.water_level] ?? '未知潮位', cleared: wave.cleared === true, event: gameName('events', wave.event_wave) }));
@@ -105,7 +109,7 @@
       goldenAssists: isNum(row.golden_assists) ? row.golden_assists : null,
       supplied: (row.supplied_weapons || []).map((weapon) => ({
         name: gameName('weapons', weapon?.name),
-        image: typeof weapon?.image === 'string' ? weapon.image : null,
+        image: link(weapon?.image),
       })),
       rotationStart: isNum(row.rotation_start_ms) ? row.rotation_start_ms : null,
       rotationEnd: isNum(row.rotation_end_ms) ? row.rotation_end_ms : null,
@@ -158,8 +162,9 @@
       weapons: namesById(battleRows, 'weapon_id', 'weapon_name', 'weapons'),
       coopStages: namesById(coopRows, 'stage_id', 'stage_name', 'coopStages'),
     };
-    const battles = battleRows.map((row) => normalizeBattle(row, names));
-    const shifts = coopRows.map((row) => normalizeShift(row, names));
+    const link = linkIn(Array.isArray(facts?.images) ? facts.images : []);
+    const battles = battleRows.map((row) => normalizeBattle(row, names, link));
+    const shifts = coopRows.map((row) => normalizeShift(row, names, link));
     assignPowerDeltas(battles);
     return { battles, shifts, xSettlements: deriveXSettlements(battles) };
   }
