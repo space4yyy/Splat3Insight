@@ -27,6 +27,7 @@
     log: ['对战记录', '所有对局，点一行查看详情。'],
     obs: ['其他工具', '直播用的 OBS 数据卡片等附加工具。'],
     accounts: ['账号管理', '添加、切换和管理 Nintendo 账号。'],
+    settings: ['设置', '外观和开机启动。'],
   };
   const OBS_SELECTION_KEY = 'splat3-obs-card-selection';
   const OBS_TRANSPARENCY_KEY = 'splat3-obs-card-transparency';
@@ -153,6 +154,35 @@
   matchMedia('(prefers-color-scheme: light)').addEventListener('change', onThemeChange);
   syncThemeSwitch();
 
+  // 开机启动：开关的状态以系统登录项为准，每次打开设置页时重新读取。
+  const autostartToggle = $('#autostart');
+  const settingsMessage = $('#settings-message');
+  function setSettingsMessage(text) {
+    settingsMessage.textContent = text;
+    settingsMessage.hidden = !text;
+  }
+  async function refreshAutostart() {
+    try {
+      autostartToggle.checked = await invoke('get_autostart');
+      autostartToggle.disabled = false;
+    } catch (error) {
+      setSettingsMessage(String(error));
+    }
+  }
+  autostartToggle.addEventListener('change', async () => {
+    const enabled = autostartToggle.checked;
+    autostartToggle.disabled = true;
+    setSettingsMessage('');
+    try {
+      autostartToggle.checked = await invoke('set_autostart', { enabled });
+    } catch (error) {
+      autostartToggle.checked = !enabled;
+      setSettingsMessage(String(error));
+    } finally {
+      autostartToggle.disabled = false;
+    }
+  });
+
   // 页面切换
   function showView(view) {
     if (!VIEWS[view]) view = 'overview';
@@ -174,7 +204,7 @@
     else if (view === 'obs') {
       renderObsPreview();
       refreshOverlayStates();
-    }
+    } else if (view === 'settings') refreshAutostart();
   }
   $('#nav').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-view]');

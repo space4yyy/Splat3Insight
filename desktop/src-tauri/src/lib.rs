@@ -20,7 +20,7 @@ use splat3_widget_core::{
 #[cfg(target_os = "macos")]
 use tauri::RunEvent;
 use tauri::{
-    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalPosition, State, WebviewWindow,
 };
@@ -49,20 +49,11 @@ struct AppState {
     overlay_service: overlay_server::OverlayServiceController,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 窗口位置等应用设置。旧版本存过的其他字段（如已去掉的“保留程序坞图标”）读取时忽略。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct AppPreferences {
-    keep_dock_icon: bool,
     window_placement: Option<SavedWindowPlacement>,
-}
-
-impl Default for AppPreferences {
-    fn default() -> Self {
-        Self {
-            keep_dock_icon: true,
-            window_placement: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1579,12 +1570,9 @@ fn associate_launch_agent_with_bundle(
     Ok(())
 }
 
-fn toggle_autostart(app: &AppHandle, menu_item: &CheckMenuItem<tauri::Wry>) {
+fn set_autostart_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
     let manager = app.autolaunch();
-    let was_enabled = manager.is_enabled().unwrap_or(false);
-    let result = if was_enabled {
-        manager.disable()
-    } else {
+    let result = if enabled {
         manager.enable().and_then(|()| {
             #[cfg(target_os = "macos")]
             if let Err(error) = associate_autostart_agent_with_app(app) {
@@ -1593,119 +1581,41 @@ fn toggle_autostart(app: &AppHandle, menu_item: &CheckMenuItem<tauri::Wry>) {
             }
             Ok(())
         })
+    } else {
+        manager.disable()
     };
-
-    match result {
-        Ok(()) => {
-            let _ = menu_item.set_checked(!was_enabled);
-            log_console(
-                "app-lifecycle",
-                if was_enabled {
-                    "已关闭开机启动"
-                } else {
-                    "已开启开机启动"
-                },
-            );
-        }
-        Err(error) => {
-            let _ = menu_item.set_checked(was_enabled);
-            log_console_error("app-lifecycle", &format!("设置开机启动失败：{error}"));
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn toggle_keep_dock_icon(
-    app: &AppHandle,
-    menu_item: &CheckMenuItem<tauri::Wry>,
-    preferences_path: &Path,
-) {
-    // Check menu items are toggled by the native menu before the event arrives.
-    let enabled = menu_item.is_checked().unwrap_or(true);
-    let previous_value = !enabled;
-    if let Err(error) = app.set_dock_visibility(enabled) {
-        let _ = menu_item.set_checked(previous_value);
-        log_console_error("app-lifecycle", &format!("设置程序坞图标失败：{error}"));
-        return;
-    }
-
-    let mut preferences = match load_app_preferences(preferences_path) {
-        Ok(preferences) => preferences,
-        Err(error) => {
-            let _ = app.set_dock_visibility(previous_value);
-            let _ = menu_item.set_checked(previous_value);
-            log_console_error("app-lifecycle", &error);
-            return;
-        }
-    };
-    preferences.keep_dock_icon = enabled;
-    if let Err(error) = store_app_preferences(preferences_path, &preferences) {
-        let _ = app.set_dock_visibility(previous_value);
-        let _ = menu_item.set_checked(previous_value);
-        log_console_error("app-lifecycle", &error);
-        return;
-    }
-
+    result.map_err(|error| format!("设置开机启动失败：{error}"))?;
     log_console(
         "app-lifecycle",
         if enabled {
-            "已保留程序坞图标"
+            "已开启开机启动"
         } else {
-            "已隐藏程序坞图标；可从菜单栏图标重新打开主界面"
+            "已关闭开机启动"
         },
     );
+    Ok(())
 }
 
-fn build_tray(
-    app: &mut tauri::App,
-    preferences_path: PathBuf,
-    preferences: &AppPreferences,
-) -> tauri::Result<()> {
-    #[cfg(not(target_os = "macos"))]
-    let _ = (&preferences_path, preferences);
+/// 设置页：开机启动是否打开。
+#[tauri::command]
+fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|error| format!("读取开机启动状态失败：{error}"))
+}
 
-    let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
+/// 设置页：打开或关闭开机启动，返回设置后的状态。
+#[tauri::command]
+fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    set_autostart_enabled(&app, enabled)?;
+    get_autostart(app)
+}
+
+fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let open_item = MenuItem::with_id(app, "open-main", "打开主界面", true, None::<&str>)?;
-    let autostart_item = CheckMenuItem::with_id(
-        app,
-        "toggle-autostart",
-        "开机启动",
-        true,
-        autostart_enabled,
-        None::<&str>,
-    )?;
     let separator = PredefinedMenuItem::separator(app)?;
     let exit_item = MenuItem::with_id(app, "exit-app", "退出", true, None::<&str>)?;
-
-    #[cfg(target_os = "macos")]
-    let (menu, dock_icon_item) = {
-        let dock_icon_item = CheckMenuItem::with_id(
-            app,
-            "toggle-dock-icon",
-            "保留程序坞图标",
-            true,
-            preferences.keep_dock_icon,
-            None::<&str>,
-        )?;
-        let menu = Menu::with_items(
-            app,
-            &[
-                &open_item,
-                &autostart_item,
-                &dock_icon_item,
-                &separator,
-                &exit_item,
-            ],
-        )?;
-        (menu, dock_icon_item)
-    };
-
-    #[cfg(not(target_os = "macos"))]
-    let menu = Menu::with_items(app, &[&open_item, &autostart_item, &separator, &exit_item])?;
-
-    let autostart_item_for_events = autostart_item.clone();
-    #[cfg(target_os = "macos")]
-    let dock_icon_item_for_events = dock_icon_item.clone();
+    let menu = Menu::with_items(app, &[&open_item, &separator, &exit_item])?;
 
     TrayIconBuilder::with_id("main-tray")
         .icon(tauri::include_image!("./icons/44x44.png"))
@@ -1715,11 +1625,6 @@ fn build_tray(
         .show_menu_on_left_click(true)
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "open-main" => show_main_window(app),
-            "toggle-autostart" => toggle_autostart(app, &autostart_item_for_events),
-            #[cfg(target_os = "macos")]
-            "toggle-dock-icon" => {
-                toggle_keep_dock_icon(app, &dock_icon_item_for_events, &preferences_path)
-            }
             "exit-app" => app.exit(0),
             _ => {}
         })
@@ -1793,10 +1698,6 @@ pub fn run() {
                     AppPreferences::default()
                 }
             };
-            #[cfg(target_os = "macos")]
-            if let Err(error) = app.handle().set_dock_visibility(preferences.keep_dock_icon) {
-                log_console_error("app-lifecycle", &format!("设置程序坞图标失败：{error}"));
-            }
 
             let main_window = app
                 .get_webview_window("main")
@@ -1887,7 +1788,7 @@ pub fn run() {
 
             overlay_service.start().map_err(std::io::Error::other)?;
 
-            build_tray(app, preferences_path, &preferences)?;
+            build_tray(app)?;
             if !launch_in_background {
                 main_window.show()?;
             }
@@ -1919,6 +1820,8 @@ pub fn run() {
             get_sync_status,
             export_history,
             import_history,
+            get_autostart,
+            set_autostart,
             remove_account,
             get_overlay_service_status,
             start_overlay_service,
@@ -1979,9 +1882,16 @@ mod tests {
     }
 
     #[test]
-    fn dock_icon_preference_defaults_to_visible_and_persists_changes() {
+    fn preferences_keep_the_window_placement_and_drop_the_old_dock_setting() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("preferences.json");
+        // Earlier versions also stored whether to keep the Dock icon.
+        fs::write(&path, r#"{"keep_dock_icon":false,"window_placement":null}"#).unwrap();
+        assert!(load_app_preferences(&path)
+            .unwrap()
+            .window_placement
+            .is_none());
+
         let placement = SavedWindowPlacement {
             display: Some(SavedDisplay {
                 name: Some("Display A".to_owned()),
@@ -1995,19 +1905,18 @@ mod tests {
             width: 560.0,
             height: 680.0,
         };
-
-        assert!(load_app_preferences(&path).unwrap().keep_dock_icon);
         store_app_preferences(
             &path,
             &AppPreferences {
-                keep_dock_icon: false,
                 window_placement: Some(placement.clone()),
             },
         )
         .unwrap();
         let saved = load_app_preferences(&path).unwrap();
-        assert!(!saved.keep_dock_icon);
         assert_eq!(saved.window_placement, Some(placement));
+        assert!(!fs::read_to_string(&path)
+            .unwrap()
+            .contains("keep_dock_icon"));
     }
 
     #[test]

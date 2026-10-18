@@ -32,15 +32,8 @@
           <div class="nav-label">附加功能</div>
           <button type="button" data-view="obs">其他工具</button>
           <button type="button" data-view="accounts">账号管理</button>
+          <button type="button" data-view="settings">设置</button>
         </nav>
-        <div class="theme-switch">
-          <span>外观</span>
-          <div class="segmented small" id="theme-switch" role="group" aria-label="外观">
-            <button type="button" data-theme-choice="system" aria-pressed="true" title="跟随系统">系统</button>
-            <button type="button" data-theme-choice="light" aria-pressed="false">浅色</button>
-            <button type="button" data-theme-choice="dark" aria-pressed="false">深色</button>
-          </div>
-        </div>
         <div class="sidebar-foot">
           <div class="sidebar-sync-row">
             <div id="sidebar-sync"></div>
@@ -397,6 +390,24 @@
                 <div class="obs-stage" id="obs-preview"></div>
               </div>
             </div>
+          </article>
+        </section>
+
+        <section class="view" id="view-settings" aria-label="设置" hidden>
+          <article class="card settings-panel">
+            <div class="settings-row">
+              <span class="settings-label" id="theme-label">外观</span>
+              <div class="segmented" id="theme-switch" role="group" aria-labelledby="theme-label">
+                <button type="button" data-theme-choice="system" aria-pressed="true">跟随系统</button>
+                <button type="button" data-theme-choice="light" aria-pressed="false">浅色</button>
+                <button type="button" data-theme-choice="dark" aria-pressed="false">深色</button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <label class="settings-label" for="autostart">开机启动</label>
+              <input type="checkbox" class="switch" id="autostart" role="switch" disabled>
+            </div>
+            <p class="settings-message" id="settings-message" role="status" aria-live="polite" hidden></p>
           </article>
         </section>
 
