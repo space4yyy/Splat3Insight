@@ -872,9 +872,12 @@
       .flatMap((id) => Array.from(new URL(obsCardOf(id).route, 'http://localhost').searchParams.keys()));
     return keys.length ? `/overlay?${keys.join('&')}` : '/overlay';
   }
+  // 卡片按浏览器来源的宽高等比缩放：来源按卡片的 4 倍建好，卡片就按那个分辨率绘制，缩小时保持清晰。
+  const obsSourceSize = (card) => [card.width * 4, card.height * 4];
   function renderObsUrl() {
     const box = $('#obs-url');
-    if (!app.obs.catalog.length) {
+    const card = obsCardOf(app.obs.active) || app.obs.catalog[0];
+    if (!card) {
       box.replaceChildren();
       return;
     }
@@ -886,6 +889,8 @@
       if (await copyText(url, copy, '复制 OBS 地址失败')) app.obs.copiedUrl = url;
     });
     box.replaceChildren(el('code', { text: url }), copy);
+    const [width, height] = obsSourceSize(card);
+    $('#obs-size-hint').textContent = `在浏览器来源属性里把宽高设为 ${width} × ${height}，卡片会按这个分辨率绘制；在画面里缩小保持清晰，放大会略糊。`;
   }
   async function copyText(text, button, failure) {
     try {
@@ -997,7 +1002,8 @@
       return;
     }
     $('#obs-preview-title').textContent = `预览：${card.optionLabel}`;
-    $('#obs-preview-size').textContent = `${card.width} × ${card.height} px`;
+    const [width, height] = obsSourceSize(card);
+    $('#obs-preview-size').textContent = `建议 ${width} × ${height}`;
     let preview = box.querySelector('.overlay-preview');
     if (!preview || preview.dataset.card !== card.id) {
       preview = el('div', { class: 'overlay-preview', 'data-card': card.id }, el('div', { class: 'overlay-preview__viewport' }, el('div', { class: 'overlay-preview__scale' })));

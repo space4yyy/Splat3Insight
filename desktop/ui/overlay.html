@@ -28,8 +28,9 @@
         if (!card) return;
         const cardWidth = card.offsetWidth;
         const cardHeight = card.offsetHeight;
+        // 按浏览器来源的宽高等比放大或缩小：来源设大，卡片就按那个分辨率绘制，不会糊。
         const scale = viewportWidth > 0 && viewportHeight > 0
-          ? Math.min(1, viewportWidth / cardWidth, viewportHeight / cardHeight)
+          ? Math.min(viewportWidth / cardWidth, viewportHeight / cardHeight)
           : 1;
         const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
         card.style.transformOrigin = 'top left';
