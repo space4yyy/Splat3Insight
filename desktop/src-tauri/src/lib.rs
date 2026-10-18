@@ -847,8 +847,7 @@ fn start_background_sync(
         // display a macOS authorization prompt.
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         loop {
-            // Sync often while OBS shows the cards, every few minutes otherwise.
-            let next_sync_at = tokio::time::Instant::now() + obs_activity.sync_interval(now_ms());
+            let started = tokio::time::Instant::now();
             match active_account_sync_state(&registry) {
                 Ok(Some((account_id, true))) => {
                     let _ = sync_account(
@@ -890,11 +889,28 @@ fn start_background_sync(
                     }
                 }
             }
-            let _ = tokio::time::timeout(
-                next_sync_at.saturating_duration_since(tokio::time::Instant::now()),
-                sync_trigger.notified(),
-            )
-            .await;
+            // Sync often while OBS is open, every few minutes otherwise. OBS can open or close
+            // while this waits, so look again every few seconds; a trigger (a card page starting
+            // to poll, the window coming back, 立即同步) syncs at once.
+            loop {
+                let activity = obs_activity.clone();
+                let interval =
+                    tauri::async_runtime::spawn_blocking(move || activity.sync_interval(now_ms()))
+                        .await
+                        .unwrap_or(sync_schedule::IDLE_SYNC_INTERVAL);
+                let now = tokio::time::Instant::now();
+                let due = started + interval;
+                if now >= due {
+                    break;
+                }
+                let wait = (due - now).min(sync_schedule::OBS_CHECK_INTERVAL);
+                if tokio::time::timeout(wait, sync_trigger.notified())
+                    .await
+                    .is_ok()
+                {
+                    break;
+                }
+            }
         }
     });
 }
