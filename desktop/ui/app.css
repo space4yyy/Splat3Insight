@@ -217,6 +217,10 @@ button:focus-visible, [tabindex]:focus-visible, textarea:focus-visible { outline
 .sidebar-sync-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .sync-now { flex: none; padding: 0; border: 0; background: none; color: var(--accent-2-text); font: inherit; letter-spacing: inherit; cursor: pointer; }
 .sync-now:hover { text-decoration: underline; }
+.sync-auth { padding: 0; border: 0; background: none; color: var(--accent-2-text); font: inherit; letter-spacing: inherit; cursor: pointer; }
+.sync-auth:hover { text-decoration: underline; }
+.sync-auth:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+.is-error .sync-auth { color: var(--danger-text); }
 .status-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--good); vertical-align: 1px; }
 .status-dot.is-idle { background: var(--ink-3); }
 .status-dot.is-busy { background: var(--accent-2-text); }

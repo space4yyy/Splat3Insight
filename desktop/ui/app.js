@@ -48,6 +48,10 @@
     activeAccountId: null,
     facts: { accountId: null, status: 'idle', error: null, loadedAt: 0 },
     lastCompletedSyncAt: null,
+    lastStoppedSync: null,
+    syncStatus: null,
+    authorizing: false,
+    authError: null,
     serviceOrigin: null,
     serviceRunning: false,
     obs: { catalog: [], selected: ['overlay'], active: 'overlay', copiedUrl: null, copiedCss: null, transparency: 0, states: null, latest: null },
@@ -205,6 +209,7 @@
       renderObsPreview();
       refreshOverlayStates();
     } else if (view === 'settings') refreshAutostart();
+    else if (view === 'accounts') refreshAccounts().catch((error) => setMessage(String(error), true));
   }
   $('#nav').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-view]');
@@ -406,16 +411,31 @@
     }));
   }
 
+  // 获取 SplatNet 权限：账号管理里的「获取权限」和侧栏的「等待授权」共用。
   async function refreshPermission(accountId, button) {
+    if (app.authorizing) return;
+    app.authorizing = true;
+    app.authError = null;
     button.disabled = true;
+    renderSyncStatus(app.syncStatus);
     setMessage('正在使用已保存的 Nintendo 登录信息获取 SplatNet 权限…');
     try {
       await invoke('refresh_splatnet_tokens', { accountId });
+    } catch (error) {
+      app.authError = String(error);
+      setMessage(String(error), true);
+      button.disabled = false;
+      return;
+    } finally {
+      app.authorizing = false;
+      renderSyncStatus(app.syncStatus);
+    }
+    try {
       await refreshAccounts();
-      setMessage('SplatNet 权限获取成功，正在开始首次历史同步…');
+      setMessage('SplatNet 权限获取成功，正在同步历史…');
       const summary = await invoke('sync_history', { accountId });
       await refreshAccounts();
-      setMessage(`首次历史同步完成：新增 ${summary.added_battle_count} 条对战、${summary.added_coop_count} 条打工。`);
+      setMessage(`历史同步完成：新增 ${summary.added_battle_count} 条对战、${summary.added_coop_count} 条打工。`);
       await loadFacts({ force: true });
     } catch (error) {
       setMessage(String(error), true);
@@ -655,14 +675,32 @@
     }
     if (status.state === 'completed') return { text: status.completed_at_ms ? `已同步 · ${fmtClock(status.completed_at_ms)}` : '已同步', tone: '' };
     if (status.state === 'error') return { text: '同步失败', tone: 'is-error' };
-    return { text: status.message?.includes('权限') ? '等待授权' : '等待同步', tone: 'is-idle' };
+    if (!status.message?.includes('权限')) return { text: '等待同步', tone: 'is-idle' };
+    // 等待授权时，这段文字本身就是按钮，点一下获取 SplatNet 权限。
+    if (app.authorizing) return { text: '正在授权…', tone: 'is-busy' };
+    if (app.authError) return { text: '授权失败', tone: 'is-error', authorize: true };
+    return { text: '等待授权', tone: 'is-idle', authorize: true };
   }
   function renderSyncStatus(status) {
+    app.syncStatus = status;
     const summary = syncSummary(status);
+    if (!summary.authorize && !app.authorizing) app.authError = null;
     const foot = $('#sidebar-sync');
-    foot.replaceChildren(el('span', { class: `status-dot ${summary.tone}`.trim(), 'aria-hidden': 'true' }), document.createTextNode(summary.text));
-    foot.title = status?.error || status?.message || '';
-    foot.classList.toggle('is-error', status?.state === 'error');
+    // 每秒都会刷新状态；内容没变时不重画，免得按钮在点击时被换掉。
+    const signature = [summary.text, summary.tone, summary.authorize ? status.account_id : ''].join('|');
+    if (foot.dataset.signature !== signature) {
+      foot.dataset.signature = signature;
+      const dot = el('span', { class: `status-dot ${summary.tone}`.trim(), 'aria-hidden': 'true' });
+      if (summary.authorize) {
+        const button = el('button', { type: 'button', class: 'sync-auth', text: summary.text });
+        button.addEventListener('click', () => void refreshPermission(status.account_id, button));
+        foot.replaceChildren(dot, button);
+      } else {
+        foot.replaceChildren(dot, document.createTextNode(summary.text));
+      }
+    }
+    foot.title = (summary.authorize && app.authError) || status?.error || status?.message || '';
+    foot.classList.toggle('is-error', summary.tone === 'is-error');
     // 有账号、已获取权限、当前没在同步时，可以立即同步一次。
     const busy = ['preparing', 'syncing', 'refreshing'].includes(status?.state);
     $('#sync-now').hidden = !status?.account_id || busy || Boolean(status?.message?.includes('权限'));
@@ -694,6 +732,14 @@
         const added = (status.added_battle_count || 0) + (status.added_coop_count || 0);
         await loadFacts({ force: added > 0 });
         refreshOverlayStates();
+      }
+      // 同步失败或停下等待权限时，账号可能刚被标为需要重新获取权限；重新读取账号列表，「获取权限」才会出现。
+      const stopped = ['error', 'idle'].includes(status?.state)
+        ? [status.state, status.account_id, status.message, status.error].join('|')
+        : null;
+      if (stopped && stopped !== app.lastStoppedSync) {
+        app.lastStoppedSync = stopped;
+        await refreshAccounts();
       }
     } catch (error) {
       renderSyncStatus({ state: 'error', message: String(error), error: String(error) });

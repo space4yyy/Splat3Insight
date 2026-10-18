@@ -48,10 +48,24 @@ pub(super) async fn sync_account_inner(
         Ok(Some(secret)) => secret,
         Ok(None) => {
             mark_not_ready(registry, account_id)?;
+            write_account_log(
+                auth_log_path,
+                "credentials",
+                &metadata.display_name,
+                account_id,
+                "系统凭据库里没有这个账号的登录信息，需要重新获取权限",
+            );
             return Err(SyncError::Other("该账号没有保存登录信息".to_owned()));
         }
         Err(error) => {
             mark_not_ready(registry, account_id)?;
+            write_account_log(
+                auth_log_path,
+                "credentials",
+                &metadata.display_name,
+                account_id,
+                &format!("读取系统凭据库中的登录信息失败，需要重新获取权限：{error}"),
+            );
             return Err(SyncError::Other(error));
         }
     };
