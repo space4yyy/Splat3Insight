@@ -246,6 +246,8 @@ pub(super) async fn sync_account_inner(
         }
         Ok(changed)
     });
+    // 查询失败时也要存回去：先记下的新 X 比赛，下次同步接着查。
+    let mut x_check = sync_runtime.x_settlement_check(account_id);
     let fetched = if initial_sync {
         client
             .fetch_history_full_with_progress_and_records_from_typed(
@@ -254,6 +256,7 @@ pub(super) async fn sync_account_inner(
                 fetched_at_ms,
                 Arc::clone(&progress),
                 Some(Arc::clone(&on_record)),
+                &mut x_check,
             )
             .await
     } else {
@@ -266,9 +269,11 @@ pub(super) async fn sync_account_inner(
                 fetched_at_ms,
                 Arc::clone(&progress),
                 Some(Arc::clone(&on_record)),
+                &mut x_check,
             )
             .await
     };
+    sync_runtime.set_x_settlement_check(account_id, x_check);
     let cache = fetched.map_err(|error| {
         // 网页版本号过期时 SplatNet 会拒绝请求，下次同步重新查。
         sync_runtime.set_web_view_version(None);

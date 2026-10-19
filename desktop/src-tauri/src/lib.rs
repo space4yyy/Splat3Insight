@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use splat3_widget_core::{
-    history::{HistoryError, HistoryErrorKind, HistorySyncSummary},
+    history::{HistoryError, HistoryErrorKind, HistorySyncSummary, XSettlementCheck},
     nintendo_auth::{
         begin_login, exchange_session_token, refresh_identity, LoginAttempt, NintendoIdentityError,
     },
@@ -325,6 +325,8 @@ struct SyncRuntime {
     tasks: Mutex<HashMap<String, watch::Sender<Option<SyncResult>>>>,
     /// SplatNet 网页版本号，所有账号共用。查到后一直沿用，同步失败时清掉，下次重新查。
     web_view_version: Mutex<Option<String>>,
+    /// 每个账号下次同步要不要查 X 比赛记录。
+    x_settlement_checks: Mutex<HashMap<String, XSettlementCheck>>,
 }
 
 type SyncResult = Result<HistorySyncSummary, String>;
@@ -385,6 +387,7 @@ impl SyncRuntime {
             statuses: Mutex::new(HashMap::new()),
             tasks: Mutex::new(HashMap::new()),
             web_view_version: Mutex::new(None),
+            x_settlement_checks: Mutex::new(HashMap::new()),
         }
     }
 
@@ -399,6 +402,20 @@ impl SyncRuntime {
     fn set_web_view_version(&self, version: Option<&str>) {
         if let Ok(mut current) = self.web_view_version.lock() {
             *current = version.map(str::to_owned);
+        }
+    }
+
+    fn x_settlement_check(&self, account_id: &str) -> XSettlementCheck {
+        self.x_settlement_checks
+            .lock()
+            .ok()
+            .and_then(|checks| checks.get(account_id).cloned())
+            .unwrap_or_default()
+    }
+
+    fn set_x_settlement_check(&self, account_id: &str, check: XSettlementCheck) {
+        if let Ok(mut checks) = self.x_settlement_checks.lock() {
+            checks.insert(account_id.to_owned(), check);
         }
     }
 

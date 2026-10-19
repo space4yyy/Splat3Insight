@@ -135,6 +135,52 @@ pub enum HistoryFetchedRecord {
 pub type HistoryRecordCallback =
     Arc<dyn Fn(HistoryFetchedRecord) -> Result<bool, String> + Send + Sync>;
 
+/// 新同步到的 X 比赛一直没出现在 X 比赛记录里时，最多查几次。
+const X_SETTLEMENT_CHECKS: u8 = 5;
+
+/// 什么时候查 X 比赛记录。X 比赛记录用来取每组计测打完后的 X 战力，只在打完 X 比赛后
+/// 才会变，所以不必每次同步都查。调用方给每个账号存一份，跨同步沿用。
+///
+/// 新建时为「要查」，应用启动后的第一次同步会补查一次。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XSettlementCheck {
+    due: bool,
+    /// 新同步到、但 X 比赛记录里还没出现的那场 X 比赛，以及最多还查几次。
+    awaiting: Option<(String, u8)>,
+}
+
+impl Default for XSettlementCheck {
+    fn default() -> Self {
+        Self {
+            due: true,
+            awaiting: None,
+        }
+    }
+}
+
+impl XSettlementCheck {
+    /// 记下这次新同步到的最新一场 X 比赛。查之前先记下：查询失败时下次同步接着查。
+    fn new_x_battle(&mut self, record_id: &str) {
+        self.awaiting = Some((record_id.to_owned(), X_SETTLEMENT_CHECKS));
+    }
+
+    fn is_due(&self) -> bool {
+        self.due || self.awaiting.is_some()
+    }
+
+    /// 查过 X 比赛记录、结算也保存好之后调用。
+    fn checked(&mut self, response: &Value) {
+        self.due = false;
+        let Some((record_id, checks_left)) = self.awaiting.take() else {
+            return;
+        };
+        let checks_left = checks_left.saturating_sub(1);
+        if checks_left > 0 && !x_battle_histories_include(response, &record_id) {
+            self.awaiting = Some((record_id, checks_left));
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SplatNetDataConfig {
     pub game_web_token: String,
@@ -443,6 +489,7 @@ impl SplatNetDataClient {
         fetched_at_ms: i64,
         progress: HistoryProgressCallback,
         on_record: Option<HistoryRecordCallback>,
+        x_check: &mut XSettlementCheck,
     ) -> Result<HistoryCache, HistoryError> {
         self.fetch_history_with_limits_typed(
             usize::MAX,
@@ -452,6 +499,7 @@ impl SplatNetDataClient {
             fetched_at_ms,
             Some(&progress),
             on_record.as_ref(),
+            x_check,
         )
         .await
     }
@@ -530,6 +578,7 @@ impl SplatNetDataClient {
         fetched_at_ms: i64,
         progress: HistoryProgressCallback,
         on_record: Option<HistoryRecordCallback>,
+        x_check: &mut XSettlementCheck,
     ) -> Result<HistoryCache, HistoryError> {
         self.fetch_history_with_limits_typed(
             battle_limit,
@@ -539,6 +588,7 @@ impl SplatNetDataClient {
             fetched_at_ms,
             Some(&progress),
             on_record.as_ref(),
+            x_check,
         )
         .await
     }
@@ -561,6 +611,7 @@ impl SplatNetDataClient {
             fetched_at_ms,
             progress,
             on_record,
+            &mut XSettlementCheck::default(),
         )
         .await
         .map_err(|error| error.to_string())
@@ -575,6 +626,7 @@ impl SplatNetDataClient {
         fetched_at_ms: i64,
         progress: Option<&HistoryProgressCallback>,
         on_record: Option<&HistoryRecordCallback>,
+        x_check: &mut XSettlementCheck,
     ) -> Result<HistoryCache, HistoryError> {
         notify_progress(progress, "battle-list", 0, 0, 0);
         let listed_battle_ids = self
@@ -661,34 +713,45 @@ impl SplatNetDataClient {
             notify_progress(progress, "battle-details", index + 1, battle_total, 0);
         }
 
-        notify_progress(progress, "x-measurements", 0, 1, 0);
-        let x_battle_response = self
-            .graphql(
-                X_BATTLE_HISTORIES_QUERY,
-                json!({}),
-                None,
-                progress,
-                "x-measurements",
-            )
-            .await
-            .map_err(|error| error.with_context("X 赛结算查询失败："))?;
-        let mut available_battle_ids = known_battle_ids.clone();
-        available_battle_ids.extend(battles.iter().map(|battle| battle.record.id.clone()));
-        let x_settlements =
-            completed_x_power_settlements(&x_battle_response, &available_battle_ids)
-                .map_err(HistoryError::other)?;
-        notify_progress(progress, "x-measurements", 1, 1, 0);
+        // 没有新的 X 比赛时，X 比赛记录不会变，通常不用查；见 XSettlementCheck。
+        if let Some(battle) = battles
+            .iter()
+            .filter(|battle| battle.record.mode == "X_MATCH")
+            .max_by(|left, right| left.record.played_time.cmp(&right.record.played_time))
+        {
+            x_check.new_x_battle(&battle.record.id);
+        }
+        if x_check.is_due() {
+            notify_progress(progress, "x-measurements", 0, 1, 0);
+            let x_battle_response = self
+                .graphql(
+                    X_BATTLE_HISTORIES_QUERY,
+                    json!({}),
+                    None,
+                    progress,
+                    "x-measurements",
+                )
+                .await
+                .map_err(|error| error.with_context("X 赛结算查询失败："))?;
+            let mut available_battle_ids = known_battle_ids.clone();
+            available_battle_ids.extend(battles.iter().map(|battle| battle.record.id.clone()));
+            let x_settlements =
+                completed_x_power_settlements(&x_battle_response, &available_battle_ids)
+                    .map_err(HistoryError::other)?;
+            notify_progress(progress, "x-measurements", 1, 1, 0);
 
-        if let Some(on_record) = on_record {
-            for settlement in x_settlements {
-                on_record(HistoryFetchedRecord::XBattleSettlement {
-                    record_id: settlement.record_id,
-                    power_after: settlement.power_after,
-                    payload_hash: settlement.payload_hash,
-                    raw_group: settlement.raw_group,
-                })
-                .map_err(|error| format!("保存 X 赛结算数据失败：{error}"))?;
+            if let Some(on_record) = on_record {
+                for settlement in x_settlements {
+                    on_record(HistoryFetchedRecord::XBattleSettlement {
+                        record_id: settlement.record_id,
+                        power_after: settlement.power_after,
+                        payload_hash: settlement.payload_hash,
+                        raw_group: settlement.raw_group,
+                    })
+                    .map_err(|error| format!("保存 X 赛结算数据失败：{error}"))?;
+                }
             }
+            x_check.checked(&x_battle_response);
         }
 
         let mut coop = Vec::with_capacity(coop_ids.len());
@@ -1246,6 +1309,24 @@ fn completed_x_power_settlements(
     Ok(settlements)
 }
 
+/// X 比赛记录里有没有这一场。两边的 id 写法不同，统一后再比。
+fn x_battle_histories_include(response: &Value, record_id: &str) -> bool {
+    let wanted = normalize_x_battle_id(record_id);
+    response
+        .pointer("/data/xBattleHistories/historyGroups/nodes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|group| {
+            group
+                .pointer("/historyDetails/nodes")
+                .and_then(Value::as_array)
+        })
+        .flatten()
+        .filter_map(|detail| detail.get("id").and_then(Value::as_str))
+        .any(|id| normalize_x_battle_id(id) == wanted)
+}
+
 fn normalize_x_battle_id(id: &str) -> String {
     let decoded = [
         STANDARD.decode(id),
@@ -1636,6 +1717,68 @@ mod tests {
             settlements[0].raw_group["xMatchMeasurement"]["state"],
             "COMPLETED"
         );
+    }
+
+    fn x_histories_with(ids: &[&str]) -> Value {
+        let details: Vec<Value> = ids
+            .iter()
+            .map(|id| json!({ "id": STANDARD.encode(id) }))
+            .collect();
+        json!({
+            "data": { "xBattleHistories": { "historyGroups": { "nodes": [{
+                "historyDetails": { "nodes": details },
+                "xMatchMeasurement": { "state": "IN_PROGRESS" }
+            }]}}}
+        })
+    }
+
+    #[test]
+    fn x_histories_match_battles_despite_their_different_ids() {
+        let response =
+            x_histories_with(&["VsHistoryDetail-XMATCH-123", "VsHistoryDetail-XMATCH-122"]);
+        let battle = STANDARD.encode("VsHistoryDetail-RECENT-123");
+
+        assert!(x_battle_histories_include(&response, &battle));
+        assert!(!x_battle_histories_include(
+            &response,
+            &STANDARD.encode("VsHistoryDetail-RECENT-124")
+        ));
+        assert!(!x_battle_histories_include(&json!({ "data": {} }), &battle));
+    }
+
+    #[test]
+    fn x_histories_are_checked_once_after_launch_then_only_after_new_x_battles() {
+        let mut check = XSettlementCheck::default();
+        assert!(check.is_due());
+        check.checked(&x_histories_with(&[]));
+        assert!(!check.is_due());
+
+        check.new_x_battle(&STANDARD.encode("VsHistoryDetail-RECENT-123"));
+        // 查询失败时不会调用 checked，下次同步照样要查。
+        assert!(check.is_due());
+        check.checked(&x_histories_with(&["VsHistoryDetail-XMATCH-123"]));
+        assert!(!check.is_due());
+    }
+
+    #[test]
+    fn a_new_x_battle_is_checked_again_until_x_histories_show_it() {
+        let battle = STANDARD.encode("VsHistoryDetail-RECENT-124");
+        let stale = x_histories_with(&["VsHistoryDetail-XMATCH-123"]);
+        let mut check = XSettlementCheck::default();
+        check.new_x_battle(&battle);
+        check.checked(&stale);
+        assert!(check.is_due());
+        check.checked(&x_histories_with(&["VsHistoryDetail-XMATCH-124"]));
+        assert!(!check.is_due());
+
+        // 一直没出现时，查满次数就不再查。
+        check.new_x_battle(&battle);
+        for _ in 1..X_SETTLEMENT_CHECKS {
+            check.checked(&stale);
+            assert!(check.is_due());
+        }
+        check.checked(&stale);
+        assert!(!check.is_due());
     }
 
     #[test]
