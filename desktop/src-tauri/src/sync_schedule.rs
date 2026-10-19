@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Sync interval while OBS is open or a card page reads the data.
-pub(crate) const LIVE_SYNC_INTERVAL: Duration = Duration::from_secs(30);
+pub(crate) const LIVE_SYNC_INTERVAL: Duration = Duration::from_secs(15);
 /// Sync interval otherwise.
 pub(crate) const IDLE_SYNC_INTERVAL: Duration = Duration::from_secs(300);
 /// While waiting for the next sync, how often to look whether OBS opened or closed.
