@@ -1,6 +1,6 @@
 [package]
 name = "splat3-insight"
-version = "0.2.0"
+version = "0.3.0"
 description = "Splat3 Insight desktop app for Splatoon 3 statistics and OBS overlays"
 authors = ["Splat3 Insight"]
 edition = "2021"
