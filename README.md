@@ -61,9 +61,10 @@ make build      # 构建桌面安装包
 ## 发布
 
 1. 第一次发布前运行 `make release-signing`，生成自动更新签名密钥和 macOS 发布证书，按提示把内容填进仓库的 Actions secrets，并另外备份生成的目录。丢了更新私钥，已安装的版本就收不到后续更新。
-2. 在 main 上运行 `make release VERSION=0.3.0`：修改版本号、提交并打上 `v0.3.0` 标签（不推送）。
-3. 推送 main 和标签：`git push origin main v0.3.0`。GitHub Actions（`.github/workflows/release.yml`）会打包 macOS 和 Windows 版，上传到同名的 Release 草稿。
-4. 下载草稿里的安装包检查无误后，在网页上发布草稿。发布后，已安装的应用会按这个 Release 里的 `latest.json` 收到更新。
+2. 在 `CHANGELOG.md` 最上面写好这个版本的更新内容：标题是 `## 0.3.0（日期）`，下面按「新增 / 改进 / 修复」分组。
+3. 在 main 上运行 `make release VERSION=0.3.0`：确认 CHANGELOG.md 里有这个版本，修改版本号，连同 CHANGELOG.md 一起提交，并打上 `v0.3.0` 标签（不推送）。其他改动要先提交。
+4. 推送 main 和标签：`git push origin main v0.3.0`。GitHub Actions（`.github/workflows/release.yml`）会打包 macOS 和 Windows 版，上传到同名的 Release 草稿。草稿的说明是 CHANGELOG.md 里这个版本的一节，再加上安装说明。
+5. 下载草稿里的安装包检查无误后，在网页上发布草稿。发布后，已安装的应用会按这个 Release 里的 `latest.json` 收到更新。
 
 macOS 发布流程会把现有 Secrets 中的证书导入构建机的临时钥匙串，验证签名后再打包，并在结束时清理。项目生成的自签名证书可直接使用，无需更换证书或更新密钥。修复发布流程后，需要用包含修复的新版本标签触发构建；重新运行旧标签的任务仍会使用旧代码。
 

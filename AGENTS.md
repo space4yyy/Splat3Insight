@@ -23,4 +23,5 @@
 - Use `cargo fmt` for Rust formatting and run the relevant crate tests after behavior changes.
 - Useful repository checks: `make fmt-check`, `make test`, and `make check`.
 - Keep user-facing UI text in Simplified Chinese unless the feature requires a locale-specific string.
+- Before `make release VERSION=x.y.z`, add that version's user-facing notes at the top of `CHANGELOG.md` in Simplified Chinese: a `## x.y.z（date）` heading with 新增 / 改进 / 修复 groups. The release workflow copies that section into the GitHub release and stops if it is missing.
 - Avoid committing unless the user explicitly asks for a commit.

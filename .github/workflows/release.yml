@@ -1,8 +1,8 @@
 name: Release
 
 # 推送 v* 标签（例如 v0.3.0）时打包 macOS 和 Windows 版，连同自动更新用的文件和
-# latest.json 一起上传到同名的 Release 草稿。检查无误后在网页上发布草稿，
-# 已安装的应用才会收到更新。
+# latest.json 一起上传到同名的 Release 草稿。草稿的说明取自 CHANGELOG.md 里这个
+# 版本的一节。检查无误后在网页上发布草稿，已安装的应用才会收到更新。
 on:
   push:
     tags:
@@ -43,6 +43,11 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: desktop/package-lock.json
+
+      # CHANGELOG.md 里没有这个版本的更新内容时，在打包前就停下。
+      - name: Read release notes
+        id: notes
+        run: node desktop/scripts/changelog.mjs notes --github-output
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -89,6 +94,10 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Splat3 Insight ${{ github.ref_name }}
           releaseBody: |
+            ## 更新内容
+
+            ${{ steps.notes.outputs.notes }}
+
             ## 安装
 
             - **macOS**：下载 `.dmg`，把 Splat3 Insight 拖进「应用程序」。第一次打开时如果提示无法验证开发者，到「系统设置 → 隐私与安全性」点「仍要打开」。
