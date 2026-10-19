@@ -70,6 +70,7 @@
   --select-wash: #2f301e;
   --check-a: #272630;
   --check-b: #1f1e27;
+  --on-check: #8e8b9a;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
@@ -114,8 +115,6 @@
     --glow-yellow: rgba(200, 215, 0, 0.1);
     --select-line: #8a9a00;
     --select-wash: #f6f9dc;
-    --check-a: #e8e7ee;
-    --check-b: #f6f5f9;
   }
 }
 :root[data-theme="light"] {
@@ -160,8 +159,6 @@
   --glow-yellow: rgba(200, 215, 0, 0.1);
   --select-line: #8a9a00;
   --select-wash: #f6f9dc;
-  --check-a: #e8e7ee;
-  --check-b: #f6f5f9;
 }
 
 html { background: var(--bg); }
@@ -364,8 +361,9 @@ table.data .num { text-align: right; }
 .obs-css code { font-size: 13px; white-space: pre-wrap; }
 .obs-preview-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 12px; }
 .obs-size { color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+/* 卡片是浅色文字，预览底板在两种主题下都用深色棋盘格，背景调成全透明也看得清。 */
 .obs-stage { min-width: 0; padding: 16px 10px; border: 1px solid var(--line); border-radius: 12px; background: repeating-conic-gradient(var(--check-a) 0 25%, var(--check-b) 0 50%) 0 0 / 16px 16px; }
-.obs-empty { padding: 22px 8px; color: var(--ink-3); font-size: 13px; text-align: center; }
+.obs-empty { padding: 22px 8px; color: var(--on-check); font-size: 13px; text-align: center; }
 .obs-usage { display: grid; gap: 2px; margin: 0; padding-left: 1.6em; color: var(--ink-3); font-size: 12px; line-height: 1.6; }
 .overlay-preview { min-width: 0; overflow: hidden; }
 .overlay-preview__viewport { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; width: 100%; }
