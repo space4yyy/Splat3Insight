@@ -770,7 +770,15 @@ async fn sync_account(
                     .await
                     .map_err(|error| error.to_string())
                 }
-                Err(refresh_error) => Err(format_token_refresh_error(&refresh_error)),
+                Err(refresh_error) => {
+                    // nxapi 不允许自动重试：停下这个账号的后台同步，等用户点「等待授权」再试。
+                    if let Ok(mut registry) = registry.lock() {
+                        if let Err(error) = registry.set_splatnet_ready(&account_id, false) {
+                            log_console_error("token-refresh", &error);
+                        }
+                    }
+                    Err(format_token_refresh_error(&refresh_error))
+                }
             }
         }
         Ok(summary) => Ok(summary),

@@ -474,6 +474,7 @@ dialog.close-prompt { width: min(420px, calc(100% - 32px)); padding: 22px; borde
 dialog.close-prompt::backdrop { background: var(--scrim); }
 dialog.close-prompt h2 { margin: 0; font-size: 20px; }
 dialog.close-prompt p { margin: 12px 0 20px; color: var(--ink-2); font-size: 14px; }
+dialog.close-prompt p a { margin-left: 4px; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
 .close-prompt-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 
 /* 删除账号 */

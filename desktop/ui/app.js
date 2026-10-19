@@ -611,7 +611,19 @@
     goTo('settings');
     if (!loginButton.disabled) loginButton.click();
   }
-  loginButton.addEventListener('click', async () => {
+  // nxapi 的使用要求：登录前说明哪些数据会发给第三方服务，用户确认后才开始。
+  const loginConsent = $('#login-consent');
+  $('#login-consent-link').addEventListener('click', (event) => {
+    event.preventDefault();
+    void openUrl(event.currentTarget.href);
+  });
+  $('#login-consent-cancel').addEventListener('click', () => loginConsent.close());
+  $('#login-consent-accept').addEventListener('click', () => {
+    loginConsent.close();
+    void beginLogin();
+  });
+  loginButton.addEventListener('click', () => loginConsent.showModal());
+  async function beginLogin() {
     loginButton.disabled = true;
     setMessage('正在打开 Nintendo 登录页面…');
     try {
@@ -625,7 +637,7 @@
     } finally {
       loginButton.disabled = false;
     }
-  });
+  }
   $('#cancel-login').addEventListener('click', async () => {
     pastePanel.hidden = true;
     loginLink.value = '';

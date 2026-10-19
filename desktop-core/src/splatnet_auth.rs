@@ -11,6 +11,9 @@
 use base64::{engine::general_purpose, Engine as _};
 use regex::Regex;
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use url::Url;
 
 use crate::nintendo_auth::NintendoIdentity;
@@ -23,11 +26,24 @@ const ZNC_URL: &str = "https://api-lp1.znc.srv.nintendo.net";
 const NXAPI_AUTH_URL: &str = "https://nxapi-auth.fancy.org.uk/api/oauth/token";
 const NXAPI_AUTH_SCOPE: &str = "ca:gf ca:er ca:dr";
 pub const WEB_VIEW_VERSION_FALLBACK: &str = "10.0.0-88706e32";
+/// 写进发给 nxapi 的 User-Agent，作为联系方式。
+pub const PROJECT_URL: &str = "https://github.com/space4yyy/Splat3Insight";
+/// nxapi 授权令牌提前一分钟当作过期，免得请求途中失效。
+const NXAPI_TOKEN_MARGIN: Duration = Duration::from_secs(60);
+/// 授权响应没给有效期时按 5 分钟算。
+const NXAPI_TOKEN_DEFAULT_LIFETIME: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SplatNetAuthConfig {
     pub client_version: String,
     pub app_user_agent: String,
+}
+
+impl SplatNetAuthConfig {
+    /// nxapi 要求 User-Agent 写明应用名、版本和联系方式。
+    fn nxapi_user_agent(&self) -> String {
+        format!("Splat3Insight/{} (+{PROJECT_URL})", self.client_version)
+    }
 }
 
 impl Default for SplatNetAuthConfig {
@@ -60,19 +76,22 @@ struct FGeneration {
 struct SplatNetClient<'a> {
     http: reqwest::Client,
     config: &'a SplatNetAuthConfig,
+    /// Nintendo 账号 id：nxapi 的授权令牌按账号分开。
+    account_id: &'a str,
     nso_app_version: String,
 }
 
 impl<'a> SplatNetClient<'a> {
-    async fn new(config: &'a SplatNetAuthConfig) -> Result<Self, String> {
+    async fn new(config: &'a SplatNetAuthConfig, account_id: &'a str) -> Result<Self, String> {
         let http = reqwest::Client::builder()
             .user_agent(&config.app_user_agent)
             .build()
             .map_err(|error| format!("创建网络客户端失败: {error}"))?;
-        let nso_app_version = fetch_nso_app_version(&http, config).await?;
+        let nso_app_version = fetch_nso_app_version(&http, config, account_id).await?;
         Ok(Self {
             http,
             config,
+            account_id,
             nso_app_version,
         })
     }
@@ -86,7 +105,6 @@ impl<'a> SplatNetClient<'a> {
         encrypt_url: Option<&str>,
         encrypt_parameter: Option<&Value>,
     ) -> Result<FGeneration, String> {
-        let endpoint = NXAPI_F_GENERATION_URL;
         let mut body = json!({
             "token": token,
             "hash_method": hash_method,
@@ -102,54 +120,33 @@ impl<'a> SplatNetClient<'a> {
             });
         }
 
-        let mut last_error = None;
-        for _ in 0..3 {
-            let mut request = self
-                .http
-                .post(endpoint)
-                .header(
-                    "User-Agent",
-                    format!("Splat3Insight/{}", self.config.client_version),
-                )
-                .header("Content-Type", "application/json; charset=utf-8")
-                .header("Accept", "application/json")
-                .header("X-znca-Platform", "Android")
-                .header("X-znca-Version", &self.nso_app_version)
-                .json(&body);
-            request = request
-                .header(
-                    "Authorization",
-                    format!("Bearer {}", nxapi_auth_token(&self.http).await?),
-                )
-                .header("X-znca-Client-Version", NXAPI_CLIENT_VERSION);
-
-            let response = request
-                .send()
-                .await
-                .map_err(|error| format!("f 参数服务请求失败: {error}"))?;
-            let status = response.status();
-            let response_text = response
-                .text()
-                .await
-                .map_err(|error| format!("f 参数服务响应读取失败: {error}"))?;
-            let response_json: Value = serde_json::from_str(&response_text)
-                .map_err(|error| format!("f 参数服务返回了无效 JSON（HTTP {status}）：{error}"))?;
-            if !status.is_success() {
-                return Err(provider_error(
-                    "f 参数服务",
-                    status.as_u16(),
-                    &response_json,
-                ));
-            }
-            if response_json.get("error").and_then(Value::as_str) == Some("timeout") {
-                last_error = Some("f 参数服务超时".to_owned());
-                continue;
-            }
-
-            return parse_f_generation_response(&response_json);
+        let (status, response_text) = nxapi_send(
+            &self.http,
+            self.config,
+            self.account_id,
+            "f 参数服务",
+            || {
+                self.http
+                    .post(NXAPI_F_GENERATION_URL)
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .header("Accept", "application/json")
+                    .header("X-znca-Platform", "Android")
+                    .header("X-znca-Version", &self.nso_app_version)
+                    .header("X-znca-Client-Version", NXAPI_CLIENT_VERSION)
+                    .json(&body)
+            },
+        )
+        .await?;
+        let response_json: Value = serde_json::from_str(&response_text)
+            .map_err(|error| format!("f 参数服务返回了无效 JSON（HTTP {status}）：{error}"))?;
+        if !status.is_success() {
+            return Err(provider_error(
+                "f 参数服务",
+                status.as_u16(),
+                &response_json,
+            ));
         }
-
-        Err(last_error.unwrap_or_else(|| "f 参数服务请求失败".to_owned()))
+        parse_f_generation_response(&response_json)
     }
 
     async fn coral_request(
@@ -159,35 +156,32 @@ impl<'a> SplatNetClient<'a> {
         parameter: Value,
         encrypted_body: Option<Vec<u8>>,
     ) -> Result<Value, String> {
-        let mut request = self
-            .http
-            .post(endpoint)
-            .header("X-Platform", "Android")
-            .header("X-ProductVersion", &self.nso_app_version)
-            .header("Accept", "application/json")
-            .header(
-                "User-Agent",
-                format!("com.nintendo.znca/{}(Android/12)", self.nso_app_version),
-            );
-        if let Some(access_token) = access_token {
-            request = request.header("Authorization", format!("Bearer {access_token}"));
-        }
-
         let is_encrypted = encrypted_body.is_some();
-        let response = if let Some(encrypted_body) = encrypted_body {
-            request
-                .header("Content-Type", "application/octet-stream")
-                .header("Accept", "application/octet-stream, application/json")
-                .body(encrypted_body)
-                .send()
-                .await
-        } else {
-            request
-                .header("Content-Type", "application/json; charset=utf-8")
-                .json(&json!({ "parameter": parameter }))
-                .send()
-                .await
-        }
+        let response = send_unless_connected(|| {
+            let mut request = self
+                .http
+                .post(endpoint)
+                .header("X-Platform", "Android")
+                .header("X-ProductVersion", &self.nso_app_version)
+                .header("Accept", "application/json")
+                .header(
+                    "User-Agent",
+                    format!("com.nintendo.znca/{}(Android/12)", self.nso_app_version),
+                );
+            if let Some(access_token) = access_token {
+                request = request.header("Authorization", format!("Bearer {access_token}"));
+            }
+            match &encrypted_body {
+                Some(encrypted_body) => request
+                    .header("Content-Type", "application/octet-stream")
+                    .header("Accept", "application/octet-stream, application/json")
+                    .body(encrypted_body.clone()),
+                None => request
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .json(&json!({ "parameter": parameter })),
+            }
+        })
+        .await
         .map_err(|error| format!("Nintendo Coral 请求失败: {error}"))?;
 
         let status = response.status();
@@ -201,7 +195,7 @@ impl<'a> SplatNetClient<'a> {
         }
 
         if is_encrypted {
-            decrypt_coral_response(&self.http, self.config, &response_bytes).await
+            decrypt_coral_response(&self.http, self.config, self.account_id, &response_bytes).await
         } else {
             serde_json::from_slice(&response_bytes)
                 .map_err(|error| format!("Nintendo Coral 返回了无效 JSON：{error}"))
@@ -272,7 +266,7 @@ pub async fn exchange_splatnet_tokens(
     identity: &NintendoIdentity,
     config: &SplatNetAuthConfig,
 ) -> Result<SplatNetTokens, String> {
-    let client = SplatNetClient::new(config).await?;
+    let client = SplatNetClient::new(config, &identity.account_id).await?;
     let language = identity
         .language
         .as_deref()
@@ -307,27 +301,14 @@ pub async fn exchange_splatnet_tokens(
         )
         .await?;
     let login_request_parameter = add_f_fields(login_parameter, &login_f, None);
-    let splatoon_token = match client
+    let splatoon_token = client
         .coral_request(
             None,
             &login_url,
-            login_request_parameter.clone(),
-            login_f.encrypted_body.clone(),
+            login_request_parameter,
+            login_f.encrypted_body,
         )
-        .await
-    {
-        Ok(value) => value,
-        Err(_) => {
-            client
-                .coral_request(
-                    None,
-                    &login_url,
-                    login_request_parameter,
-                    login_f.encrypted_body,
-                )
-                .await?
-        }
-    };
+        .await?;
     let coral_access_token = nested_string(
         &splatoon_token,
         &["result", "webApiServerCredential", "accessToken"],
@@ -359,27 +340,14 @@ pub async fn exchange_splatnet_tokens(
         .await?;
     let service_request_parameter =
         add_f_fields(service_parameter, &service_f, Some(&coral_access_token));
-    let service_response = match client
+    let service_response = client
         .coral_request(
             Some(&coral_access_token),
             &service_url,
-            service_request_parameter.clone(),
-            service_f.encrypted_body.clone(),
+            service_request_parameter,
+            service_f.encrypted_body,
         )
-        .await
-    {
-        Ok(value) => value,
-        Err(_) => {
-            client
-                .coral_request(
-                    Some(&coral_access_token),
-                    &service_url,
-                    service_request_parameter,
-                    service_f.encrypted_body,
-                )
-                .await?
-        }
-    };
+        .await?;
     let game_web_token = nested_string(
         &service_response,
         &["result", "accessToken"],
@@ -427,27 +395,18 @@ fn add_f_fields(
 async fn fetch_nso_app_version(
     http: &reqwest::Client,
     config: &SplatNetAuthConfig,
+    account_id: &str,
 ) -> Result<String, String> {
     let url = sibling_endpoint(NXAPI_F_GENERATION_URL, "config")?;
-    let request = http
-        .get(url)
-        .header("Accept", "application/json")
-        .header(
-            "User-Agent",
-            format!("Splat3Insight/{}", config.client_version),
-        )
-        .header(
-            "Authorization",
-            format!("Bearer {}", nxapi_auth_token(http).await?),
-        );
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("获取 Nintendo Switch Online 版本失败: {error}"))?;
-    let status = response.status();
-    let value: Value = response
-        .json()
-        .await
+    let (status, response_text) = nxapi_send(
+        http,
+        config,
+        account_id,
+        "获取 Nintendo Switch Online 版本",
+        || http.get(&url).header("Accept", "application/json"),
+    )
+    .await?;
+    let value: Value = serde_json::from_str(&response_text)
         .map_err(|error| format!("Nintendo Switch Online 版本响应无效: {error}"))?;
     if !status.is_success() {
         return Err(provider_error("Nintendo 版本服务", status.as_u16(), &value));
@@ -455,59 +414,224 @@ async fn fetch_nso_app_version(
     required_string(&value, "nso_version", "版本服务缺少 nso_version")
 }
 
-async fn nxapi_auth_token(http: &reqwest::Client) -> Result<String, String> {
-    let response = http
-        .post(NXAPI_AUTH_URL)
-        .header("Accept", "application/json")
-        .form(&[
-            ("grant_type", "client_credentials"),
-            ("client_id", NXAPI_CLIENT_ID),
-            ("scope", NXAPI_AUTH_SCOPE),
-        ])
-        .send()
+/// nxapi-auth 的授权令牌。每个 Nintendo 账号单独申请，只放在内存里，有效期内一直复用，
+/// 过期后用刷新令牌续期（nxapi 的使用要求）。
+#[derive(Debug, Clone)]
+struct NxapiToken {
+    access_token: String,
+    refresh_token: Option<String>,
+    expires_at: Instant,
+}
+
+impl NxapiToken {
+    fn from_response(value: &Value, now: Instant) -> Result<Self, String> {
+        let access_token =
+            required_string(value, "access_token", "nxapi 授权响应缺少 access_token")?;
+        let lifetime = value
+            .get("expires_in")
+            .and_then(Value::as_u64)
+            .map(Duration::from_secs)
+            .unwrap_or(NXAPI_TOKEN_DEFAULT_LIFETIME);
+        Ok(Self {
+            access_token,
+            refresh_token: value
+                .get("refresh_token")
+                .and_then(Value::as_str)
+                .filter(|token| !token.is_empty())
+                .map(ToOwned::to_owned),
+            expires_at: now + lifetime,
+        })
+    }
+
+    fn usable(&self, now: Instant) -> bool {
+        now + NXAPI_TOKEN_MARGIN < self.expires_at
+    }
+}
+
+fn nxapi_tokens() -> &'static Mutex<HashMap<String, NxapiToken>> {
+    static TOKENS: OnceLock<Mutex<HashMap<String, NxapiToken>>> = OnceLock::new();
+    TOKENS.get_or_init(Default::default)
+}
+
+enum NxapiTokenError {
+    /// 刷新令牌已失效：改用 client_credentials 重新申请。
+    InvalidGrant,
+    Failed(String),
+}
+
+/// 这个 Nintendo 账号的 nxapi 授权令牌：有效的直接复用；过期了先续期，续期被拒绝时重新申请。
+async fn nxapi_access_token(
+    http: &reqwest::Client,
+    config: &SplatNetAuthConfig,
+    account_id: &str,
+) -> Result<String, String> {
+    let cached = nxapi_tokens()
+        .lock()
+        .ok()
+        .and_then(|tokens| tokens.get(account_id).cloned());
+    if let Some(token) = cached.as_ref().filter(|token| token.usable(Instant::now())) {
+        return Ok(token.access_token.clone());
+    }
+    let refreshed = match cached.and_then(|token| token.refresh_token) {
+        Some(refresh_token) => {
+            request_nxapi_token(
+                http,
+                config,
+                &[
+                    ("grant_type", "refresh_token"),
+                    ("refresh_token", &refresh_token),
+                    ("client_id", NXAPI_CLIENT_ID),
+                ],
+            )
+            .await
+        }
+        None => Err(NxapiTokenError::InvalidGrant),
+    };
+    let token = match refreshed {
+        Ok(token) => token,
+        Err(NxapiTokenError::Failed(error)) => return Err(error),
+        Err(NxapiTokenError::InvalidGrant) => request_nxapi_token(
+            http,
+            config,
+            &[
+                ("grant_type", "client_credentials"),
+                ("client_id", NXAPI_CLIENT_ID),
+                ("scope", NXAPI_AUTH_SCOPE),
+            ],
+        )
         .await
-        .map_err(|error| format!("nxapi 授权请求失败: {error}"))?;
+        .map_err(|error| match error {
+            NxapiTokenError::Failed(error) => error,
+            NxapiTokenError::InvalidGrant => "nxapi 授权被拒绝".to_owned(),
+        })?,
+    };
+    if let Ok(mut tokens) = nxapi_tokens().lock() {
+        tokens.insert(account_id.to_owned(), token.clone());
+    }
+    Ok(token.access_token)
+}
+
+/// nxapi 说授权令牌已失效：下次使用前先续期。
+fn expire_nxapi_token(account_id: &str) {
+    if let Ok(mut tokens) = nxapi_tokens().lock() {
+        if let Some(token) = tokens.get_mut(account_id) {
+            token.expires_at = Instant::now();
+        }
+    }
+}
+
+async fn request_nxapi_token(
+    http: &reqwest::Client,
+    config: &SplatNetAuthConfig,
+    form: &[(&str, &str)],
+) -> Result<NxapiToken, NxapiTokenError> {
+    let response = send_unless_connected(|| {
+        http.post(NXAPI_AUTH_URL)
+            .header("Accept", "application/json")
+            .header("User-Agent", config.nxapi_user_agent())
+            .form(form)
+    })
+    .await
+    .map_err(|error| NxapiTokenError::Failed(format!("nxapi 授权请求失败: {error}")))?;
     let status = response.status();
     let value: Value = response
         .json()
         .await
-        .map_err(|error| format!("nxapi 授权响应无效: {error}"))?;
+        .map_err(|error| NxapiTokenError::Failed(format!("nxapi 授权响应无效: {error}")))?;
     if !status.is_success() {
-        return Err(provider_error("nxapi 授权", status.as_u16(), &value));
+        if value.get("error").and_then(Value::as_str) == Some("invalid_grant") {
+            return Err(NxapiTokenError::InvalidGrant);
+        }
+        return Err(NxapiTokenError::Failed(provider_error(
+            "nxapi 授权",
+            status.as_u16(),
+            &value,
+        )));
     }
-    required_string(&value, "access_token", "nxapi 授权响应缺少 access_token")
+    NxapiToken::from_response(&value, Instant::now()).map_err(NxapiTokenError::Failed)
+}
+
+/// 发给 nxapi 的请求：带上这个账号的授权令牌和 User-Agent。令牌失效时续期后再发一次；
+/// 其他情况收到响应后不再自动重试（nxapi 的使用要求）。返回状态码和响应正文。
+async fn nxapi_send(
+    http: &reqwest::Client,
+    config: &SplatNetAuthConfig,
+    account_id: &str,
+    service: &str,
+    build: impl Fn() -> reqwest::RequestBuilder,
+) -> Result<(reqwest::StatusCode, String), String> {
+    let mut renewed = false;
+    loop {
+        let authorization = format!(
+            "Bearer {}",
+            nxapi_access_token(http, config, account_id).await?
+        );
+        let response = send_unless_connected(|| {
+            build()
+                .header("User-Agent", config.nxapi_user_agent())
+                .header("Authorization", &authorization)
+        })
+        .await
+        .map_err(|error| format!("{service}请求失败: {error}"))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|error| format!("{service}响应读取失败: {error}"))?;
+        if status == reqwest::StatusCode::UNAUTHORIZED && !renewed && is_invalid_token(&text) {
+            expire_nxapi_token(account_id);
+            renewed = true;
+            continue;
+        }
+        return Ok((status, text));
+    }
+}
+
+fn is_invalid_token(response_text: &str) -> bool {
+    serde_json::from_str::<Value>(response_text)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("error")?
+                .as_str()
+                .map(|error| error == "invalid_token")
+        })
+        .unwrap_or(false)
+}
+
+/// 发送请求；只在连接没建立、请求没发出去时再发一次。收到响应后的失败不自动重试。
+async fn send_unless_connected(
+    build: impl Fn() -> reqwest::RequestBuilder,
+) -> reqwest::Result<reqwest::Response> {
+    match build().send().await {
+        Err(error) if error.is_connect() => build().send().await,
+        result => result,
+    }
 }
 
 async fn decrypt_coral_response(
     http: &reqwest::Client,
     config: &SplatNetAuthConfig,
+    account_id: &str,
     response_bytes: &[u8],
 ) -> Result<Value, String> {
     let endpoint = sibling_endpoint(NXAPI_F_GENERATION_URL, "decrypt-response")?;
-    let request = http
-        .post(endpoint)
-        .header("Content-Type", "application/json")
-        .header("Accept", "text/plain")
-        .header(
-            "User-Agent",
-            format!("Splat3Insight/{}", config.client_version),
-        )
-        .json(&json!({
-            "data": general_purpose::STANDARD.encode(response_bytes),
-        }))
-        .header(
-            "Authorization",
-            format!("Bearer {}", nxapi_auth_token(http).await?),
-        );
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("解密 Nintendo Coral 响应失败: {error}"))?;
-    let status = response.status();
-    let response_text = response
-        .text()
-        .await
-        .map_err(|error| format!("解密响应读取失败: {error}"))?;
+    let body = json!({
+        "data": general_purpose::STANDARD.encode(response_bytes),
+    });
+    let (status, response_text) = nxapi_send(
+        http,
+        config,
+        account_id,
+        "解密 Nintendo Coral 响应",
+        || {
+            http.post(&endpoint)
+                .header("Content-Type", "application/json")
+                .header("Accept", "text/plain")
+                .json(&body)
+        },
+    )
+    .await?;
     if !status.is_success() {
         return Err(format!("解密 Nintendo Coral 响应失败（HTTP {status}）"));
     }
@@ -722,6 +846,51 @@ mod tests {
         );
         assert!(!NXAPI_CLIENT_ID.is_empty());
         assert!(!config.client_version.is_empty());
+    }
+
+    #[test]
+    fn nxapi_user_agent_names_the_app_version_and_contact() {
+        let config = SplatNetAuthConfig {
+            client_version: "0.3.0".to_owned(),
+            ..SplatNetAuthConfig::default()
+        };
+        assert_eq!(
+            config.nxapi_user_agent(),
+            "Splat3Insight/0.3.0 (+https://github.com/space4yyy/Splat3Insight)"
+        );
+    }
+
+    #[test]
+    fn nxapi_tokens_are_reused_until_shortly_before_they_expire() {
+        let now = Instant::now();
+        let token = NxapiToken::from_response(
+            &json!({ "access_token": "access", "expires_in": 3600, "refresh_token": "refresh" }),
+            now,
+        )
+        .unwrap();
+        assert_eq!(token.refresh_token.as_deref(), Some("refresh"));
+        assert!(token.usable(now + Duration::from_secs(3500)));
+        assert!(!token.usable(now + Duration::from_secs(3541)));
+
+        // 没给有效期时按 5 分钟算；空的刷新令牌当作没有。
+        let token = NxapiToken::from_response(
+            &json!({ "access_token": "access", "refresh_token": "" }),
+            now,
+        )
+        .unwrap();
+        assert!(token.refresh_token.is_none());
+        assert!(token.usable(now + Duration::from_secs(200)));
+        assert!(!token.usable(now + Duration::from_secs(250)));
+        assert!(NxapiToken::from_response(&json!({ "expires_in": 60 }), now).is_err());
+    }
+
+    #[test]
+    fn only_invalid_token_errors_renew_the_nxapi_token() {
+        assert!(is_invalid_token(
+            r#"{"error":"invalid_token","debug_id":"x"}"#
+        ));
+        assert!(!is_invalid_token(r#"{"error":"rate_limit"}"#));
+        assert!(!is_invalid_token("not json"));
     }
 
     #[test]
