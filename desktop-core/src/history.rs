@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
 
-use crate::splatnet_auth::{fetch_web_view_version, SPLATNET_URL};
+use crate::splatnet_auth::{fetch_web_view_version, SPLATNET_URL, WEB_VIEW_VERSION_FALLBACK};
 
 const LATEST_BATTLE_QUERY: &str =
     "b24d22fd6cb251c515c2b90044039698aa27bc1fab15801d83014d919cd45780";
@@ -303,6 +303,8 @@ pub struct SplatNetDataClient {
     http: reqwest::Client,
     config: SplatNetDataConfig,
     web_view_version: String,
+    /// 没查到网页版本号、用的是备用值时为 false。
+    web_view_version_known: bool,
     request_gate: Arc<AsyncMutex<Instant>>,
 }
 
@@ -319,8 +321,8 @@ impl SplatNetDataClient {
             .http1_only()
             .build()
             .map_err(|error| format!("创建 SplatNet 数据客户端失败：{error}"))?;
-        let web_view_version = match config.web_view_version.clone() {
-            Some(value) if !value.trim().is_empty() => value,
+        let known_version = match config.web_view_version.clone() {
+            Some(value) if !value.trim().is_empty() => Some(value),
             _ => {
                 fetch_web_view_version(
                     &http,
@@ -336,9 +338,17 @@ impl SplatNetDataClient {
         Ok(Self {
             http,
             config,
-            web_view_version,
+            web_view_version_known: known_version.is_some(),
+            web_view_version: known_version.unwrap_or_else(|| WEB_VIEW_VERSION_FALLBACK.to_owned()),
             request_gate: Arc::new(AsyncMutex::new(Instant::now() - MIN_REQUEST_INTERVAL)),
         })
+    }
+
+    /// 这次用的网页版本号。记下来放进下次的 [`SplatNetDataConfig::web_view_version`]，
+    /// 就不用每次连接都查。没查到、用的是备用值时为 None。
+    pub fn web_view_version(&self) -> Option<&str> {
+        self.web_view_version_known
+            .then_some(self.web_view_version.as_str())
     }
 
     pub async fn fetch_history(

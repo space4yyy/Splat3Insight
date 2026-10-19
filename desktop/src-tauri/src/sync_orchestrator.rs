@@ -74,12 +74,13 @@ pub(super) async fn sync_account_inner(
     let bullet_token = secret
         .bullet_token
         .ok_or_else(|| "请先获取 SplatNet 权限，再同步历史记录".to_owned())?;
-    let config = SplatNetDataConfig::new(
+    let mut config = SplatNetDataConfig::new(
         game_web_token,
         bullet_token,
         metadata.language.as_deref().unwrap_or("en-US"),
         metadata.country.as_deref().unwrap_or("US"),
     );
+    config.web_view_version = sync_runtime.web_view_version();
 
     update_sync_status(sync_runtime, account_id, |status| {
         status.state = "preparing".to_owned();
@@ -182,6 +183,9 @@ pub(super) async fn sync_account_inner(
             error,
         )
     })?;
+    if let Some(version) = client.web_view_version() {
+        sync_runtime.set_web_view_version(Some(version));
+    }
     let progress_status = Arc::clone(sync_runtime);
     let progress_account_id = account_id.to_owned();
     let unavailable_detail_count = Arc::new(AtomicUsize::new(0));
@@ -242,7 +246,7 @@ pub(super) async fn sync_account_inner(
         }
         Ok(changed)
     });
-    let cache = if initial_sync {
+    let fetched = if initial_sync {
         client
             .fetch_history_full_with_progress_and_records_from_typed(
                 &known_battle_ids,
@@ -252,17 +256,6 @@ pub(super) async fn sync_account_inner(
                 Some(Arc::clone(&on_record)),
             )
             .await
-            .map_err(|error| {
-                let kind = error.kind();
-                let message = account_auth_error(
-                    auth_log_path,
-                    "history-fetch",
-                    &metadata.display_name,
-                    account_id,
-                    error.to_string(),
-                );
-                SyncError::from_history(kind, message)
-            })?
     } else {
         client
             .fetch_history_incremental_with_progress_and_records_typed(
@@ -275,18 +268,20 @@ pub(super) async fn sync_account_inner(
                 Some(Arc::clone(&on_record)),
             )
             .await
-            .map_err(|error| {
-                let kind = error.kind();
-                let message = account_auth_error(
-                    auth_log_path,
-                    "history-fetch",
-                    &metadata.display_name,
-                    account_id,
-                    error.to_string(),
-                );
-                SyncError::from_history(kind, message)
-            })?
     };
+    let cache = fetched.map_err(|error| {
+        // 网页版本号过期时 SplatNet 会拒绝请求，下次同步重新查。
+        sync_runtime.set_web_view_version(None);
+        let kind = error.kind();
+        let message = account_auth_error(
+            auth_log_path,
+            "history-fetch",
+            &metadata.display_name,
+            account_id,
+            error.to_string(),
+        );
+        SyncError::from_history(kind, message)
+    })?;
     drop(on_record);
     drop(record_writer);
     let added_battle_count = cache.battles.len();

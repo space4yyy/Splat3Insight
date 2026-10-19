@@ -62,7 +62,8 @@ pub struct SplatNetTokens {
     pub language: String,
     pub country: String,
     pub nso_app_version: String,
-    pub web_view_version: String,
+    /// 刷新令牌时查到的网页版本号；没查到时为 None。
+    pub web_view_version: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -207,7 +208,7 @@ impl<'a> SplatNetClient<'a> {
         game_web_token: &str,
         language: &str,
         country: &str,
-    ) -> Result<(String, String), String> {
+    ) -> Result<(String, Option<String>), String> {
         let web_view_version = fetch_web_view_version(
             &self.http,
             game_web_token,
@@ -221,7 +222,12 @@ impl<'a> SplatNetClient<'a> {
             .post(format!("{SPLATNET_URL}/api/bullet_tokens"))
             .header("Accept-Language", language)
             .header("User-Agent", &self.config.app_user_agent)
-            .header("X-Web-View-Ver", &web_view_version)
+            .header(
+                "X-Web-View-Ver",
+                web_view_version
+                    .as_deref()
+                    .unwrap_or(WEB_VIEW_VERSION_FALLBACK),
+            )
             .header("X-NACOUNTRY", country)
             .header("Accept", "*/*")
             .header("Origin", SPLATNET_URL)
@@ -644,13 +650,14 @@ async fn decrypt_coral_response(
     Ok(value)
 }
 
+/// 从 SplatNet 网页的主脚本里读出网页版本号。查不到时返回 None，由调用方改用备用值。
 pub(crate) async fn fetch_web_view_version(
     http: &reqwest::Client,
     game_web_token: &str,
     language: &str,
     country: &str,
     user_agent: &str,
-) -> String {
+) -> Option<String> {
     let home = http
         .get(SPLATNET_URL)
         .header("Accept", "*/*")
@@ -662,29 +669,29 @@ pub(crate) async fn fetch_web_view_version(
         .send()
         .await;
     let Ok(home) = home else {
-        return WEB_VIEW_VERSION_FALLBACK.to_owned();
+        return None;
     };
     if !home.status().is_success() {
-        return WEB_VIEW_VERSION_FALLBACK.to_owned();
+        return None;
     }
     let Ok(html) = home.text().await else {
-        return WEB_VIEW_VERSION_FALLBACK.to_owned();
+        return None;
     };
     let Ok(script_regex) = Regex::new(r#"<script[^>]+src=[\"']([^\"']*static[^\"']*)[\"']"#) else {
-        return WEB_VIEW_VERSION_FALLBACK.to_owned();
+        return None;
     };
     let Some(script_path) = script_regex
         .captures_iter(&html)
         .filter_map(|captures| captures.get(1).map(|match_| match_.as_str()))
         .next()
     else {
-        return WEB_VIEW_VERSION_FALLBACK.to_owned();
+        return None;
     };
     let Ok(home_url) = Url::parse(SPLATNET_URL) else {
-        return WEB_VIEW_VERSION_FALLBACK.to_owned();
+        return None;
     };
     let Ok(script_url) = home_url.join(script_path) else {
-        return WEB_VIEW_VERSION_FALLBACK.to_owned();
+        return None;
     };
     let Ok(script_response) = http
         .get(script_url)
@@ -698,29 +705,29 @@ pub(crate) async fn fetch_web_view_version(
         .send()
         .await
     else {
-        return WEB_VIEW_VERSION_FALLBACK.to_owned();
+        return None;
     };
     if !script_response.status().is_success() {
-        return WEB_VIEW_VERSION_FALLBACK.to_owned();
+        return None;
     }
     let Ok(script) = script_response.text().await else {
-        return WEB_VIEW_VERSION_FALLBACK.to_owned();
+        return None;
     };
     let Ok(version_regex) = Regex::new(
         r#"\b(?P<revision>[0-9a-f]{40})\b[\s\S]*?void 0[\s\S]*?\"revision_info_not_set\"\}`,.*?=`(?P<version>\d+\.\d+\.\d+)-"#,
     ) else {
-        return WEB_VIEW_VERSION_FALLBACK.to_owned();
+        return None;
     };
     let Some(captures) = version_regex.captures(&script) else {
-        return WEB_VIEW_VERSION_FALLBACK.to_owned();
+        return None;
     };
     let Some(version) = captures.name("version") else {
-        return WEB_VIEW_VERSION_FALLBACK.to_owned();
+        return None;
     };
     let Some(revision) = captures.name("revision") else {
-        return WEB_VIEW_VERSION_FALLBACK.to_owned();
+        return None;
     };
-    format!("{}-{}", version.as_str(), &revision.as_str()[..8])
+    Some(format!("{}-{}", version.as_str(), &revision.as_str()[..8]))
 }
 
 fn sibling_endpoint(endpoint: &str, child: &str) -> Result<String, String> {

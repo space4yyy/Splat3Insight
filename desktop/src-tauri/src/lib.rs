@@ -323,6 +323,8 @@ struct SyncStatus {
 struct SyncRuntime {
     statuses: Mutex<HashMap<String, SyncStatus>>,
     tasks: Mutex<HashMap<String, watch::Sender<Option<SyncResult>>>>,
+    /// SplatNet 网页版本号，所有账号共用。查到后一直沿用，同步失败时清掉，下次重新查。
+    web_view_version: Mutex<Option<String>>,
 }
 
 type SyncResult = Result<HistorySyncSummary, String>;
@@ -382,6 +384,21 @@ impl SyncRuntime {
         Self {
             statuses: Mutex::new(HashMap::new()),
             tasks: Mutex::new(HashMap::new()),
+            web_view_version: Mutex::new(None),
+        }
+    }
+
+    fn web_view_version(&self) -> Option<String> {
+        self.web_view_version
+            .lock()
+            .ok()
+            .and_then(|version| version.clone())
+    }
+
+    /// 记下或清掉网页版本号。
+    fn set_web_view_version(&self, version: Option<&str>) {
+        if let Ok(mut current) = self.web_view_version.lock() {
+            *current = version.map(str::to_owned);
         }
     }
 
@@ -750,7 +767,13 @@ async fn sync_account(
                 &account_id,
                 "检测到 SplatNet token 失效，尝试使用已保存的 Nintendo session token 自动刷新",
             );
-            match refresh_splatnet_tokens_for_account(&account_id, &registry, &auth_log_path).await
+            match refresh_splatnet_tokens_for_account(
+                &account_id,
+                &registry,
+                &auth_log_path,
+                &sync_runtime,
+            )
+            .await
             {
                 Ok(()) => {
                     write_account_log(
@@ -1377,6 +1400,7 @@ async fn refresh_splatnet_tokens_for_account(
     account_id: &str,
     registry: &Arc<Mutex<Registry>>,
     auth_log_path: &Path,
+    sync_runtime: &SyncRuntime,
 ) -> Result<(), TokenRefreshFailure> {
     let (metadata, secret_store) = {
         let registry = registry.lock().map_err(|_| "account registry is locked")?;
@@ -1436,6 +1460,10 @@ async fn refresh_splatnet_tokens_for_account(
                 error,
             )
         })?;
+    // 刷新令牌时顺便查到了网页版本号，同步时直接用，不用再查。
+    if let Some(version) = splatnet_tokens.web_view_version.as_deref() {
+        sync_runtime.set_web_view_version(Some(version));
+    }
     let secret = AccountSecret {
         session_token,
         game_web_token: Some(splatnet_tokens.game_web_token),
@@ -1465,9 +1493,14 @@ async fn refresh_splatnet_tokens(
     account_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    refresh_splatnet_tokens_for_account(&account_id, &state.registry, &state.auth_log_path)
-        .await
-        .map_err(|error| format_token_refresh_error(&error))?;
+    refresh_splatnet_tokens_for_account(
+        &account_id,
+        &state.registry,
+        &state.auth_log_path,
+        &state.sync_runtime,
+    )
+    .await
+    .map_err(|error| format_token_refresh_error(&error))?;
     state.sync_trigger.notify_one();
     Ok(())
 }
@@ -2453,6 +2486,20 @@ mod tests {
         ));
         runtime.complete("account-b", &other_account, Err("test complete".to_owned()));
         drop(other_account);
+    }
+
+    #[test]
+    fn sync_runtime_keeps_the_web_view_version_until_cleared() {
+        let runtime = SyncRuntime::new();
+        assert_eq!(runtime.web_view_version(), None);
+
+        runtime.set_web_view_version(Some("10.0.0-88706e32"));
+        assert_eq!(
+            runtime.web_view_version().as_deref(),
+            Some("10.0.0-88706e32")
+        );
+        runtime.set_web_view_version(None);
+        assert_eq!(runtime.web_view_version(), None);
     }
 
     #[test]
