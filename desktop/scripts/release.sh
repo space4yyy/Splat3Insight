@@ -45,5 +45,5 @@ git add desktop/src-tauri/tauri.conf.json desktop/src-tauri/Cargo.toml desktop-c
   desktop/src-tauri/Cargo.lock desktop-core/Cargo.lock
 git commit -q -m "Release $version"
 git tag -a "v$version" -m "Splat3 Insight $version"
-echo "已提交并打上标签 v$version。确认无误后推送："
+echo "已提交并打上标签 v${version}。确认无误后推送："
 echo "  git push origin main v$version"
