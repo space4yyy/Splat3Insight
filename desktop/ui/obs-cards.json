@@ -42,5 +42,16 @@
     "sizeLabel": "OBS 尺寸推荐",
     "width": 320,
     "height": 80
+  },
+  {
+    "id": "clock",
+    "route": "/clock",
+    "page": "clock",
+    "name": "时钟卡片",
+    "optionLabel": "时钟",
+    "description": "显示本机时区的当前时间。",
+    "sizeLabel": "OBS 尺寸推荐",
+    "width": 144,
+    "height": 48
   }
 ]

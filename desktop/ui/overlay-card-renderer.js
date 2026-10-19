@@ -21,6 +21,7 @@
 
   const mountedCards = new WeakMap();
   const mountedSalmonCards = new WeakMap();
+  const mountedClockCards = new WeakMap();
   const mountedCardTypes = new WeakMap();
   const isNumber = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
   const displayNumber = (value, digits = 0) => isNumber(value) ? Number(value).toFixed(digits) : '—';
@@ -111,6 +112,7 @@
     if (currentType && currentType !== type) {
       mountedCards.delete(root);
       mountedSalmonCards.delete(root);
+      mountedClockCards.delete(root);
       root.replaceChildren();
     }
     mountedCardTypes.set(root, type);
@@ -428,12 +430,47 @@ ${SALMON_TOTALS_HTML}
     return newest?.type ?? null;
   }
 
+  // 时钟卡片：本机时区的当前时间，例如 16:31:09。
+  // BlitzMain 的数字宽窄不一（1 比 0 窄很多），每位数字放进等宽格子，秒数跳动时整行不会左右晃。
+  const CLOCK_FORMAT = '00:00:00';
+  const twoDigits = (value) => String(value).padStart(2, '0');
+  function clockText(now) {
+    return `${twoDigits(now.getHours())}:${twoDigits(now.getMinutes())}:${twoDigits(now.getSeconds())}`;
+  }
+
+  function createClockCard(root) {
+    const cells = Array.from(CLOCK_FORMAT, (char) => (char === '0' ? '<span class="clock-card__digit"></span>' : char)).join('');
+    root.innerHTML = `
+      <section class="clock-card">
+        <time class="clock-card__time">${cells}</time>
+      </section>`;
+    const card = root.querySelector('.clock-card');
+    const time = card.querySelector('.clock-card__time');
+    const refs = { card, time, digits: Array.from(time.querySelectorAll('.clock-card__digit')) };
+    mountedClockCards.set(root, refs);
+    return refs;
+  }
+
+  function updateClock(root, now = new Date()) {
+    prepareCardType(root, 'clock');
+    const refs = mountedClockCards.get(root) ?? createClockCard(root);
+    const text = clockText(now);
+    const digits = text.replace(/\D/g, '');
+    refs.digits.forEach((cell, index) => {
+      if (cell.textContent !== digits[index]) cell.textContent = digits[index];
+    });
+    refs.time.dateTime = text;
+    return true;
+  }
+
   window.Splat3OverlayCard = Object.freeze({
     update,
     updateAuto,
     updateSalmonRun,
     updateSalmonTotals,
     newestCardType,
+    updateClock,
+    clockText,
     labels: Object.freeze({ rule: localizeRule, coopStage: localizeCoopStage, grade: localizeGrade }),
   });
 })();

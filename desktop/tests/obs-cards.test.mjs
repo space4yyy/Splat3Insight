@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import vm from 'node:vm';
 
 const ui = new URL('../ui/', import.meta.url);
-const [cards, indexHtml, appJs, dashboardJs, dashboardDataJs, overlayCss, overlayHtml, salmonRunHtml, tauriConfig, rendererJs] = await Promise.all([
+const [cards, indexHtml, appJs, dashboardJs, dashboardDataJs, overlayCss, overlayHtml, salmonRunHtml, clockHtml, tauriConfig, rendererJs] = await Promise.all([
   readFile(new URL('obs-cards.json', ui), 'utf8').then(JSON.parse),
   readFile(new URL('index.html', ui), 'utf8'),
   readFile(new URL('app.js', ui), 'utf8'),
@@ -12,6 +13,7 @@ const [cards, indexHtml, appJs, dashboardJs, dashboardDataJs, overlayCss, overla
   readFile(new URL('overlay-card.css', ui), 'utf8'),
   readFile(new URL('overlay.html', ui), 'utf8'),
   readFile(new URL('salmon-run.html', ui), 'utf8'),
+  readFile(new URL('clock.html', ui), 'utf8'),
   readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8').then(JSON.parse),
   readFile(new URL('overlay-card-renderer.js', ui), 'utf8'),
 ]);
@@ -52,6 +54,34 @@ test('OBS card selection always keeps one option and defaults to automatic', () 
   assert.match(appJs, /app\.obs\.selected = normalizeSelection\(app\.obs\.selected\.filter/);
 });
 
+test('cards with their own page are picked alone instead of joining the combined overlay address', () => {
+  // 只有 /overlay?参数 形式的数据卡片能组合；自动和时钟的地址各自独立。
+  const standalone = cards.filter((card) => !card.route.includes('?')).map((card) => card.id);
+  assert.deepEqual(standalone, ['overlay', 'clock']);
+  assert.match(appJs, /const obsStandalone = \(id\) => !obsCardOf\(id\)\?\.route\.includes\('\?'\);/);
+  assert.match(appJs, /if \(standalone\) return obsCardOf\(standalone\)\.route;/);
+  assert.match(appJs, /obsStandalone\(id\) \? \[id\] :/);
+});
+
+test('the clock card shows local time as HH:mm:ss in the number font', () => {
+  const context = vm.createContext({ window: {} });
+  vm.runInContext(rendererJs, context);
+  const { clockText } = context.window.Splat3OverlayCard;
+  assert.equal(clockText(new Date(2026, 9, 19, 16, 31, 9)), '16:31:09');
+  assert.equal(clockText(new Date(2027, 0, 5, 7, 3, 2)), '07:03:02');
+  assert.equal(clockText(new Date(2027, 0, 6, 0, 0, 0)), '00:00:00');
+  const clock = cards.find((card) => card.id === 'clock');
+  assert.equal(clock.route, '/clock');
+  assert.equal(clock.page, 'clock');
+  const rule = overlayCss.match(/\n\.clock-card \{([^}]*)\}/)?.[1] ?? '';
+  assert.match(rule, /font-family: "BlitzMain", "DFP GBZY7", sans-serif;/);
+  // BlitzMain 没有等宽数字，每位数字放进等宽格子，秒数变化时整行不晃。
+  assert.match(overlayCss, /\.clock-card__digit \{[^}]*width: \.6em;/);
+  assert.match(clockHtml, /Splat3OverlayCard\.updateClock\(root\)/);
+  assert.doesNotMatch(clockHtml, /\/api\/overlay/);
+  assert.match(appJs, /preview\?\.querySelector\('\.overlay-card, \.salmon-run-card, \.clock-card'\)/);
+});
+
 test('card catalog is loaded by the app without hardcoded service addresses', () => {
   assert.match(appJs, /fetch\('\.\/obs-cards\.json'/);
   assert.doesNotMatch(appJs, /install_card_package|set_card_package_enabled|remove_card_package/);
@@ -67,9 +97,9 @@ test('Tauri CSP allows the app to fetch its same-origin card catalog', () => {
   assert.match(connectSource, /(?:^|\s)'self'(?:\s|$)/);
 });
 
-test('battle and Salmon Run cards share one background that OBS custom CSS can override', () => {
+test('battle, Salmon Run and clock cards share one background that OBS custom CSS can override', () => {
   const rule = (selector) => overlayCss.match(new RegExp(`\\n${selector.replace('.', '\\.')} \\{([^}]*)\\}`))?.[1] ?? '';
-  for (const selector of ['.overlay-card', '.salmon-run-card']) {
+  for (const selector of ['.overlay-card', '.salmon-run-card', '.clock-card']) {
     assert.match(rule(selector), /background: var\(--obs-card-background, #383838\);/, selector);
     assert.doesNotMatch(rule(selector), /border:/, selector);
   }
@@ -137,7 +167,7 @@ test('the main window accepts the click that activates it on macOS', () => {
 test('OBS page templates receive dimensions from the card catalog', () => {
   assert.match(overlayCss, /width: var\(--obs-card-width\)/);
   assert.match(overlayCss, /height: var\(--obs-card-height\)/);
-  for (const page of [overlayHtml, salmonRunHtml]) {
+  for (const page of [overlayHtml, salmonRunHtml, clockHtml]) {
     assert.match(page, /__OBS_CARD_WIDTH__/);
     assert.match(page, /__OBS_CARD_HEIGHT__/);
   }

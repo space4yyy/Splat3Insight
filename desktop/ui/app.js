@@ -869,11 +869,14 @@
   // OBS 数据卡片
   const obsCardOf = (id) => app.obs.catalog.find((card) => card.id === id);
   const obsOrdered = (ids) => app.obs.catalog.map((card) => card.id).filter((id) => ids.includes(id));
+  // 地址带参数的数据卡片能合进同一个地址；自动、时钟这类地址独立的卡片只能单选。
+  const obsStandalone = (id) => !obsCardOf(id)?.route.includes('?');
 
   function normalizeSelection(ids) {
     const known = obsOrdered(ids || []);
     if (!known.length || known.includes('overlay')) return ['overlay'];
-    return known;
+    const standalone = known.find(obsStandalone);
+    return standalone ? [standalone] : known;
   }
   function saveSelection() {
     try {
@@ -914,10 +917,10 @@
     }
   }
 
-  // 自动与其他类型互斥；至少保留一项，全部取消时回到自动；勾选哪种就预览哪种。
+  // 自动、时钟与其他类型互斥；至少保留一项，全部取消时回到自动；勾选哪种就预览哪种。
   function toggleObsCard(id, checked) {
     if (checked) {
-      app.obs.selected = id === 'overlay' ? ['overlay'] : obsOrdered([...app.obs.selected.filter((item) => item !== 'overlay'), id]);
+      app.obs.selected = obsStandalone(id) ? [id] : obsOrdered([...app.obs.selected.filter((item) => !obsStandalone(item)), id]);
       app.obs.active = id;
     } else {
       app.obs.selected = normalizeSelection(app.obs.selected.filter((item) => item !== id));
@@ -935,10 +938,11 @@
   });
 
   function selectedObsRoute() {
+    const standalone = app.obs.selected.find(obsStandalone);
+    if (standalone) return obsCardOf(standalone).route;
     const keys = app.obs.selected
-      .filter((id) => id !== 'overlay')
       .flatMap((id) => Array.from(new URL(obsCardOf(id).route, 'http://localhost').searchParams.keys()));
-    return keys.length ? `/overlay?${keys.join('&')}` : '/overlay';
+    return `/overlay?${keys.join('&')}`;
   }
   // 卡片按浏览器来源的宽高等比缩放：来源按卡片的 4 倍建好，卡片就按那个分辨率绘制，缩小时保持清晰。
   const obsSourceSize = (card) => [card.width * 4, card.height * 4];
@@ -1080,7 +1084,10 @@
     const scale = preview.querySelector('.overlay-preview__scale');
     const states = app.obs.states;
     let hasData = false;
-    if (cards && states) {
+    if (card.id === 'clock') {
+      // 时钟不需要账号数据，直接显示本机时间。
+      hasData = Boolean(cards?.updateClock(scale));
+    } else if (cards && states) {
       if (card.id === 'overlay') {
         const type = cards.updateAuto(scale, states.overlay);
         hasData = type === 'salmon-run' ? Boolean(states.overlay?.salmon_run) : Boolean(states.overlay?.selected);
@@ -1105,12 +1112,24 @@
     empty?.remove();
     preview.hidden = false;
     fitObsPreview();
+    if (card.id === 'clock') scheduleObsClock();
+  }
+  // 时钟预览每到整秒刷新；离开这一页或换成其他卡片后停下。
+  let obsClockTimer = 0;
+  function scheduleObsClock() {
+    clearTimeout(obsClockTimer);
+    obsClockTimer = setTimeout(() => {
+      const scale = $('#obs-preview .overlay-preview[data-card="clock"] .overlay-preview__scale');
+      if (app.view !== 'obs' || !scale) return;
+      cards.updateClock(scale);
+      scheduleObsClock();
+    }, 1000 - (Date.now() % 1000));
   }
   function fitObsPreview() {
     const preview = $('#obs-preview .overlay-preview');
     const viewport = preview?.querySelector('.overlay-preview__viewport');
     const scale = preview?.querySelector('.overlay-preview__scale');
-    const card = preview?.querySelector('.overlay-card, .salmon-run-card');
+    const card = preview?.querySelector('.overlay-card, .salmon-run-card, .clock-card');
     if (!viewport || !scale || !card) return;
     const ratio = card.offsetWidth > 0 && preview.clientWidth > 0 ? Math.min(1, preview.clientWidth / card.offsetWidth) : 1;
     scale.style.transform = `scale(${ratio})`;

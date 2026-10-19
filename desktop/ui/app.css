@@ -371,6 +371,7 @@ table.data .num { text-align: right; }
 .overlay-preview__viewport { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; width: 100%; }
 .overlay-preview__scale { width: max-content; transform-origin: top center; font-size: 16px; line-height: normal; letter-spacing: normal; }
 .overlay-preview__scale > .overlay-card, .overlay-preview__scale > .salmon-run-card { --obs-card-width: 320px; --obs-card-height: 80px; }
+.overlay-preview__scale > .clock-card { --obs-card-width: 144px; --obs-card-height: 48px; }
 
 /* 对战记录 */
 .log-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }

@@ -21,6 +21,7 @@ const SALMON_RUN_HTML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/salmon-run.html"
 ));
+const CLOCK_HTML: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/clock.html"));
 const OVERLAY_CARD_CSS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/overlay-card.css"
@@ -170,6 +171,7 @@ fn render_card_page(card: &ObsCardDefinition) -> HttpResponse {
     let template = match card.page.as_str() {
         "overlay" => OVERLAY_HTML,
         "salmon-run" => SALMON_RUN_HTML,
+        "clock" => CLOCK_HTML,
         _ => return not_found(),
     };
     let body = template
@@ -1217,6 +1219,25 @@ mod tests {
     }
 
     #[test]
+    fn clock_card_keeps_local_time_without_polling_card_data() {
+        let directory = tempdir().unwrap();
+        let config = OverlayServerConfig {
+            accounts_path: directory.path().join("accounts.json"),
+            history_dir: directory.path().join("history"),
+            activity: Default::default(),
+        };
+
+        let response = route_request("GET", "/clock", &config).unwrap();
+        assert_eq!(response.status, "200 OK");
+        assert_eq!(response.content_type, "text/html; charset=utf-8");
+        let page = String::from_utf8(response.body).unwrap();
+        assert!(page.contains("/overlay-card.css"));
+        assert!(page.contains("Splat3OverlayCard.updateClock(root)"));
+        // 时钟页面不轮询卡片数据，后台同步不会因为它以为 OBS 正在显示数据卡片。
+        assert!(!page.contains("/api/overlay"));
+    }
+
+    #[test]
     fn unavailable_routes_return_not_found() {
         let directory = tempdir().unwrap();
         let config = OverlayServerConfig {
@@ -1228,7 +1249,6 @@ mod tests {
         for path in [
             "/random-weapons",
             "/random-weapons-rules",
-            "/clock",
             "/api/random-weapons",
             "/weapons/Shooter_Short_00.png",
         ] {

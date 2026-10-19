@@ -22,7 +22,7 @@
   box-sizing: border-box;
 }
 
-/* 两种卡片共用一个背景色。在 OBS 浏览器源的“自定义 CSS”里加一行就能改：
+/* 所有卡片共用一个背景色。在 OBS 浏览器源的“自定义 CSS”里加一行就能改：
    :root { --obs-card-background: rgba(0, 0, 0, .6); } */
 .overlay-card {
   container-type: inline-size;
@@ -486,6 +486,31 @@
   font-size: clamp(10px, 2.4cqi, 13px);
   line-height: 1;
   letter-spacing: .04em;
+}
+
+.clock-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--obs-card-width);
+  height: var(--obs-card-height);
+  overflow: hidden;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: #f5f5f2;
+  background: var(--obs-card-background, #383838);
+  font-family: "BlitzMain", "DFP GBZY7", sans-serif;
+  font-size: 26px;
+  font-synthesis: none;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* 等宽格子按最宽的数字（2 和 0）定宽。 */
+.clock-card__digit {
+  display: inline-block;
+  width: .6em;
+  text-align: center;
 }
 
 .empty {
