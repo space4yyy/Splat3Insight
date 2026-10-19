@@ -68,10 +68,14 @@ jobs:
       - name: Test desktop interface
         run: npm --prefix desktop test
 
-      # 签名用的临时钥匙串只在这台构建机上存在，密码随机生成即可。
-      - name: Prepare signing keychain password
+      # 手动导入现有证书，避免 Tauri 的自动导入流程过滤掉自签名证书。
+      - name: Prepare macOS signing certificate
         if: runner.os == 'macOS'
-        run: echo "KEYCHAIN_PASSWORD=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: bash desktop/scripts/ci-signing.sh prepare
 
       - name: Build and upload to the draft release
         uses: tauri-apps/tauri-action@v1
@@ -79,9 +83,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         with:
           projectPath: desktop
           args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
@@ -96,3 +97,7 @@ jobs:
             已安装 0.3.0 及以后版本的，会在「设置 → 通用」里收到更新提示。
           releaseDraft: true
           prerelease: false
+
+      - name: Clean up macOS signing certificate
+        if: always() && runner.os == 'macOS'
+        run: bash desktop/scripts/ci-signing.sh cleanup

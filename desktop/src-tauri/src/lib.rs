@@ -17,12 +17,11 @@ use splat3_widget_core::{
     AccountMetadata, AccountRegistry, AccountSecret, CachedSecretStore, KeyringSecretStore,
     SecretStore,
 };
-#[cfg(target_os = "macos")]
-use tauri::RunEvent;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalPosition, State, WebviewWindow,
+    AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalPosition, RunEvent, State,
+    WebviewWindow,
 };
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tokio::sync::watch;

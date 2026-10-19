@@ -65,6 +65,8 @@ make build      # 构建桌面安装包
 3. 推送 main 和标签：`git push origin main v0.3.0`。GitHub Actions（`.github/workflows/release.yml`）会打包 macOS 和 Windows 版，上传到同名的 Release 草稿。
 4. 下载草稿里的安装包检查无误后，在网页上发布草稿。发布后，已安装的应用会按这个 Release 里的 `latest.json` 收到更新。
 
+macOS 发布流程会把现有 Secrets 中的证书导入构建机的临时钥匙串，验证签名后再打包，并在结束时清理。项目生成的自签名证书可直接使用，无需更换证书或更新密钥。修复发布流程后，需要用包含修复的新版本标签触发构建；重新运行旧标签的任务仍会使用旧代码。
+
 ## OBS 设置
 
 1. 应用启动后会自动运行 OBS 服务，可以在“其他工具”页停止或重新启动。
