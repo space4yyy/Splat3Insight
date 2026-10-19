@@ -36,9 +36,10 @@ sed -i.bak -e "s/^  \"version\": \".*\",$/  \"version\": \"$version\",/" desktop
 rm -f desktop/src-tauri/tauri.conf.json.bak
 set_package_version desktop/src-tauri/Cargo.toml
 set_package_version desktop-core/Cargo.toml
-# 更新两个 Cargo.lock 里本项目自己的版本，不改其他依赖。
-cargo metadata --format-version 1 --offline --manifest-path desktop-core/Cargo.toml >/dev/null
-cargo metadata --format-version 1 --offline --manifest-path desktop/src-tauri/Cargo.toml >/dev/null
+# 更新两个 Cargo.lock 里本项目自己的版本，不改其他依赖。cargo 要读到所有平台的依赖信息，
+# 只在 macOS 上编译过时，Windows 等平台的包可能还没下载，所以要联网。
+cargo metadata --format-version 1 --manifest-path desktop-core/Cargo.toml >/dev/null
+cargo metadata --format-version 1 --manifest-path desktop/src-tauri/Cargo.toml >/dev/null
 
 git add desktop/src-tauri/tauri.conf.json desktop/src-tauri/Cargo.toml desktop-core/Cargo.toml \
   desktop/src-tauri/Cargo.lock desktop-core/Cargo.lock
