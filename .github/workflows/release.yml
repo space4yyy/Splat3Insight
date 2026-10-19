@@ -1,0 +1,98 @@
+name: Release
+
+# 推送 v* 标签（例如 v0.3.0）时打包 macOS 和 Windows 版，连同自动更新用的文件和
+# latest.json 一起上传到同名的 Release 草稿。检查无误后在网页上发布草稿，
+# 已安装的应用才会收到更新。
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple Silicon and Intel)
+            os: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin --bundles app,dmg
+          - name: Windows x64
+            os: windows-latest
+            rust-targets: x86_64-pc-windows-msvc
+            args: --bundles nsis
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Cache Rust build artifacts
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            desktop-core -> target
+            desktop/src-tauri -> target
+
+      - name: Install desktop dependencies
+        run: npm ci --prefix desktop
+
+      - name: Test shared Rust core
+        run: cargo test --locked --manifest-path desktop-core/Cargo.toml
+
+      - name: Test desktop host
+        run: cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
+
+      - name: Test desktop interface
+        run: npm --prefix desktop test
+
+      # 签名用的临时钥匙串只在这台构建机上存在，密码随机生成即可。
+      - name: Prepare signing keychain password
+        if: runner.os == 'macOS'
+        run: echo "KEYCHAIN_PASSWORD=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+
+      - name: Build and upload to the draft release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        with:
+          projectPath: desktop
+          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
+          tagName: ${{ github.ref_name }}
+          releaseName: Splat3 Insight ${{ github.ref_name }}
+          releaseBody: |
+            ## 安装
+
+            - **macOS**：下载 `.dmg`，把 Splat3 Insight 拖进「应用程序」。第一次打开时如果提示无法验证开发者，到「系统设置 → 隐私与安全性」点「仍要打开」。
+            - **Windows**：下载 `-setup.exe` 运行。如果出现「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」。
+
+            已安装 0.3.0 及以后版本的，会在「设置 → 通用」里收到更新提示。
+          releaseDraft: true
+          prerelease: false

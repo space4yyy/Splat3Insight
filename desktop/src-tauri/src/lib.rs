@@ -27,6 +27,7 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tokio::sync::watch;
 
+mod app_update;
 pub(crate) mod dashboard_store;
 pub(crate) mod history_store;
 pub(crate) mod image_cache;
@@ -1716,6 +1717,7 @@ pub fn run() {
             },
         )
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .app_name(AUTOSTART_APP_NAME)
@@ -1822,6 +1824,7 @@ pub fn run() {
                 sync_trigger: Arc::clone(&sync_trigger),
                 overlay_service: overlay_service.clone(),
             });
+            app.manage(app_update::PendingUpdate::default());
             if let Err(error) =
                 restore_window_placement(&main_window, preferences.window_placement.as_ref())
             {
@@ -1842,6 +1845,7 @@ pub fn run() {
                 sync_trigger,
                 obs_activity,
             );
+            app_update::start_background_checks(app.handle().clone());
 
             Ok(())
         })
@@ -1880,6 +1884,9 @@ pub fn run() {
             set_active_account,
             hide_main_window,
             exit_app,
+            app_update::get_app_version,
+            app_update::check_for_update,
+            app_update::install_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Splat3 Insight")

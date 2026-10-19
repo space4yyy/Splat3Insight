@@ -460,6 +460,8 @@ table.data tr.is-me td { background: var(--panel-raised); color: var(--ink); }
 .settings-row:last-child { border-bottom: 0; }
 .settings-label { color: var(--ink); font-size: 14px; }
 .settings-message { margin: 0; color: var(--danger-text); font-size: 13px; }
+.settings-note { margin-left: 8px; color: var(--ink-3); font-size: 13px; }
+.nav button.has-update::after { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); }
 .switch { position: relative; flex: none; width: 40px; height: 24px; margin: 0; border-radius: 999px; background: var(--line-strong); appearance: none; cursor: pointer; transition: background-color .15s; }
 .switch::before { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--ink-3); transition: transform .15s, background-color .15s; }
 .switch:checked { background: var(--accent-2); }

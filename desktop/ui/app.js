@@ -185,6 +185,51 @@
     }
   });
 
+  // 应用更新：后台发现新版本时提示，点按钮才下载安装并重启，不会自动安装。
+  const updateButton = $('#update-button');
+  const settingsNav = $('#nav button[data-view="settings"]');
+  const update = { version: null, busy: false };
+  function renderUpdate(label) {
+    updateButton.textContent = label ?? (update.version ? `更新到 ${update.version}` : '检查更新');
+    updateButton.className = update.version ? 'button-primary' : 'ghost';
+    updateButton.disabled = update.busy;
+    settingsNav.classList.toggle('has-update', Boolean(update.version));
+  }
+  function updateFound(info) {
+    update.version = info?.version ?? null;
+    if (!update.busy) renderUpdate();
+  }
+  invoke('get_app_version').then((version) => { $('#app-version').textContent = version; }).catch(() => {});
+  tauri.event.listen('update-available', (event) => updateFound(event.payload));
+  tauri.event.listen('update-progress', (event) => {
+    const { downloaded, total } = event.payload || {};
+    renderUpdate(total ? `正在下载 ${Math.min(99, Math.floor((downloaded / total) * 100))}%` : '正在下载…');
+  });
+  updateButton.addEventListener('click', async () => {
+    if (update.busy) return;
+    update.busy = true;
+    setSettingsMessage('');
+    let label;
+    try {
+      if (update.version) {
+        renderUpdate('正在下载…');
+        // 安装完成后应用自动重启。
+        await invoke('install_update');
+      } else {
+        renderUpdate('正在检查…');
+        const info = await invoke('check_for_update');
+        update.version = info?.version ?? null;
+        if (!info) label = '已是最新版本';
+      }
+    } catch (error) {
+      setSettingsMessage(String(error));
+    } finally {
+      update.busy = false;
+      renderUpdate(label);
+      if (label) setTimeout(() => { if (!update.busy && !update.version) renderUpdate(); }, 3000);
+    }
+  });
+
   // 页面切换
   function showView(view) {
     // 账号管理并进了设置页，旧的 #accounts 链接也打开设置。

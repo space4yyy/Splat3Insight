@@ -12,6 +12,15 @@
 - 保留原始对战数据；SQLite 中的原始 JSON 经过 gzip 压缩并按记录去重。
 - 登录凭据存储在操作系统凭据库中：macOS 钥匙串、Windows 凭据管理器。
 
+## 下载与安装
+
+在 [Releases](https://github.com/space4yyy/Splat3Insight/releases/latest) 下载最新版本：
+
+- **macOS**：下载 `.dmg`，把 Splat3 Insight 拖进“应用程序”。应用没有经过 Apple 公证，第一次打开时如果提示无法验证开发者，到“系统设置 → 隐私与安全性”点“仍要打开”。
+- **Windows**：下载 `-setup.exe` 运行。安装包没有代码签名，如果出现“Windows 已保护你的电脑”，点“更多信息 → 仍要运行”。
+
+之后的新版本会在“设置 → 通用”里提示，点“更新到 x.y.z”即可下载安装并重启。应用不会自动安装更新，以免直播时中断 OBS 卡片。
+
 ## 开发环境
 
 - Rust stable 与 Cargo
@@ -48,6 +57,13 @@ make build      # 构建桌面安装包
 ```
 
 每次推送后，GitHub Actions 会构建 Windows 安装包（`.github/workflows/build-windows.yml`）。
+
+## 发布
+
+1. 第一次发布前运行 `make release-signing`，生成自动更新签名密钥和 macOS 发布证书，按提示把内容填进仓库的 Actions secrets，并另外备份生成的目录。丢了更新私钥，已安装的版本就收不到后续更新。
+2. 在 main 上运行 `make release VERSION=0.3.0`：修改版本号、提交并打上 `v0.3.0` 标签（不推送）。
+3. 推送 main 和标签：`git push origin main v0.3.0`。GitHub Actions（`.github/workflows/release.yml`）会打包 macOS 和 Windows 版，上传到同名的 Release 草稿。
+4. 下载草稿里的安装包检查无误后，在网页上发布草稿。发布后，已安装的应用会按这个 Release 里的 `latest.json` 收到更新。
 
 ## OBS 设置
 

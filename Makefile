@@ -1,4 +1,4 @@
-.PHONY: install dev dev-signing build test fmt-check check clean
+.PHONY: install dev dev-signing build release-signing release test fmt-check check clean
 
 install:
 	npm --prefix desktop install
@@ -12,6 +12,14 @@ dev-signing:
 
 build:
 	npm --prefix desktop run tauri -- build
+
+# 发布签名：生成自动更新密钥和 macOS 发布证书（只需一次），内容填进 GitHub Actions secrets。
+release-signing:
+	desktop/scripts/release-signing.sh setup
+
+# 发布：改版本号、提交并打标签（不推送），例如 make release VERSION=0.3.0
+release:
+	desktop/scripts/release.sh $(VERSION)
 
 test:
 	cargo test --manifest-path desktop-core/Cargo.toml
