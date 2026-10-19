@@ -99,7 +99,7 @@ test('deleting an account keeps local data unless the user opts in, and offers a
 test('the overview current shift reuses the OBS Salmon Run totals row', () => {
   // 同一期工在后端判断，面板直接用卡片第三行的总计，不再自己按连续同场地计算。
   assert.match(rendererJs, /\$\{SALMON_TOTALS_HTML\}/);
-  assert.match(rendererJs, /updateSalmonTotals,\n    newestCardType,/);
+  assert.match(rendererJs, /updateSalmonTotals,\s+newestCardType,/);
   assert.match(dashboardJs, /Splat3OverlayCard\?\.updateSalmonTotals\(totals, \{ salmon_run: salmonRun \}\)/);
   assert.match(appJs, /dashboard\.setSalmonRun\(overlay\?\.salmon_run\)/);
   assert.match(indexHtml, /<p class="subhead">当前打工<\/p>/);
