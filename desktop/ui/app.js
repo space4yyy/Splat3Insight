@@ -231,11 +231,14 @@
     }
   });
 
-  // 页面切换
+  // 页面切换。每个页面各自记住滚动位置，切回来时回到原处。
+  const scrollPositions = {};
   function showView(view) {
     // 账号管理并进了设置页，旧的 #accounts 链接也打开设置。
     if (view === 'accounts') view = 'settings';
     if (!VIEWS[view]) view = 'overview';
+    const previous = app.view;
+    if (previous !== view) scrollPositions[previous] = window.scrollY;
     app.view = view;
     // 重新打开应用时回到这一页。
     try {
@@ -262,6 +265,7 @@
       refreshAutostart();
       refreshAccounts().catch((error) => setMessage(String(error), true));
     }
+    if (previous !== view) window.scrollTo(0, scrollPositions[view] ?? 0);
   }
   $('#nav').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-view]');
