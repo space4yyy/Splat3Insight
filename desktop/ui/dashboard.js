@@ -950,12 +950,14 @@
     const box = document.getElementById('recent-table');
     const [start, end] = rangeBounds(state.range);
     const salmon = state.mode === 'salmon';
+    box.classList.toggle('is-full', salmon);
+    document.getElementById('recent-more').hidden = !salmon;
     document.getElementById('recent-title').textContent = salmon ? '最近打工' : '最近对战';
     document.getElementById('recent-sub').textContent = salmon
       ? '每场打工的结果、金鲑鱼卵、救援和评级。'
       : '战力变化只和同一赛道的上一场比较：X 赛按规则，挑战按武器；开放和活动赛只显示战力。';
     if (salmon) {
-      const recentShifts = shiftsIn(start, end).slice(-8).reverse();
+      const recentShifts = shiftsIn(start, end).slice(-10).reverse();
       if (!recentShifts.length) { emptyState(box, '这段时间没有打工', '换一个时间范围看看。'); return; }
       renderTable(box, [{ label: '时间', number: true }, { label: '场地' }, { label: '结果' }, { label: '金鲑鱼卵', num: true }, { label: '救援 / 被救', num: true }, { label: '头目鲑鱼' }, { label: '评级', num: true }], recentShifts.map((shift) => [
         fmtDateTime(shift.t),

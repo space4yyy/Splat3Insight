@@ -321,7 +321,7 @@
           n: list.length,
           cleared: list.filter((shift) => shift.cleared).length,
           avgGoldenEggs: average(list, (shift) => shift.goldenEggs),
-          king: appeared.length ? { name: lastWith(appeared, 'kingName'), appeared: appeared.length, defeated: appeared.filter((shift) => shift.kingDefeated).length } : null,
+          king: appeared.length ? { name: lastWith(appeared, 'kingName'), image: KING_IMAGES[lastWith(appeared, 'kingId')] ?? null, appeared: appeared.length, defeated: appeared.filter((shift) => shift.kingDefeated).length } : null,
           scales: scaleTotals(list),
           grade: lastGraded ? { name: lastGraded.gradeName, point: lastGraded.gradePoint } : null,
         };

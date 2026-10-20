@@ -285,6 +285,7 @@
     if (location.hash !== `#${view}`) location.hash = view;
     else showView(view);
   });
+  $('#recent-more').addEventListener('click', () => goTo('log'));
   window.addEventListener('hashchange', () => showView(location.hash.slice(1)));
   function goTo(view) {
     if (location.hash !== `#${view}`) location.hash = view;

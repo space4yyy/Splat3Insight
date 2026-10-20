@@ -530,7 +530,7 @@ table.data.sticky-first th:first-child { z-index: 2; }
 .king-foot { color: var(--ink-3); font-size: 12px; }
 .king-bar { height: 8px; overflow: hidden; border-radius: 4px; background: var(--seq-0); }
 .king-bar > span { display: block; height: 100%; border-radius: 4px; background: var(--mode-salmon); }
-.scale-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 13px; }
+.scale-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding-bottom: 12px; border-bottom: 1px solid var(--line); color: var(--ink-3); font-size: 13px; }
 .scale-inline { display: inline-flex; gap: 10px; }
 .scale-count { display: inline-flex; align-items: center; gap: 4px; color: var(--ink); font-family: var(--font-number); }
 .scale-count img { width: 18px; height: 18px; }

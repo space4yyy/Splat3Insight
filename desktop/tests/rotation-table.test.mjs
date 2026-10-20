@@ -56,13 +56,14 @@ test('rotations page through all groups, reset scroll and reset when the source 
   assert.equal(pager.children.length, 0);
 });
 
-test('grade and egg columns swap and ongoing status stays alongside the stage', () => {
+test('rotations retain grade and ongoing status without the average golden egg column', () => {
   const { box, render } = setup();
   render(groups(1));
   assert.equal(box.columns[5].label, '评级');
   assert.equal(box.rows[0][5], '传说 200');
-  assert.equal(box.columns[8].label, '场均金鲑鱼卵');
-  assert.equal(box.rows[0][8], '25');
+  assert.equal(box.columns.length, 8);
+  assert.equal(box.rows[0].length, 8);
+  assert.equal(box.columns.some((column) => column.label === '场均金鲑鱼卵'), false);
   assert.equal(box.rows[0][1].children[0], '场地 0');
   assert.equal(box.rows[0][1].children[1]['aria-label'], '进行中');
 });
@@ -97,4 +98,21 @@ test('horizontal scrolling, zoom, short tables and wheel units retain expected b
   assert.equal(box.scrollTop, 384);
   box.scrollHeight = box.clientHeight;
   assert.equal(wheel(500, 20), false);
+});
+
+
+test('rotation kings show an image with counts, falling back to text for unknown images', () => {
+  const { box, render } = setup();
+  const list = groups(3);
+  list[0].king = { name: '横纲', image: 'images/boss1_color.png', defeated: 2, appeared: 3 };
+  list[1].king = { name: '未知头目', image: null, defeated: 0, appeared: 1 };
+  render(list);
+  const cell = box.rows[0][6];
+  assert.equal(cell.children[0].tag, 'img');
+  assert.equal(cell.children[0].src, 'images/boss1_color.png');
+  assert.equal(cell.children[0].alt, '横纲');
+  assert.equal(cell.children[1].text, '2 / 3');
+  assert.equal(cell.title, '横纲 · 击倒 2 / 出现 3');
+  assert.equal(box.rows[1][6].children[0], '未知头目');
+  assert.equal(box.rows[2][6], '—');
 });

@@ -254,7 +254,7 @@ test('the tide × event matrix keeps plain waves first and orders events by freq
 test('rotations group by their window, fall back to stage and weapons, and list the newest first', () => {
   const supplied = [{ name: '斯普拉射击枪' }];
   const groups = analysis.rotationGroups([
-    shift({ t: 1 * HOUR, rotationStart: 0, rotationEnd: 40 * HOUR, kingAppeared: true, kingName: '横纲', kingDefeated: true, scales: { gold: 1, silver: 0, bronze: 2 } }),
+    shift({ t: 1 * HOUR, rotationStart: 0, rotationEnd: 40 * HOUR, kingAppeared: true, kingId: 23, kingName: '横纲', kingDefeated: true, scales: { gold: 1, silver: 0, bronze: 2 } }),
     shift({ t: 2 * HOUR, rule: 'BIG_RUN', stage: '醋饭海洋世界', rotationStart: 0, rotationEnd: 48 * HOUR }),
     shift({ t: 3 * HOUR, rotationStart: 0, rotationEnd: 40 * HOUR, cleared: false, gradePoint: 420 }),
     shift({ t: 50 * HOUR, stage: '新卷堡', supplied }),
@@ -268,7 +268,7 @@ test('rotations group by their window, fall back to stage and weapons, and list 
   assert.equal(regular.start, 0);
   assert.equal(regular.cleared, 1);
   assert.equal(regular.ongoing, true);
-  deepEqual(regular.king, { name: '横纲', appeared: 1, defeated: 1 });
+  deepEqual(regular.king, { name: '横纲', image: 'images/boss1_color.png', appeared: 1, defeated: 1 });
   deepEqual(regular.scales, { gold: 1, silver: 0, bronze: 2 });
   deepEqual(regular.grade, { name: '达人', point: 420 });
   assert.equal(groups[0].start, null);

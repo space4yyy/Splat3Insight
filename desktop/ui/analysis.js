@@ -868,7 +868,6 @@
       { label: '评级', num: true },
       { label: '头目鲑鱼' },
       { label: '鳞片' },
-      { label: '场均金鲑鱼卵', num: true },
     ], groups.slice(first, first + ROTATION_PAGE_SIZE).map((group) => {
       const range = group.start != null ? [group.start, group.end] : [group.first, group.last];
       const hasScales = group.scales.gold || group.scales.silver || group.scales.bronze;
@@ -884,9 +883,13 @@
         String(group.n),
         pct(group.cleared / group.n, 0),
         group.grade ? gradeText(group.grade.name, group.grade.point) : '—',
-        group.king ? `${group.king.name ?? '头目鲑鱼'} ${group.king.defeated} / ${group.king.appeared}` : '—',
+        group.king ? el('span', { class: 'icon-name', title: `${group.king.name ?? '头目鲑鱼'} · 击倒 ${group.king.defeated} / 出现 ${group.king.appeared}` }, [
+          group.king.image
+            ? el('img', { class: 'enemy-icon', src: group.king.image, alt: group.king.name ?? '头目鲑鱼', loading: 'lazy' })
+            : document.createTextNode(group.king.name ?? '头目鲑鱼'),
+          el('span', { class: 'font-number', text: `${group.king.defeated} / ${group.king.appeared}` }),
+        ]) : '—',
         hasScales ? el('span', { class: 'scale-inline' }, records.scaleCounts(group.scales)) : '—',
-        fixed(group.avgGoldenEggs),
       ];
     }));
   }
