@@ -1627,7 +1627,7 @@ dependencies = [
 
 [[package]]
 name = "splat3-widget-core"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "base64",
  "getrandom 0.4.3",
