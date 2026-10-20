@@ -224,7 +224,7 @@
     for (const item of items) {
       const tr = el('tr', { 'data-record': item.id });
       if (item.id === state.selected) tr.classList.add('is-selected');
-      clickableRow(tr, () => open(kindOf(state.salmon), item.id, tr));
+      clickableRow(tr, () => open(item.id, tr));
       cellsInto(tr, columns, state.salmon ? shiftCells(item) : battleCells(item));
       body.append(tr);
     }
@@ -255,7 +255,7 @@
     renderSummary();
     renderList();
     // 抽屉开着时只更新上一条 / 下一条，不打断正在看的内容。
-    if (!drawer.hidden) drawer.querySelector('.drawer-nav')?.replaceWith(drawerNav(selectedIndex()));
+    if (!drawer.hidden && !overviewList) drawer.querySelector('.drawer-nav')?.replaceWith(drawerNav(selectedIndex()));
   }
 
   // 详情抽屉
@@ -264,7 +264,11 @@
   const rawCache = new Map();
   const RAW_CACHE_LIMIT = 50;
   let returnFocus = null;
-  const selectedIndex = () => state.rows.findIndex((row) => row.id === state.selected);
+  // 上一条 / 下一条走的列表：从对战记录页打开时是表格里筛选、排序后的记录；从总览打开时是同一时间
+  // 范围和模式下的全部记录，从新到旧，对战记录页的筛选、翻页和选中都不动。
+  let overviewList = null;
+  const drawerRows = () => overviewList?.rows ?? state.rows;
+  const selectedIndex = () => drawerRows().findIndex((row) => row.id === state.selected);
 
   const section = (title, content) => el('section', { class: 'drawer-section' }, [el('h3', { text: title }), ...[].concat(content)]);
   function stats(items) {
@@ -455,10 +459,10 @@
     const previous = el('button', { type: 'button', class: 'ghost', 'data-nav': 'previous', text: '上一条' });
     const next = el('button', { type: 'button', class: 'ghost', 'data-nav': 'next', text: '下一条' });
     previous.disabled = index <= 0;
-    next.disabled = index < 0 || index >= state.rows.length - 1;
+    next.disabled = index < 0 || index >= drawerRows().length - 1;
     previous.addEventListener('click', () => select(index - 1, 'previous'));
     next.addEventListener('click', () => select(index + 1, 'next'));
-    return el('div', { class: 'drawer-nav' }, [previous, el('span', { class: 'muted font-number', text: index < 0 ? '' : `${index + 1} / ${state.rows.length}` }), next]);
+    return el('div', { class: 'drawer-nav' }, [previous, el('span', { class: 'muted font-number', text: index < 0 ? '' : `${index + 1} / ${drawerRows().length}` }), next]);
   }
   function fillDrawer(banner, body, item, kind, raw) {
     body.textContent = '';
@@ -472,12 +476,12 @@
   }
   function renderDrawer() {
     const index = selectedIndex();
-    const item = state.rows[index];
+    const item = drawerRows()[index];
     if (!item) {
       close();
       return;
     }
-    const kind = kindOf(state.salmon);
+    const kind = kindOf(overviewList?.salmon ?? state.salmon);
     const banner = el('div', { class: 'drawer-banner-slot' });
     const body = el('div', { class: 'drawer-body' });
     drawer.replaceChildren(banner, drawerHead(item, kind), body, drawerNav(index));
@@ -498,29 +502,38 @@
       });
   }
   function select(index, focusNav) {
-    const item = state.rows[index];
+    const item = drawerRows()[index];
     if (!item) return;
     state.selected = item.id;
-    state.page = Math.floor(index / data.LOG_PAGE_SIZE);
-    renderList();
+    if (!overviewList) {
+      state.page = Math.floor(index / data.LOG_PAGE_SIZE);
+      renderList();
+    }
     renderDrawer();
     const target = drawer.querySelector(`[data-nav="${focusNav}"]`);
     (target && !target.disabled ? target : drawer.querySelector('[data-drawer-close]'))?.focus();
   }
-  function open(kind, id, origin) {
-    // 从总览点进来时，页面里的筛选可能挡住这条记录，先清掉筛选再找。
-    if (state.salmon !== (kind === 'coop') || !state.rows.some((row) => row.id === id)) render();
-    if (!state.rows.some((row) => row.id === id)) {
-      for (const key of Object.keys(state.filters[kind])) state.filters[kind][key] = 'all';
-      state.sort = { key: 't', dir: 'desc' };
-      render();
-    }
-    const index = state.rows.findIndex((row) => row.id === id);
-    if (index < 0) return;
+  function openDrawer(index, origin) {
     if (drawer.hidden) returnFocus = origin || document.activeElement;
     drawer.hidden = false;
     backdrop.hidden = false;
     select(index, null);
+  }
+  // 总览里点最近的一场：就在当前页面打开详情。
+  function show(kind, id, origin) {
+    const source = dashboard.logSource();
+    if (source.salmon !== (kind === 'coop')) return;
+    const rows = data.sortRecords(source.rows, { key: 't', dir: 'desc' });
+    const index = rows.findIndex((row) => row.id === id);
+    if (index < 0) return;
+    overviewList = { rows, salmon: source.salmon };
+    openDrawer(index, origin);
+  }
+  // 对战记录页里点一行。
+  function open(id, origin) {
+    overviewList = null;
+    const index = state.rows.findIndex((row) => row.id === id);
+    if (index >= 0) openDrawer(index, origin);
   }
   function close() {
     if (drawer.hidden) return;
@@ -529,6 +542,7 @@
     drawer.replaceChildren();
     const row = state.selected ? document.querySelector(`#log-table tr[data-record="${CSS.escape(state.selected)}"]`) : null;
     state.selected = null;
+    overviewList = null;
     row?.classList.remove('is-selected');
     const target = returnFocus?.isConnected ? returnFocus : row;
     returnFocus = null;
@@ -557,5 +571,5 @@
     }
   });
 
-  window.Splat3Records = Object.freeze({ render, open, close, img, iconWithName, scaleCounts });
+  window.Splat3Records = Object.freeze({ render, show, close, img, iconWithName, scaleCounts });
 })();

@@ -254,7 +254,7 @@
     dashboard.hideTip();
     $('#filters').hidden = true;
     dashboard.setModeScope(view === 'salmon' ? 'salmon' : ['battles', 'weapons', 'stages'].includes(view) ? 'battles' : 'all');
-    if (view !== 'log') records.close();
+    if (previous !== view) records.close();
     if (view === 'overview') renderOverview();
     else if (analysis.VIEWS.includes(view)) renderAnalysis(view);
     else if (view === 'log') renderLog();
@@ -340,12 +340,8 @@
     });
   }
   dashboard.onFiltersChange(renderDataView);
-  // 总览里点最近的一场：切到对战记录并打开这一条的详情。
-  dashboard.onOpenRecord((kind, id) => {
-    if (location.hash !== '#log') location.hash = 'log';
-    showView('log');
-    records.open(kind, id);
-  });
+  // 总览里点最近的一场：就在总览上打开这一条的详情，不切换页面。
+  dashboard.onOpenRecord((kind, id) => records.show(kind, id));
 
   async function loadFacts({ force = false } = {}) {
     const accountId = app.activeAccountId;
