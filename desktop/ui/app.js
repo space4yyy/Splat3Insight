@@ -1156,6 +1156,10 @@
     viewport.style.height = `${Math.ceil(card.offsetHeight * ratio)}px`;
   }
 
+  // 标题栏贴住窗口顶部时（top: -1px，露出的部分少了一像素）加上底色和分隔线。
+  const topbar = $('.topbar');
+  new IntersectionObserver(([entry]) => topbar.classList.toggle('is-stuck', entry.intersectionRatio < 1), { threshold: [1] }).observe(topbar);
+
   // 窗口宽度变化时重新绘制图表
   let lastWidth = 0;
   let resizeFrame = 0;

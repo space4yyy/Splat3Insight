@@ -224,7 +224,10 @@ button:focus-visible, [tabindex]:focus-visible, textarea:focus-visible { outline
 .status-dot.is-error { background: var(--danger-text); }
 
 .main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.topbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 16px; }
+/* 标题和筛选固定在窗口顶部，页面很长时也能直接换筛选；贴住顶部时才加底色和分隔线（.is-stuck）。
+   上下的负外边距抵掉内边距，没滚动时位置和间距不变。 */
+.topbar { position: sticky; top: -1px; z-index: 10; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 16px; margin: -16px 0 -12px; padding: 16px 0 12px; }
+.topbar.is-stuck { background: var(--bg); box-shadow: 0 1px 0 var(--line-strong); }
 .page-title { margin: 0; font-size: 26px; line-height: 1.25; letter-spacing: .05em; text-wrap: balance; }
 .page-sub { margin: 2px 0 0; color: var(--ink-3); font-size: 13px; }
 .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
