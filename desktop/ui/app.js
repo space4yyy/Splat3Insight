@@ -44,6 +44,7 @@
     view: 'overview',
     accounts: [],
     accountsLoaded: false,
+    accountPlayer: null,
     activeAccountId: null,
     facts: { accountId: null, status: 'idle', error: null, loadedAt: 0 },
     lastCompletedSyncAt: null,
@@ -362,6 +363,7 @@
       const facts = await invoke('get_dashboard_facts', { accountId });
       if (requestId !== factsRequest) return;
       dashboard.setData(facts);
+      void refreshAccountPlayer(facts, accountId, requestId);
       app.facts = { accountId, status: 'ready', error: null, loadedAt: Date.now() };
     } catch (error) {
       if (requestId !== factsRequest) return;
@@ -378,28 +380,107 @@
   const accountSummary = (account) => `${account.history_battle_count} 场对战 · ${account.history_coop_count} 场打工`;
   const activeAccount = () => app.accounts.find((account) => account.active) || null;
 
-  function renderAccountSwitcher() {
+  const accountPlayers = new Map();
+  const accountPlayerRequests = new Map();
+  const accountHistorySignature = (account) => [account.history_fetched_at_ms, account.history_battle_count, account.history_coop_count].join('|');
+
+  // 取最近一次游戏活动中的本人名牌，不受面板的时间范围和模式筛选影响。
+  async function loadAccountPlayer(facts, accountId) {
+    let latest = null;
+    for (const [kind, rows] of [['battle', facts.battles], ['coop', facts.coop]]) {
+      for (const row of rows || []) {
+        if (row.played_at_ms != null && (!latest || row.played_at_ms > latest.time)) {
+          latest = { kind, id: row.id, time: row.played_at_ms };
+        }
+      }
+    }
+    const raw = latest ? await invoke('get_history_record', { accountId, recordType: latest.kind, recordId: latest.id }) : null;
+    const detail = window.Splat3RecordDetail;
+    return raw ? (latest.kind === 'battle'
+      ? detail.battleDetail(raw).teams[0]?.players.find((player) => player.me)
+      : detail.shiftDetail(raw).members.find((player) => player.me)) : null;
+  }
+
+  async function refreshAccountPlayer(facts, accountId, requestId) {
+    try {
+      const player = await loadAccountPlayer(facts, accountId);
+      if (accountId !== app.activeAccountId || requestId !== factsRequest) return;
+      app.accountPlayer = player;
+      const account = activeAccount();
+      if (account) accountPlayers.set(accountId, { signature: accountHistorySignature(account), player });
+      renderAccountDisplay();
+      updateAccountMenuPlates();
+    } catch {
+      // 暂时读不到归档时保留当前名牌，首次读取则使用账号名称。
+    }
+  }
+
+  function renderAccountItem(button, account) {
+    const player = account.active ? app.accountPlayer : accountPlayers.get(account.account_id)?.player;
+    const name = player?.name || account.display_name;
+    button.replaceChildren(records.nameplate(name, player?.nameplate));
+    button.setAttribute('aria-label', `${name}，Nintendo 账号 ${account.display_name}${account.active ? '，当前账号' : ''}`);
+    button.title = `Nintendo 账号：${account.display_name}`;
+  }
+
+  function updateAccountMenuPlates() {
+    for (const button of accountMenu.querySelectorAll('[data-account]')) {
+      const account = app.accounts.find((item) => item.account_id === button.getAttribute('data-account'));
+      if (account) renderAccountItem(button, account);
+    }
+  }
+
+  // 菜单展开时按需读取其他账号；用同步时间缓存，不在每次展开时重复读取历史。
+  async function loadAccountMenuPlates() {
+    await Promise.allSettled(app.accounts.filter((account) => !account.active).map(async (account) => {
+      const id = account.account_id;
+      const signature = accountHistorySignature(account);
+      if (accountPlayers.get(id)?.signature === signature || accountPlayerRequests.has(id)) return;
+      const request = (async () => {
+        const facts = await invoke('get_dashboard_facts', { accountId: id });
+        const player = await loadAccountPlayer(facts, id);
+        const current = app.accounts.find((item) => item.account_id === id);
+        if (!current || accountHistorySignature(current) !== signature) return;
+        accountPlayers.set(id, { signature, player });
+        updateAccountMenuPlates();
+      })();
+      accountPlayerRequests.set(id, request);
+      try { await request; } finally { accountPlayerRequests.delete(id); }
+    }));
+  }
+
+  function renderAccountDisplay() {
     const active = activeAccount();
-    accountButton.replaceChildren(
+    const player = app.accountPlayer;
+    const name = active ? player?.name || active.display_name : '未添加账号';
+    accountButton.classList.toggle('has-nameplate', Boolean(active));
+    accountButton.replaceChildren(...(active ? [
+      records.nameplate(name, player?.nameplate),
+      el('span', { class: 'account-caret', 'aria-hidden': 'true' }),
+    ] : present(
       el('span', { class: active ? 'avatar' : 'avatar is-idle', 'aria-hidden': 'true', text: active ? accountInitial(active.display_name) : '+' }),
       el('span', { class: 'account-text' }, [
         el('strong', { text: active ? active.display_name : '未添加账号' }),
         active ? null : el('small', { text: '添加 Nintendo 账号' }),
       ]),
       el('span', { class: 'account-caret', 'aria-hidden': 'true' }),
-    );
-    accountButton.setAttribute('aria-label', active ? `当前账号 ${active.display_name}，切换账号` : '添加账号');
-    const items = app.accounts.map((account) => el('button', {
-      type: 'button',
-      class: 'account-item',
-      role: 'menuitemradio',
-      'aria-checked': String(account.active),
-      'data-account': account.account_id,
-    }, [
-      el('span', { class: 'avatar', 'aria-hidden': 'true', text: accountInitial(account.display_name) }),
-      el('span', { class: 'account-text' }, el('strong', { text: account.display_name })),
-      account.active ? el('span', { class: 'account-badge', text: '当前' }) : null,
-    ]));
+    )));
+    accountButton.setAttribute('aria-label', active ? `当前账号 ${name}，切换账号` : '添加账号');
+  }
+
+  function renderAccountSwitcher() {
+    renderAccountDisplay();
+    const items = app.accounts.map((account) => {
+      const button = el('button', {
+        type: 'button',
+        class: 'account-item',
+        role: 'menuitemradio',
+        'aria-checked': String(account.active),
+        'data-account': account.account_id,
+      });
+      renderAccountItem(button, account);
+      return button;
+    });
     accountMenu.replaceChildren(...present(
       el('div', { class: 'account-menu-title', text: '切换账号' }),
       ...items,
@@ -411,6 +492,7 @@
   function setAccountMenu(open) {
     accountMenu.hidden = !open;
     accountButton.setAttribute('aria-expanded', String(open));
+    if (open) void loadAccountMenuPlates();
     if (open) (accountMenu.querySelector('[aria-checked="true"]') || accountMenu.querySelector('button'))?.focus();
   }
   accountButton.addEventListener('click', () => setAccountMenu(accountMenu.hidden));
@@ -652,12 +734,17 @@
   async function refreshAccounts() {
     const accounts = await invoke('list_accounts');
     app.accounts = accounts;
+    for (const id of accountPlayers.keys()) {
+      if (!accounts.some((account) => account.account_id === id)) accountPlayers.delete(id);
+    }
     app.accountsLoaded = true;
     const activeId = accounts.find((account) => account.active)?.account_id ?? null;
     const changed = activeId !== app.activeAccountId;
     app.activeAccountId = activeId;
+    if (changed) app.accountPlayer = null;
     renderAccountSwitcher();
     renderAccountList();
+    if (!accountMenu.hidden) void loadAccountMenuPlates();
     if (changed) {
       app.obs.latest = null;
       app.obs.states = null;

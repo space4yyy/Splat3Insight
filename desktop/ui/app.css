@@ -195,12 +195,11 @@ button:focus-visible, [tabindex]:focus-visible, textarea:focus-visible { outline
 .account-text strong { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .account-text small { overflow: hidden; color: var(--ink-3); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .account-caret { width: 7px; height: 7px; margin: 0 4px 4px 0; border-right: 1.5px solid var(--ink-3); border-bottom: 1.5px solid var(--ink-3); transform: rotate(45deg); }
-.account-menu { position: absolute; z-index: 15; top: calc(100% + 6px); left: 0; right: 0; display: grid; gap: 2px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); box-shadow: 0 12px 32px var(--shadow); }
+.account-menu { position: absolute; z-index: 15; top: calc(100% + 6px); left: 0; width: 100%; display: grid; gap: 2px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); box-shadow: 0 12px 32px var(--shadow); }
 .account-menu-title { padding: 4px 8px 6px; color: var(--ink-3); font-size: 12px; letter-spacing: .08em; }
-.account-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px; border: 0; border-radius: 9px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.account-item { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; padding: 8px; border: 0; border-radius: 9px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 .account-item:hover, .account-action:hover { background: var(--panel-raised); }
-.account-item .avatar { width: 30px; height: 30px; border-color: var(--line-strong); background: var(--panel-raised); color: var(--ink); font-size: 13px; }
-.account-item[aria-checked="true"] .avatar { border-color: transparent; background: var(--accent-2); color: var(--on-accent-2); }
+.account-item[aria-checked="true"] { background: var(--accent-2-wash); }
 .account-badge { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; background: var(--accent-2); color: var(--on-accent-2); font-size: 11px; white-space: nowrap; }
 .account-menu-divider { height: 1px; margin: 4px 2px; background: var(--line); }
 .account-action { padding: 7px 8px; border: 0; border-radius: 9px; background: transparent; color: var(--ink-2); font-size: 13px; text-align: left; cursor: pointer; }
@@ -433,6 +432,11 @@ table.data tr.is-me td { background: var(--panel-raised); color: var(--ink); }
 .nameplate-name { max-width: 100%; overflow: hidden; font-family: "BlitzMain", "DFP GBZY7", "PingFang SC", "Microsoft YaHei", sans-serif; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .nameplate-name:lang(ja) { font-family: "BlitzMain", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "Meiryo", "Noto Sans JP", sans-serif; }
 .nameplate-badges { position: absolute; right: 3px; bottom: 2px; display: flex; gap: 1px; }
+/* 首页账号和切换菜单复用详情名牌。 */
+.account-current.has-nameplate { grid-template-columns: minmax(0, 1fr) auto; gap: 5px; padding: 0; background: transparent; border-radius: 7px; }
+.account-current.has-nameplate .nameplate, .account-item .nameplate { width: 100%; height: auto; aspect-ratio: 32 / 9; min-width: 0; padding-bottom: 8px; font-size: 15px; }
+.account-current.has-nameplate .badge-icon, .account-item .badge-icon { width: 17px; height: 17px; }
+.account-current.has-nameplate .nameplate-badges, .account-item .nameplate-badges { right: 4px; bottom: 3px; }
 .badge-icon { width: 13px; height: 13px; object-fit: contain; }
 .gear-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
 .gear-card { display: grid; justify-items: center; align-content: start; gap: 6px; padding: 10px; border-radius: 12px; background: var(--panel-raised); text-align: center; }
@@ -550,9 +554,10 @@ table.data.sticky-first th:first-child { z-index: 2; }
   .nav-label, .sidebar-foot { display: none; }
   .account-switcher { order: 4; }
   .account-current { grid-template-columns: auto auto; gap: 6px; width: auto; padding: 3px 10px 3px 3px; border-radius: 999px; }
+  .account-current.has-nameplate { width: 184px; }
   .account-current .account-text { display: none; }
   .account-current .avatar { width: 30px; height: 30px; font-size: 13px; }
-  .account-menu { left: auto; right: 0; width: min(280px, calc(100vw - 32px)); }
+  .account-menu { left: auto; right: 0; width: 100%; }
 }
 @media (max-width: 760px) {
   .span-6 { grid-column: span 12; }
