@@ -1,7 +1,7 @@
 @font-face { font-family: "DFP GBZY7"; src: url("./fonts/DFP_GBZY7.ttf") format("truetype"); font-weight: 400; font-style: normal; font-display: block; }
 /* BlitzMain 只覆盖拉丁字符和数字；汉字和中文引号回退到 DFP GBZY7。
    页面里用单独的名字，避免和 overlay-card.css 中不限字符范围的 BlitzMain 合并。 */
-@font-face { font-family: "Insight Latin"; src: url("./fonts/BlitzMain.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: block; unicode-range: U+0000-2017, U+201E-2FFF; }
+@font-face { font-family: "Insight Latin"; src: url("./fonts/BlitzMain.ttf") format("truetype"); font-weight: 400; font-style: normal; font-display: block; unicode-range: U+0000-2017, U+201E-2FFF; }
 
 /* 主题：默认深色，浅色跟随系统或手动切换。品牌色和模式色取自 SplatNet 3 的样式：
    黄 #eaff3e（--color-yellow）、蓝 #603aff（--color-blue）；一般比赛用黄色，X、蛮颓、活动、私人比赛和打工依次取

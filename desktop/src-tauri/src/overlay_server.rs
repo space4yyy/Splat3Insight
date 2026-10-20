@@ -37,7 +37,7 @@ const DISPLAY_FONT: &[u8] = include_bytes!(concat!(
 ));
 const BLITZ_MAIN_FONT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../ui/fonts/BlitzMain.woff2"
+    "/../ui/fonts/BlitzMain.ttf"
 ));
 const SCALE_GOLD: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -619,9 +619,9 @@ fn route_request(
             content_type: "font/ttf",
             body: DISPLAY_FONT.to_vec(),
         }),
-        "/fonts/BlitzMain.woff2" => Ok(HttpResponse {
+        "/fonts/BlitzMain.ttf" => Ok(HttpResponse {
             status: "200 OK",
-            content_type: "font/woff2",
+            content_type: "font/ttf",
             body: BLITZ_MAIN_FONT.to_vec(),
         }),
         "/images/scale-gold.png" => Ok(HttpResponse {
@@ -1042,7 +1042,7 @@ mod tests {
         let directory = tempdir().unwrap();
         let response = route_request(
             "GET",
-            "/fonts/BlitzMain.woff2",
+            "/fonts/BlitzMain.ttf",
             &OverlayServerConfig {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
@@ -1051,8 +1051,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(response.status, "200 OK");
-        assert_eq!(response.content_type, "font/woff2");
+        assert_eq!(response.content_type, "font/ttf");
         assert_eq!(response.body, BLITZ_MAIN_FONT);
+        assert_eq!(&response.body[..4], &[0, 1, 0, 0]);
     }
 
     #[test]

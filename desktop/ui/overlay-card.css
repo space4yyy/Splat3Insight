@@ -6,9 +6,10 @@
   font-display: block;
 }
 
+/* 原始 BlitzMain 的完整字形转成 TrueType 轮廓，兼容 OBS 的缩放渲染。 */
 @font-face {
   font-family: "BlitzMain";
-  src: url("./fonts/BlitzMain.woff2") format("woff2");
+  src: url("./fonts/BlitzMain.ttf") format("truetype");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
@@ -133,8 +134,10 @@
   white-space: nowrap;
   font-family: "BlitzMain", "DFP GBZY7", sans-serif;
   font-size: 34px;
+  font-weight: 400;
+  font-synthesis: none;
   line-height: .9;
-  letter-spacing: -.04em;
+  letter-spacing: 0;
 }
 
 .overlay-card__power-value {
@@ -150,7 +153,7 @@
   margin-bottom: 0;
   font-size: 16px;
   line-height: .9;
-  letter-spacing: -.04em;
+  letter-spacing: 0;
   white-space: nowrap;
 }
 

@@ -371,7 +371,7 @@
     const shareCss = await response.text();
     const fonts = [
       `@font-face { font-family: "DFP GBZY7"; src: url("${await toDataUrl('fonts/DFP_GBZY7.ttf')}") format("truetype"); }`,
-      `@font-face { font-family: "Insight Latin"; src: url("${await toDataUrl('fonts/BlitzMain.woff2')}") format("woff2"); unicode-range: U+0000-2017, U+201E-2FFF; }`,
+      `@font-face { font-family: "Insight Latin"; src: url("${await toDataUrl('fonts/BlitzMain.ttf')}") format("truetype"); unicode-range: U+0000-2017, U+201E-2FFF; }`,
     ].join('\n');
     const clone = node.cloneNode(true);
     // 独立的原尺寸节点需要先参与布局，才能用同一套规则适配长名称。
