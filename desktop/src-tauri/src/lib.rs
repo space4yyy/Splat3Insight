@@ -1058,6 +1058,95 @@ async fn export_history(
     Ok(path.display().to_string())
 }
 
+/// 请求头使用 encodeURIComponent，先严格解码，再校验文件名。
+fn decode_share_filename(encoded: &str) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    let mut source = encoded.bytes();
+    while let Some(byte) = source.next() {
+        if byte == b'%' {
+            let high = source.next().and_then(|value| (value as char).to_digit(16));
+            let low = source.next().and_then(|value| (value as char).to_digit(16));
+            match (high, low) {
+                (Some(high), Some(low)) => bytes.push((high * 16 + low) as u8),
+                _ => return Err("文件名编码无效".to_owned()),
+            }
+        } else {
+            bytes.push(byte);
+        }
+    }
+    String::from_utf8(bytes).map_err(|_| "文件名编码无效".to_owned())
+}
+
+fn valid_share_filename(filename: &str) -> bool {
+    filename.starts_with("Splat3Insight-")
+        && filename.ends_with(".png")
+        && !filename.contains("..")
+        && !filename.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|'])
+        && !filename.chars().any(char::is_control)
+}
+
+fn write_share_image(directory: &Path, filename: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    if !valid_share_filename(filename) {
+        return Err("分享图片文件名无效".to_owned());
+    }
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("分享图片不是 PNG 文件".to_owned());
+    }
+    let stem = filename.strip_suffix(".png").unwrap();
+    for number in 1u64.. {
+        let name = if number == 1 {
+            filename.to_owned()
+        } else {
+            format!("{stem} ({number}).png")
+        };
+        let path = directory.join(name);
+        // create_new 同时防止覆盖已有文件和并发保存之间的竞争。
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(bytes) {
+                    drop(file);
+                    let _ = fs::remove_file(&path);
+                    return Err(format!("写入分享图片失败：{error}"));
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("写入分享图片失败：{error}")),
+        }
+    }
+    Err("分享图片重名过多".to_owned())
+}
+
+#[tauri::command]
+async fn save_share_image(
+    app: AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> Result<String, String> {
+    let filename = request
+        .headers()
+        .get("file-name")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| "没有读到文件名".to_owned())
+        .and_then(decode_share_filename)?;
+    let bytes = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => bytes.clone(),
+        tauri::ipc::InvokeBody::Json(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|item| item.as_u64().and_then(|byte| u8::try_from(byte).ok()))
+            .collect::<Option<Vec<u8>>>()
+            .ok_or_else(|| "没有读到分享图片".to_owned())?,
+        tauri::ipc::InvokeBody::Json(_) => return Err("没有读到分享图片".to_owned()),
+    };
+    let directory = app
+        .path()
+        .download_dir()
+        .map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || write_share_image(&directory, &filename, &bytes))
+        .await
+        .map_err(|error| format!("保存分享图片失败：{error}"))?
+        .map(|path| path.display().to_string())
+}
+
 /// 导入本应用导出的历史文件。文件内容作为原始字节传入，账号 ID 放在 `Account-Id` 请求头里。
 #[tauri::command]
 async fn import_history(
@@ -1742,6 +1831,7 @@ pub fn run() {
                     responder.respond(
                         tauri::http::Response::builder()
                             .status(503)
+                            .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                             .body(Vec::new())
                             .unwrap_or_default(),
                     );
@@ -1754,6 +1844,7 @@ pub fn run() {
                         image_cache::respond(&cache, &path, query.as_deref()).await;
                     let response = tauri::http::Response::builder()
                         .status(status)
+                        .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                         .header(tauri::http::header::CONTENT_TYPE, content_type)
                         .header(
                             tauri::http::header::CACHE_CONTROL,
@@ -1915,6 +2006,7 @@ pub fn run() {
             get_sync_status,
             export_history,
             import_history,
+            save_share_image,
             get_autostart,
             set_autostart,
             remove_account,
@@ -1972,6 +2064,65 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use tempfile::tempdir;
+
+    #[test]
+    fn share_image_names_are_decoded_and_validated() {
+        assert_eq!(
+            super::decode_share_filename(
+                "Splat3Insight-%E7%9C%9F%E6%A0%BC-2026%E5%B9%B49%E6%9C%88.png"
+            )
+            .unwrap(),
+            "Splat3Insight-真格-2026年9月.png"
+        );
+        for name in [
+            "Splat3Insight-真格.png",
+            "Splat3Insight-打工-2026年12月-2027年2月.png",
+        ] {
+            assert!(super::valid_share_filename(name));
+        }
+        for name in [
+            "other.png",
+            "Splat3Insight-a.jpg",
+            "Splat3Insight-../a.png",
+            "Splat3Insight-a/b.png",
+            "Splat3Insight-a\\b.png",
+            "Splat3Insight-a\0.png",
+            "Splat3Insight-C:a.png",
+        ] {
+            assert!(!super::valid_share_filename(name), "{name:?}");
+        }
+        for encoded in ["%", "%2", "%GG", "%FF"] {
+            assert!(super::decode_share_filename(encoded).is_err());
+        }
+        assert!(!super::valid_share_filename(
+            &super::decode_share_filename("Splat3Insight-%2E%2E%2Fa.png").unwrap()
+        ));
+    }
+
+    #[test]
+    fn share_image_saves_without_overwriting_and_rejects_non_png() {
+        let directory = tempdir().unwrap();
+        let filename = "Splat3Insight-真格-2026年9月.png";
+        let png = b"\x89PNG\r\n\x1a\nfirst";
+        let first = super::write_share_image(directory.path(), filename, png).unwrap();
+        let second =
+            super::write_share_image(directory.path(), filename, b"\x89PNG\r\n\x1a\nsecond")
+                .unwrap();
+        let third = super::write_share_image(directory.path(), filename, png).unwrap();
+        assert_eq!(first.file_name().unwrap(), filename);
+        assert_eq!(
+            second.file_name().unwrap(),
+            "Splat3Insight-真格-2026年9月 (2).png"
+        );
+        assert_eq!(
+            third.file_name().unwrap(),
+            "Splat3Insight-真格-2026年9月 (3).png"
+        );
+        assert_eq!(fs::read(first).unwrap(), png);
+        assert!(super::write_share_image(directory.path(), filename, b"not PNG").is_err());
+        assert!(super::write_share_image(directory.path(), "../bad.png", png).is_err());
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 3);
+    }
 
     #[test]
     fn dock_reopen_shows_hidden_main_window() {

@@ -56,6 +56,15 @@
     serviceRunning: false,
     obs: { catalog: [], selected: ['overlay'], active: 'overlay', copiedUrl: null, copiedCss: null, transparency: 0, states: null, latest: null },
   };
+  const share = window.Splat3Share.init(() => {
+    const data = dashboard.records();
+    return {
+      data,
+      view: app.view,
+      mode: data.mode,
+      name: app.accountPlayer?.name || app.accounts.find((account) => account.account_id === app.activeAccountId)?.display_name || '',
+    };
+  }, { invoke, revealPath });
   let factsRequest = 0;
   let overlayRequest = 0;
 
@@ -254,6 +263,7 @@
     $('#page-sub').textContent = VIEWS[view][1];
     dashboard.hideTip();
     $('#filters').hidden = true;
+    $('#share-button').hidden = !['overview', 'battles', 'weapons', 'stages', 'salmon'].includes(view);
     dashboard.setModeScope(view === 'salmon' ? 'salmon' : ['battles', 'weapons', 'stages'].includes(view) ? 'battles' : 'all');
     if (previous !== view) records.close();
     if (view === 'overview') renderOverview();
@@ -349,6 +359,7 @@
     if (!accountId) {
       app.facts = { accountId: null, status: 'idle', error: null, loadedAt: 0 };
       dashboard.setData(null);
+      share.close();
       renderDataView();
       return;
     }
@@ -741,7 +752,10 @@
     const activeId = accounts.find((account) => account.active)?.account_id ?? null;
     const changed = activeId !== app.activeAccountId;
     app.activeAccountId = activeId;
-    if (changed) app.accountPlayer = null;
+    if (changed) {
+      app.accountPlayer = null;
+      share.close();
+    }
     renderAccountSwitcher();
     renderAccountList();
     if (!accountMenu.hidden) void loadAccountMenuPlates();

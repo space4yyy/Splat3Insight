@@ -1065,6 +1065,8 @@
 
   window.Splat3Dashboard = Object.freeze({
     setData,
+    // 返回已整理的数据引用，供分享图按完整时间段统计；调用方不修改这些数组。
+    records: () => ({ battles, shifts, xSettlements, mode: state.mode }),
     setSalmonRun(run) {
       salmonRun = run || null;
       renderRotation();

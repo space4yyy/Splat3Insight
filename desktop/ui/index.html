@@ -6,6 +6,7 @@
     <title>Splat3 Insight</title>
     <link rel="stylesheet" href="./overlay-card.css" />
     <link rel="stylesheet" href="./app.css" />
+    <link rel="stylesheet" href="./share-image.css" />
     <script>
       try {
         const theme = localStorage.getItem('splat3-theme');
@@ -57,6 +58,7 @@
             </div>
             <div class="segmented" id="mode-filter" role="group" aria-label="模式"></div>
             <div class="segmented" id="coop-rule-filter" role="group" aria-label="打工模式" hidden></div>
+            <button type="button" class="ghost" id="share-button">分享</button>
           </div>
         </header>
 
@@ -452,6 +454,38 @@
       </div>
     </div>
 
+    <dialog id="share-dialog" class="close-prompt share-dialog" aria-labelledby="share-title" tabindex="-1">
+      <h2 id="share-title">分享</h2>
+      <div class="share-dialog-body">
+        <div id="share-preview" class="share-preview" aria-label="分享图预览"></div>
+        <div class="share-fields">
+          <div class="share-field">
+            <span id="share-content-label">内容</span>
+            <div id="share-content" class="segmented" role="group" aria-labelledby="share-content-label">
+              <button type="button" data-content="ranked" aria-pressed="true">真格</button>
+              <button type="button" data-content="salmon" aria-pressed="false">打工</button>
+            </div>
+          </div>
+          <div class="share-field">
+            <span id="share-kind-label">类型</span>
+            <div id="share-kind" class="segmented" role="group" aria-labelledby="share-kind-label">
+              <button type="button" data-kind="month" aria-pressed="true">月度总结</button>
+              <button type="button" data-kind="season" aria-pressed="false">赛季总结</button>
+            </div>
+          </div>
+          <label><span id="share-period-label">月份</span><select id="share-period"></select></label>
+          <label class="share-name"><input id="share-name" type="checkbox" checked>显示名字</label>
+        </div>
+      </div>
+      <p id="share-status" role="status" aria-live="polite" hidden>
+        <span id="share-status-text"></span>
+        <button id="share-reveal" type="button" class="ghost" data-windows="在文件资源管理器中显示" hidden>在访达中显示</button>
+      </p>
+      <div class="close-prompt-actions">
+        <button id="share-cancel" type="button" class="ghost">取消</button>
+        <button id="share-save" type="button" class="button-primary">保存图片</button>
+      </div>
+    </dialog>
     <dialog id="background-close-prompt" class="close-prompt" aria-labelledby="background-close-title">
       <h2 id="background-close-title">在后台继续运行？</h2>
       <p>隐藏主界面后，OBS 服务和数据同步会继续运行。之后可从<span data-windows="系统托盘">状态栏</span>图标重新打开，或选择退出应用。</p>
@@ -500,7 +534,9 @@
     <script src="./record-detail.js"></script>
     <script src="./records.js"></script>
     <script src="./analysis-data.js"></script>
+    <script src="./share-data.js"></script>
     <script src="./analysis.js"></script>
+    <script src="./share-image.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

@@ -571,5 +571,5 @@
     }
   });
 
-  window.Splat3Records = Object.freeze({ render, show, close, nameplate, img, iconWithName, scaleCounts });
+  window.Splat3Records = Object.freeze({ render, show, close, nameplate, img, imageSrc, iconWithName, scaleCounts });
 })();

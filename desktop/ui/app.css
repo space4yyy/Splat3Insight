@@ -571,3 +571,21 @@ table.data.sticky-first th:first-child { z-index: 2; }
   .brand { flex: 1 1 auto; }
   .nav { order: 5; flex-basis: 100%; }
 }
+
+/* 分享对话框：原尺寸卡片按 1/4 缩放，控件沿用应用外观。 */
+dialog.share-dialog { width: min(640px, calc(100vw - 40px)); max-width: none; max-height: calc(100vh - 40px); overflow: auto; }
+/* 打开时焦点放在对话框本身，不给第一个按钮画焦点框；对话框自己也不画。 */
+dialog.share-dialog:focus { outline: none; }
+.share-dialog-body { display: flex; flex-wrap: wrap; gap: 22px; margin: 20px 0; }
+.share-preview { position: relative; flex: none; width: 270px; height: 360px; overflow: hidden; border-radius: 10px; }
+.share-preview > .share { position: absolute; top: 0; left: 0; transform-origin: top left; }
+.share-preview.is-empty { display: grid; place-items: center; color: var(--ink-3); font-size: 14px; }
+.share-fields { display: grid; align-content: start; flex: 1 1 220px; gap: 16px; }
+.share-fields label, .share-field { display: grid; gap: 6px; color: var(--ink-2); font-size: 14px; }
+.share-field { justify-items: start; }
+.share-fields select { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-raised); color: var(--ink); font: inherit; }
+.share-fields .share-name { display: flex; align-items: center; gap: 8px; }
+.share-name input { accent-color: var(--accent); }
+dialog.share-dialog #share-status { margin: 12px 0; overflow-wrap: anywhere; }
+.share-dialog #share-reveal { margin-left: 8px; }
+.share-dialog .close-prompt-actions { margin-top: 16px; }

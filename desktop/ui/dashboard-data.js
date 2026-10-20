@@ -99,6 +99,7 @@
       kingName: gameName('bosses', row.boss_name),
       kingId: enemyNumber(row.boss_id),
       goldenEggs: isNum(row.golden_eggs) ? row.golden_eggs : null,
+      defeated: isNum(row.defeat_enemy_count) ? row.defeat_enemy_count : null,
       powerEggs: isNum(row.power_eggs) ? row.power_eggs : null,
       rescues: isNum(row.rescue_count) ? row.rescue_count : null,
       rescued: isNum(row.rescued_count) ? row.rescued_count : null,
