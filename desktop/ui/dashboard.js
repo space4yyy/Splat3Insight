@@ -577,13 +577,20 @@
       if (!longest || seconds > longest.seconds) longest = { day, seconds };
     }
     statsBox.textContent = '';
+    // 默认窗口下四格要排在一行：日期放进标签，数值里的「小时」「分」「天」用小字。
     const stats = [
       ['总计', total ? fmtDuration(total) : '—'],
       ['游玩天数', `${days.size} 天`],
       ['每个游玩日', days.size ? fmtDuration(total / days.size) : '—'],
-      ['最长一天', longest ? `${fmtShortDate(longest.day)} · ${fmtDuration(longest.seconds)}` : '—'],
+      [longest ? `最长一天 · ${fmtShortDate(longest.day)}` : '最长一天', longest ? fmtDuration(longest.seconds) : '—'],
     ];
-    for (const [label, value] of stats) statsBox.append(el('div', { class: 'mini-stat' }, [el('span', { text: label }), el('strong', { class: value === '—' ? 'placeholder' : '', text: value })]));
+    const withUnits = (text) => text.split(/(\d+)/).filter(Boolean).map((part) => (/^\d+$/.test(part) ? part : el('small', { text: part })));
+    for (const [label, value] of stats) {
+      statsBox.append(el('div', { class: 'mini-stat' }, [
+        el('span', { text: label }),
+        value === '—' ? el('strong', { class: 'placeholder', text: value }) : el('strong', {}, withUnits(value)),
+      ]));
+    }
     legend.textContent = '';
     if (series.length > 1) {
       for (const item of series) {
@@ -871,13 +878,13 @@
     stats.textContent = '';
     const items = [
       ['评级', lastGraded ? `${lastGraded.gradeName} ${lastGraded.gradePoint ?? ''}`.trim() : '—'],
-      ['打工场次', `${list.length} 场`],
+      ['打工场次', [String(list.length), el('small', { text: ' 场' })]],
       ['通关率', list.length ? pct(clearedCount / list.length, 0) : '—'],
       ['场均金鲑鱼卵', fixed(average(list, (shift) => shift.goldenEggs))],
       ['场均救援 / 被救', rescues == null && rescued == null ? '—' : `${fixed(rescues)} / ${fixed(rescued)}`],
       ['头目鲑鱼击倒', kingAppeared ? `${kingDefeated} / ${kingAppeared}` : '—'],
     ];
-    for (const [label, value] of items) stats.append(el('div', { class: 'mini-stat' }, [el('span', { text: label }), el('strong', { class: value === '—' ? 'placeholder' : '', text: value })]));
+    for (const [label, value] of items) stats.append(el('div', { class: 'mini-stat' }, [el('span', { text: label }), el('strong', { class: value === '—' ? 'placeholder' : '' }, value)]));
 
     const waves = WATER.map((water) => {
       const attempted = list.flatMap((shift) => shift.waves).filter((wave) => wave.water === water);

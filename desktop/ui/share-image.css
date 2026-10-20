@@ -1,3 +1,5 @@
+/* 颜色和数据面板一致，取自 SplatNet 3：黄 #eaff3e、蓝 #603aff，打工 #ff5033 和 #00f82d。
+   图形、标志和标签用原色；小字为了看清调了深浅，浅色版的黄色折线加深色描边，真格的胜率大字改用蓝色。 */
 .share {
   --font: "Insight Latin", "DFP GBZY7", "PingFang SC", "Microsoft YaHei", sans-serif;
   color-scheme: dark;
@@ -9,49 +11,50 @@
   --ink: #f5f5f2;
   --ink-2: #c7c4d0;
   --ink-3: #8e8b9a;
-  --kicker: #ecff20;
+  --kicker: #eaff3e;
   --kicker-ink: #171716;
-  --accent-text: #ecff20;
-  --blue: #4d7cff;
-  --blue-text: #7d9dff;
-  --brand-insight: #ecff20;
-  --meter-a: #ecff20;
-  --meter-b: #3d6af0;
-  --up: #ecff20;
-  --down: #7d9dff;
+  --accent-text: #eaff3e;
+  --blue: #603aff;
+  --blue-text: #9598fe;
+  --meter-a: #eaff3e;
+  --meter-b: #603aff;
+  --up: #eaff3e;
+  --down: #9598fe;
   --mode-x: #0fdb9b;
   --mode-anarchy: #f54910;
-  --mode-salmon: #f56528;
-  --rule-1: #ecff20;
-  --rule-2: #4d7cff;
+  --mode-salmon: #ff5033;
+  --rule-1: #eaff3e;
+  --rule-2: #603aff;
   --rule-3: #0fdb9b;
-  --rule-4: #ff62b3;
+  --rule-4: #f02d7d;
   --seq-0: #26252f;
-  --seq-1: #2044c3;
-  --seq-2: #345ede;
-  --seq-3: #4d7cff;
-  --seq-4: #7aa1fe;
-  --seq-5: #b3cafe;
+  --seq-1: #3d2a91;
+  --seq-2: #4f32c8;
+  --seq-3: #603aff;
+  --seq-4: #827ffe;
+  --seq-5: #aeb2fe;
   --day-0: #8e8b9a;
   --day-1: #c7c4d0;
   --day-2: #f5f5f2;
   --day-3: #f5f5f2;
   --day-4: #171716;
   --day-5: #171716;
-  --glow-a: rgba(77, 124, 255, 0.32);
-  --glow-b: rgba(236, 255, 32, 0.12);
+  --glow-a: rgba(96, 58, 255, 0.32);
+  --glow-b: rgba(234, 255, 62, 0.12);
+  --yellow-edge: transparent;
+  --yellow-ring: var(--card-solid);
   --silhouette-filter: invert(1);
   --silhouette-opacity: 0.14;
 }
 .share.is-salmon {
-  --kicker: #f56528;
-  --accent-text: #ff8a4c;
-  --meter-a: #f56528;
+  --kicker: #ff5033;
+  --accent-text: #ff5033;
+  --meter-a: #ff5033;
   --meter-b: #393846;
-  --up: #5af27d;
+  --up: #00f82d;
   --down: #8e8b9a;
-  --glow-a: rgba(245, 101, 40, 0.3);
-  --glow-b: rgba(90, 242, 125, 0.1);
+  --glow-a: rgba(255, 80, 51, 0.3);
+  --glow-b: rgba(0, 248, 45, 0.1);
 }
 .share.is-light {
   color-scheme: light;
@@ -64,48 +67,44 @@
   --ink-2: #44424f;
   --ink-3: #6b6878;
   --accent-text: #6c7a00;
-  --blue-text: #2f5bd9;
-  --brand-insight: #8a9a00;
-  --meter-a: #b9cb06;
-  --meter-b: #7aa1fe;
+  --blue-text: #603aff;
   --up: #6c7a00;
-  --down: #2f5bd9;
-  --rule-1: #8a9a00;
-  --rule-2: #3d6af0;
-  --rule-3: #005f56;
-  --rule-4: #e8559b;
+  --down: #603aff;
   --seq-0: #eeedf3;
-  --seq-1: #d9e5ff;
-  --seq-2: #b3cafe;
-  --seq-3: #7aa1fe;
-  --seq-4: #4674f6;
-  --seq-5: #274dcd;
+  --seq-1: #d8dbff;
+  --seq-2: #b5baff;
+  --seq-3: #9598fe;
+  --seq-4: #7971ff;
+  --seq-5: #603aff;
   --day-0: #6b6878;
   --day-1: #44424f;
   --day-2: #18171f;
   --day-3: #18171f;
-  --day-4: #ffffff;
+  --day-4: #18171f;
   --day-5: #ffffff;
-  --glow-a: rgba(77, 124, 255, 0.14);
-  --glow-b: rgba(200, 215, 0, 0.12);
+  --glow-a: rgba(96, 58, 255, 0.14);
+  --glow-b: rgba(234, 255, 62, 0.2);
+  --yellow-edge: #18171f;
+  --yellow-ring: #18171f;
   --silhouette-filter: none;
   --silhouette-opacity: 0.12;
 }
 .share.is-light.is-salmon {
-  --kicker: #f56528;
-  --accent-text: #c2410c;
-  --meter-a: #f56528;
+  --kicker: #ff5033;
+  --accent-text: #ff5033;
+  --meter-a: #ff5033;
   --meter-b: #e4e1ec;
-  --up: #13893b;
+  --up: #048a16;
   --down: #6b6878;
-  --glow-a: rgba(245, 101, 40, 0.16);
-  --glow-b: rgba(19, 137, 59, 0.08);
+  --glow-a: rgba(255, 80, 51, 0.16);
+  --glow-b: rgba(0, 248, 45, 0.08);
 }
 
 .share { box-sizing: border-box; display: flex; flex-direction: column; gap: 22px; width: 1080px; height: 1440px; padding: 58px 64px 48px; overflow: hidden; background: radial-gradient(780px 540px at 0% 0%, var(--glow-a), transparent 70%), radial-gradient(640px 460px at 100% 0%, var(--glow-b), transparent 70%), var(--bg); color: var(--ink); font-family: var(--font); line-height: 1.2; font-variant-numeric: tabular-nums; }
 .share .s-head { display: grid; gap: 8px; }
 .share .s-top { display: flex; align-items: center; justify-content: space-between; }
-.share .s-brand { font-size: 34px; letter-spacing: .03em; }
+.share .s-brand { display: inline-flex; align-items: center; gap: 14px; font-size: 34px; letter-spacing: .03em; }
+.share .s-brand img { width: 56px; height: 56px; }
 .share .s-kicker { padding: 8px 22px 6px; border-radius: 999px; background: var(--kicker); color: var(--kicker-ink); font-size: 28px; letter-spacing: .04em; white-space: nowrap; }
 .share .s-title { margin: 10px 0 0; font-size: 86px; font-weight: 400; line-height: 1.08; letter-spacing: .02em; }
 .share .s-sub { color: var(--ink-2); font-size: 28px; }
@@ -201,14 +200,15 @@
 .share .event .n { color: var(--ink-3); font-size: 18px; text-align: right; }
 .share .contrib { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 18px; }
 .share .contrib-item { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 12px; }
-.share .contrib-item img { width: 72px; height: 44px; object-fit: contain; }
+/* 和 OBS 卡片一样，图标统一高度、宽度按各自比例。 */
+.share .contrib-item img { width: 72px; height: 36px; object-fit: contain; }
 .share .contrib-item .value { display: block; font-size: 34px; line-height: 1.1; }
 .share .contrib-item .label { display: block; color: var(--ink-3); font-size: 20px; }
 .share .chart text { font-family: var(--font); }
 
 
-.share .s-brand .b1 { color: var(--blue); }
-.share .s-brand .b2 { color: var(--brand-insight); }
+/* 原色黄在浅色版的白底上看不清，真格的胜率大字改用官方蓝；单位 % 照常用小字的颜色。 */
+.share.is-light.is-ranked .s-tile.is-accent .value { color: var(--blue); }
 .share .weapon-icon img { width: 100%; height: 100%; object-fit: contain; }
 .share .s-title { overflow-wrap: anywhere; }
 .share.is-cross-year .s-title { font-size: 60px; }

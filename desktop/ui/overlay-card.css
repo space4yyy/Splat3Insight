@@ -23,7 +23,8 @@
 }
 
 /* 所有卡片共用一个背景色。在 OBS 浏览器源的“自定义 CSS”里加一行就能改：
-   :root { --obs-card-background: rgba(0, 0, 0, .6); } */
+   :root { --obs-card-background: rgba(0, 0, 0, .6); }
+   文字颜色取自 SplatNet 3：黄 #eaff3e、蓝 #603aff、各模式色，打工用 #ff5033 和 #00f82d。 */
 .overlay-card {
   container-type: inline-size;
   display: flex;
@@ -76,11 +77,11 @@
 }
 
 .overlay-card__mode.mode-event-match {
-  color: #ff62b3;
+  color: #f02d7d;
 }
 
 .overlay-card__mode.mode-private-battle {
-  color: #a855f7;
+  color: #a51ee1;
 }
 
 .overlay-card__bankara-mode {
@@ -106,11 +107,11 @@
 }
 
 .overlay-card__summary-win {
-  color: #eaff3d;
+  color: #eaff3e;
 }
 
 .overlay-card__summary-lose {
-  color: #4d7cff;
+  color: #603aff;
 }
 
 .overlay-card__bottom {
@@ -217,7 +218,7 @@
 .salmon-run-card__stage {
   min-width: 0;
   overflow: hidden;
-  color: #f56528;
+  color: #ff5033;
   font-size: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -229,7 +230,7 @@
 }
 
 .salmon-run-card__scales-label {
-  color: #5af27d;
+  color: #00f82d;
   font-size: var(--salmon-run-secondary-font-size);
   white-space: nowrap;
 }
@@ -432,19 +433,19 @@
 }
 
 .salmon-run-card__details-grade b {
-  color: #5af27d;
+  color: #00f82d;
 }
 
 .salmon-run-card__details-danger b {
-  color: #f56528;
+  color: #ff5033;
 }
 
 .overlay-card__power-delta.positive {
-  color: #eaff3d;
+  color: #eaff3e;
 }
 
 .overlay-card__power-delta.negative {
-  color: #4d7cff;
+  color: #603aff;
 }
 
 .overlay-card__stats {
@@ -476,7 +477,7 @@
 }
 
 .overlay-card__kad span:first-child {
-  color: #eaff3d;
+  color: #eaff3e;
 }
 
 .overlay-card__kad small {

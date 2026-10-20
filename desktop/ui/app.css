@@ -3,8 +3,12 @@
    页面里用单独的名字，避免和 overlay-card.css 中不限字符范围的 BlitzMain 合并。 */
 @font-face { font-family: "Insight Latin"; src: url("./fonts/BlitzMain.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: block; unicode-range: U+0000-2017, U+201E-2FFF; }
 
-/* 主题：默认深色，浅色跟随系统或手动切换。品牌色为斯普拉遁 3 的黄和蓝：
-   黄色用于主要选中、胜利、上升；蓝色用于次要控件、账号、失败、下降。模式主题色在两种主题下保持不变。 */
+/* 主题：默认深色，浅色跟随系统或手动切换。品牌色和模式色取自 SplatNet 3 的样式：
+   黄 #eaff3e（--color-yellow）、蓝 #603aff（--color-blue）；一般比赛用黄色，X、蛮颓、活动、私人比赛和打工依次取
+   --color-xmatch、--color-bankara、--color-league、--color-private、--color-coop。
+   黄色用于主要选中、胜利、上升；蓝色用于次要控件、账号、失败、下降。图表、标志和模式色在两种主题下都用原色；
+   只有文字为了看清调了深浅（深色主题的蓝字调浅，浅色主题的黄字调深）。
+   按百分比着色的色阶两端就是官方黄、蓝，中间几档向中间的灰色过渡。 */
 :root {
   color-scheme: dark;
   --bg: #111117;
@@ -15,37 +19,39 @@
   --ink: #f5f5f2;
   --ink-2: #c7c4d0;
   --ink-3: #8e8b9a;
-  --accent: #ecff20;
+  --splat-yellow: #eaff3e;
+  --splat-blue: #603aff;
+  --accent: var(--splat-yellow);
   --accent-ink: #171716;
-  --brand-blue: #4d7cff;
-  --focus: #7d9dff;
+  --brand-blue: var(--splat-blue);
+  --focus: #9598fe;
   --mode-x: #0fdb9b;
   --mode-anarchy: #f54910;
-  --mode-event: #ff62b3;
-  --mode-regular: #19d719;
-  --mode-private: #a855f7;
-  --mode-salmon: #f56528;
+  --mode-event: #f02d7d;
+  --mode-regular: var(--splat-yellow);
+  --mode-private: #a51ee1;
+  --mode-salmon: #ff5033;
   --good: #0ca30c;
   --danger-text: #ff668a;
   --danger-solid: #c8254a;
   --danger-wash: rgba(255, 102, 138, 0.1);
-  --salmon-total: #5af27d;
-  --up-text: #ecff20;
-  --down-text: #7d9dff;
+  --salmon-total: #00f82d;
+  --up-text: var(--splat-yellow);
+  --down-text: #9598fe;
   --context: #6e6c80;
   --seq-0: #26252f;
-  --seq-1: #2044c3;
-  --seq-2: #345ede;
-  --seq-3: #4d7cff;
-  --seq-4: #7aa1fe;
-  --seq-5: #b3cafe;
-  --div-neg-3: #96b6fe;
-  --div-neg-2: #4d7cff;
-  --div-neg-1: #274dcd;
+  --seq-1: #3d2a91;
+  --seq-2: #4f32c8;
+  --seq-3: var(--splat-blue);
+  --seq-4: #827ffe;
+  --seq-5: #aeb2fe;
+  --div-neg-3: var(--splat-blue);
+  --div-neg-2: #5243ca;
+  --div-neg-1: #45448d;
   --div-mid: #383835;
-  --div-pos-1: #6f7a06;
-  --div-pos-2: #b9cb06;
-  --div-pos-3: #ecff20;
+  --div-pos-1: #717845;
+  --div-pos-2: #a7b449;
+  --div-pos-3: var(--splat-yellow);
   --shadow: rgba(0, 0, 0, 0.45);
   --hover-wash: rgba(255, 255, 255, 0.06);
   --scrim: rgba(6, 6, 10, 0.55);
@@ -53,20 +59,20 @@
   --font-number: "Insight Latin", "DFP GBZY7", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-system: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --radius: 14px;
-  --accent-2: #3d6af0;
+  --accent-2: var(--splat-blue);
   --on-accent-2: #ffffff;
-  --accent-2-text: #7d9dff;
-  --accent-2-wash: rgba(77, 124, 255, 0.14);
-  --win: #ecff20;
+  --accent-2-text: #9598fe;
+  --accent-2-wash: rgba(96, 58, 255, 0.16);
+  --win: var(--splat-yellow);
   --on-win: #171716;
-  --lose: #3d6af0;
+  --lose: var(--splat-blue);
   --on-lose: #ffffff;
-  --win-line: #ecff20;
-  --meter-win: #ecff20;
-  --meter-lose: #3d6af0;
-  --glow-blue: rgba(77, 124, 255, 0.2);
-  --glow-yellow: rgba(236, 255, 32, 0.06);
-  --select-line: #ecff20;
+  --win-line: var(--splat-yellow);
+  --meter-win: var(--splat-yellow);
+  --meter-lose: var(--splat-blue);
+  --glow-blue: rgba(96, 58, 255, 0.2);
+  --glow-yellow: rgba(234, 255, 62, 0.06);
+  --select-line: var(--splat-yellow);
   --select-wash: #2f301e;
   --check-a: #272630;
   --check-b: #1f1e27;
@@ -83,37 +89,32 @@
     --ink: #18171f;
     --ink-2: #44424f;
     --ink-3: #6b6878;
-    --focus: #2f5bd9;
+    --focus: var(--splat-blue);
     --danger-text: #c8254a;
     --danger-wash: rgba(200, 37, 74, 0.07);
-    --salmon-total: #13893b;
+    --salmon-total: #048a16;
     --up-text: #6c7a00;
-    --down-text: #2f5bd9;
+    --down-text: var(--splat-blue);
     --context: #a6a3b3;
     --seq-0: #eeedf3;
-    --seq-1: #d9e5ff;
-    --seq-2: #b3cafe;
-    --seq-3: #7aa1fe;
-    --seq-4: #4674f6;
-    --seq-5: #274dcd;
-    --div-neg-3: #274dcd;
-    --div-neg-2: #7aa1fe;
-    --div-neg-1: #d9e5ff;
+    --seq-1: #d8dbff;
+    --seq-2: #b5baff;
+    --seq-3: #9598fe;
+    --seq-4: #7971ff;
+    --seq-5: var(--splat-blue);
+    --div-neg-2: #9597fb;
+    --div-neg-1: #cacdf2;
     --div-mid: #ecebe8;
-    --div-pos-1: #eef5b0;
-    --div-pos-2: #d2e609;
-    --div-pos-3: #9aa900;
+    --div-pos-1: #ebf3bb;
+    --div-pos-2: #eafa86;
     --shadow: rgba(24, 20, 48, 0.14);
     --hover-wash: rgba(24, 20, 48, 0.05);
     --scrim: rgba(20, 18, 40, 0.28);
-    --accent-2-text: #2f5bd9;
-    --accent-2-wash: rgba(61, 106, 240, 0.1);
-    --win-line: #8a9a00;
-    --meter-win: #b9cb06;
-    --meter-lose: #7aa1fe;
-    --glow-blue: rgba(77, 124, 255, 0.12);
-    --glow-yellow: rgba(200, 215, 0, 0.1);
-    --select-line: #8a9a00;
+    --accent-2-text: var(--splat-blue);
+    --accent-2-wash: rgba(96, 58, 255, 0.1);
+    --glow-blue: rgba(96, 58, 255, 0.1);
+    --glow-yellow: rgba(234, 255, 62, 0.14);
+    --select-line: #18171f;
     --select-wash: #f6f9dc;
   }
 }
@@ -127,37 +128,32 @@
   --ink: #18171f;
   --ink-2: #44424f;
   --ink-3: #6b6878;
-  --focus: #2f5bd9;
+  --focus: var(--splat-blue);
   --danger-text: #c8254a;
   --danger-wash: rgba(200, 37, 74, 0.07);
-  --salmon-total: #13893b;
+  --salmon-total: #048a16;
   --up-text: #6c7a00;
-  --down-text: #2f5bd9;
+  --down-text: var(--splat-blue);
   --context: #a6a3b3;
   --seq-0: #eeedf3;
-  --seq-1: #d9e5ff;
-  --seq-2: #b3cafe;
-  --seq-3: #7aa1fe;
-  --seq-4: #4674f6;
-  --seq-5: #274dcd;
-  --div-neg-3: #274dcd;
-  --div-neg-2: #7aa1fe;
-  --div-neg-1: #d9e5ff;
+  --seq-1: #d8dbff;
+  --seq-2: #b5baff;
+  --seq-3: #9598fe;
+  --seq-4: #7971ff;
+  --seq-5: var(--splat-blue);
+  --div-neg-2: #9597fb;
+  --div-neg-1: #cacdf2;
   --div-mid: #ecebe8;
-  --div-pos-1: #eef5b0;
-  --div-pos-2: #d2e609;
-  --div-pos-3: #9aa900;
+  --div-pos-1: #ebf3bb;
+  --div-pos-2: #eafa86;
   --shadow: rgba(24, 20, 48, 0.14);
   --hover-wash: rgba(24, 20, 48, 0.05);
   --scrim: rgba(20, 18, 40, 0.28);
-  --accent-2-text: #2f5bd9;
-  --accent-2-wash: rgba(61, 106, 240, 0.1);
-  --win-line: #8a9a00;
-  --meter-win: #b9cb06;
-  --meter-lose: #7aa1fe;
-  --glow-blue: rgba(77, 124, 255, 0.12);
-  --glow-yellow: rgba(200, 215, 0, 0.1);
-  --select-line: #8a9a00;
+  --accent-2-text: var(--splat-blue);
+  --accent-2-wash: rgba(96, 58, 255, 0.1);
+  --glow-blue: rgba(96, 58, 255, 0.1);
+  --glow-yellow: rgba(234, 255, 62, 0.14);
+  --select-line: #18171f;
   --select-wash: #f6f9dc;
 }
 
@@ -182,10 +178,11 @@ button:focus-visible, [tabindex]:focus-visible, textarea:focus-visible { outline
 
 .app { display: grid; grid-template-columns: 212px minmax(0, 1fr); gap: 20px; max-width: 1440px; margin: 0 auto; align-items: start; }
 .sidebar { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 14px; padding: 18px 12px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); }
-.brand { padding: 0 8px; font-size: 22px; line-height: 1.2; letter-spacing: .03em; }
-.brand b { color: var(--accent); }
-.brand-splat { color: var(--brand-blue); }
-.brand small { display: block; margin-top: 4px; color: var(--ink-3); font-family: var(--font-text); font-size: 12px; letter-spacing: .06em; }
+/* 品牌：左边是官方黄、蓝两团墨渍（images/brand-splat.svg），右边品牌名用正文色，深浅主题下都清楚。 */
+.brand { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px; align-items: center; padding: 0 2px; font-size: 20px; line-height: 1.15; }
+.brand-mark { grid-row: 1 / 3; width: 42px; height: 42px; }
+.brand-name { white-space: nowrap; }
+.brand small { margin-top: 2px; color: var(--ink-3); font-family: var(--font-text); font-size: 12px; line-height: 1.2; letter-spacing: .06em; }
 .account-switcher { position: relative; }
 .account-current { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel-raised); color: var(--ink); text-align: left; cursor: pointer; }
 .account-current:hover, .account-current[aria-expanded="true"] { border-color: var(--ink-3); }
@@ -312,14 +309,20 @@ table.data .num { text-align: right; }
 .meter { position: relative; display: inline-block; width: 84px; height: 6px; margin-right: 8px; border-radius: 3px; background: var(--meter-lose); vertical-align: 1px; }
 .meter > span { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--meter-win); box-shadow: 1px 0 0 var(--panel); }
 .meter::after { content: ""; position: absolute; left: 50%; top: -3px; width: 1px; height: 12px; background: var(--ink-3); }
-.salmon-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
-.time-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+/* 鲑鱼跑的六格只排成一行六格或两行三格，不会剩一格单独换行。 */
+[data-card="salmon"] { container-type: inline-size; }
+.salmon-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+@container (min-width: 800px) { .salmon-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+/* 游戏时长的四格固定排一行：卡片最窄时（窗口刚过 1180px）每格约 115px，单位用小字后放得下。 */
+.time-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.time-stats .mini-stat > span, .time-stats .mini-stat strong { white-space: nowrap; }
 .time-stats .mini-stat strong { font-size: 17px; }
 .col-hit { fill: transparent; cursor: default; }
 .col-hit:hover, .col-hit:focus { fill: var(--hover-wash); }
 .mini-stat { padding: 10px 12px; border-radius: 10px; background: var(--panel-raised); }
 .mini-stat > span { display: block; color: var(--ink-3); font-size: 12px; }
 .mini-stat strong { font-size: 20px; }
+.mini-stat strong small { color: var(--ink-2); font-size: 12px; }
 .salmon-cols { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; }
 .subhead { margin: 0 0 6px; color: var(--ink-2); font-size: 13px; }
 .rotation { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink-2); font-size: 13px; }
@@ -548,7 +551,8 @@ table.data.sticky-first th:first-child { z-index: 2; }
 @media (max-width: 900px) {
   .app { grid-template-columns: minmax(0, 1fr); }
   .sidebar { position: static; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 10px 12px; }
-  .brand { padding: 0 4px; font-size: 19px; white-space: nowrap; }
+  .brand { column-gap: 8px; margin-right: 8px; font-size: 19px; }
+  .brand-mark { grid-row: auto; width: 32px; height: 32px; }
   .brand small { display: none; }
   .nav { flex: 1 1 0; flex-direction: row; flex-wrap: nowrap; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
   .nav::-webkit-scrollbar { display: none; }

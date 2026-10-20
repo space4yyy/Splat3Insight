@@ -87,30 +87,6 @@ const BOSS_WAVE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/images/wave.svg"
 ));
-const SALMON_RUN_GOLDEN_EGG: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../ui/images/salmon-run-golden-egg.png"
-));
-const SALMON_RUN_POWER_EGG: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../ui/images/salmon-run-power-egg.png"
-));
-const SALMON_RUN_RESCUE: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../ui/images/salmon-run-rescue.png"
-));
-const SALMON_RUN_RESCUED: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../ui/images/salmon-run-rescued.png"
-));
-const SALMON_RUN_RESCUE_INKLING: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../ui/images/salmon-run-rescue-inkling.png"
-));
-const SALMON_RUN_RESCUED_INKLING: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../ui/images/salmon-run-rescued-inkling.png"
-));
 const IKURA: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/images/ikura.svg"
@@ -707,36 +683,6 @@ fn route_request(
             status: "200 OK",
             content_type: "image/svg+xml",
             body: BOSS_WAVE.to_vec(),
-        }),
-        "/images/salmon-run-golden-egg.png" => Ok(HttpResponse {
-            status: "200 OK",
-            content_type: "image/png",
-            body: SALMON_RUN_GOLDEN_EGG.to_vec(),
-        }),
-        "/images/salmon-run-power-egg.png" => Ok(HttpResponse {
-            status: "200 OK",
-            content_type: "image/png",
-            body: SALMON_RUN_POWER_EGG.to_vec(),
-        }),
-        "/images/salmon-run-rescue.png" => Ok(HttpResponse {
-            status: "200 OK",
-            content_type: "image/png",
-            body: SALMON_RUN_RESCUE.to_vec(),
-        }),
-        "/images/salmon-run-rescued.png" => Ok(HttpResponse {
-            status: "200 OK",
-            content_type: "image/png",
-            body: SALMON_RUN_RESCUED.to_vec(),
-        }),
-        "/images/salmon-run-rescue-inkling.png" => Ok(HttpResponse {
-            status: "200 OK",
-            content_type: "image/png",
-            body: SALMON_RUN_RESCUE_INKLING.to_vec(),
-        }),
-        "/images/salmon-run-rescued-inkling.png" => Ok(HttpResponse {
-            status: "200 OK",
-            content_type: "image/png",
-            body: SALMON_RUN_RESCUED_INKLING.to_vec(),
         }),
         "/images/ikura.svg" => Ok(HttpResponse {
             status: "200 OK",

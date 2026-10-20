@@ -63,6 +63,8 @@
       view: app.view,
       mode: data.mode,
       name: app.accountPlayer?.name || app.accounts.find((account) => account.account_id === app.activeAccountId)?.display_name || '',
+      // 打工分享图的救援图标按物种区分，取 OBS 预览已经读到的最近一场打工。
+      species: app.obs.states?.overlay?.salmon_run?.species ?? null,
     };
   }, { invoke, revealPath });
   let factsRequest = 0;

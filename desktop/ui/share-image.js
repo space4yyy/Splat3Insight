@@ -1,7 +1,8 @@
 (() => {
   'use strict';
   const RULES = [
-    { key: 'AREA', name: '真格区域', color: 'var(--rule-1)' },
+    // 黄线在浅色版的白底上看不清，加一圈深色描边（深色版是透明的）。
+    { key: 'AREA', name: '真格区域', color: 'var(--rule-1)', edge: 'var(--yellow-edge)', ring: 'var(--yellow-ring)' },
     { key: 'LOFT', name: '真格塔楼', color: 'var(--rule-2)' },
     { key: 'GOAL', name: '真格鱼虎', color: 'var(--rule-3)' },
     { key: 'CLAM', name: '真格蛤蜊', color: 'var(--rule-4)' },
@@ -175,9 +176,11 @@
       const points = track.points.map((point) => [x(point.t), y(point.value)]);
       // 最后一次实测之后保持最后的战力，统一延伸到截至时间，圆点和标签对齐。
       points.push([x(tMax), y(track.power)]);
-      chart.append(svg('path', { d: points.map(([px, py], index) => `${index ? 'L' : 'M'}${px.toFixed(1)},${py.toFixed(1)}`).join(' '), fill: 'none', stroke: rule.color, 'stroke-width': 4, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+      const d = points.map(([px, py], index) => `${index ? 'L' : 'M'}${px.toFixed(1)},${py.toFixed(1)}`).join(' ');
+      if (rule.edge) chart.append(svg('path', { d, fill: 'none', stroke: rule.edge, 'stroke-width': 7, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+      chart.append(svg('path', { d, fill: 'none', stroke: rule.color, 'stroke-width': 4, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
       const [ex, ey] = points[points.length - 1];
-      chart.append(svg('circle', { cx: ex, cy: ey, r: 7, fill: rule.color, stroke: 'var(--card-solid)', 'stroke-width': 3 }));
+      chart.append(svg('circle', { cx: ex, cy: ey, r: 7, fill: rule.color, stroke: rule.ring ?? 'var(--card-solid)', 'stroke-width': 3 }));
       ends.push({ y: ey, value: track.power });
     }
     // 线尾的数值按高低排开，至少隔 26px，免得叠在一起。
@@ -229,7 +232,7 @@
     return el('div', { class: 's-hero' }, [
       tile('打工', grouped(data.shifts), '场'),
       tile('通关率', fixed1(data.clearRate), data.clearRate == null ? null : '%', true),
-      tile('金鲑鱼卵', grouped(data.golden), null, false, 'images/salmon-run-golden-egg.png'),
+      tile('金鲑鱼卵', grouped(data.golden), null, false, 'images/gold-ikura.svg'),
       tile('巨大鲑鱼击倒', grouped(data.bosses)),
     ]);
   }
@@ -309,23 +312,25 @@
     return card('潮位 × 特殊波次', null, el('div', { style: 'display:grid;gap:12px' }, [tideRow, eventRows]), el('span', { class: 'head-note', text: '通关率' }));
   }
 
-  function contribution(data) {
+  // 图标和 OBS 卡片一致；救援、被救按最近一场打工的物种用鱿鱼或章鱼，不知道时用鱿鱼。
+  function contribution(data, species) {
+    const speciesAsset = species === 'OCTOLING' ? 'octo' : 'squid';
     const item = (icon, value, label) => el('div', { class: 'contrib-item' }, [
       el('img', { src: icon, alt: '' }),
       el('span', {}, [el('span', { class: 'value', text: value }), el('span', { class: 'label', text: label })]),
     ]);
     return card('个人贡献', null, el('div', { class: 'contrib' }, [
-      item('images/salmon-run-golden-egg.png', fixed1(data.golden), '金鲑鱼卵'),
-      item('images/salmon-run-power-egg.png', grouped(data.power), '红鲑鱼卵'),
-      item('images/salmon-run-rescue.png', fixed1(data.rescues), '救援'),
-      item('images/salmon-run-rescued.png', fixed1(data.rescued), '被救'),
+      item('images/gold-ikura.svg', fixed1(data.golden), '金鲑鱼卵'),
+      item('images/ikura.svg', grouped(data.power), '红鲑鱼卵'),
+      item(`images/helpen-${speciesAsset}.svg`, fixed1(data.rescues), '救援'),
+      item(`images/helped-${speciesAsset}.svg`, fixed1(data.rescued), '被救'),
     ]), el('span', { class: 'head-note', text: '场均' }));
   }
 
-  function buildShare(content, kind, showName, look, period, data, name) {
+  function buildShare(content, kind, showName, look, period, data, name, species) {
     const head = el('header', { class: 's-head' }, [
       el('div', { class: 's-top' }, [
-        el('span', { class: 's-brand' }, [el('span', { class: 'b1', text: 'Splat3' }), ' ', el('span', { class: 'b2', text: 'Insight' })]),
+        el('span', { class: 's-brand' }, [el('img', { src: 'images/brand-splat.svg', alt: '' }), 'Splat3 Insight']),
         el('span', { class: 's-kicker', text: `${CONTENT[content]} · ${KIND[kind]}` }),
       ]),
       el('h2', { class: 's-title', text: period.title }),
@@ -342,7 +347,7 @@
         salmonHero(data.hero),
         row('row-a is-wide', [kings(data.kings, data.scales)]),
         row('row-b', [grade(data.grade, kind), waves(data.tides, data.events)]),
-        row('row-c', [contribution(data.contribution), highlights(data.highlights)]),
+        row('row-c', [contribution(data.contribution, species), highlights(data.highlights)]),
       ];
     const classes = ['share', period.kind === 'season' && new Date(period.start).getUTCFullYear() !== new Date(period.end - 1).getUTCFullYear() ? 'is-cross-year' : null, content === 'salmon' ? 'is-salmon' : 'is-ranked', look === 'light' ? 'is-light' : null].filter(Boolean).join(' ');
     return el('article', { class: classes, 'aria-label': `${CONTENT[content]}${KIND[kind]}：${period.title}` }, [head, ...body]);
@@ -429,7 +434,7 @@
     let busy = false;
     let revision = 0;
     const look = () => document.documentElement.dataset.theme === 'light' || (!document.documentElement.dataset.theme && lightQuery.matches) ? 'light' : 'dark';
-    const build = () => buildShare(selectedContent, selectedKind, showName.checked, look(), period, summary, context.name || '');
+    const build = () => buildShare(selectedContent, selectedKind, showName.checked, look(), period, summary, context.name || '', context.species);
     function updateControls() {
       for (const button of [...content.querySelectorAll('button'), ...kind.querySelectorAll('button')]) button.disabled = busy;
       showName.disabled = busy;
