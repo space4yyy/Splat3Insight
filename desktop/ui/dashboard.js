@@ -45,6 +45,21 @@
   let filterListener = null;
   let openRecordListener = null;
   const state = { range: '30d', mode: 'all', coopRule: 'all', rule: 'AREA', heatMetric: 'count', tables: {} };
+  // 右上角筛选的选择记在本机，重新打开应用时沿用。state 里是实际生效的值：对战、武器、场地页没有
+  // 「打工」，打工模式也只能选记录里出现过的，这时先按全部模式显示，选择本身不变。
+  const FILTERS_KEY = 'splat3-filters';
+  const chosen = { mode: 'all', coopRule: 'all' };
+  try {
+    const saved = JSON.parse(localStorage.getItem(FILTERS_KEY) || 'null') || {};
+    if (typeof saved.range === 'string') state.range = saved.range;
+    if (typeof saved.mode === 'string') chosen.mode = state.mode = saved.mode;
+    if (typeof saved.coopRule === 'string') chosen.coopRule = saved.coopRule;
+  } catch {}
+  function saveFilters() {
+    try {
+      localStorage.setItem(FILTERS_KEY, JSON.stringify({ range: state.range, mode: chosen.mode, coopRule: chosen.coopRule }));
+    } catch {}
+  }
   // 打工模式（SplatNet 的 rule），名称取游戏里的说法。
   const COOP_RULES = [
     { key: 'REGULAR', label: '鲑鱼跑' },
@@ -990,7 +1005,7 @@
     xRules = new Set(xSettlements.map((item) => item.rule));
     if (!xRules.has(state.rule)) state.rule = RANKED_RULES.find((rule) => xRules.has(rule)) || RANKED_RULES[0];
     coopRules = COOP_RULES.filter((rule) => shifts.some((shift) => shift.rule === rule.key));
-    if (!coopRules.some((rule) => rule.key === state.coopRule)) state.coopRule = 'all';
+    state.coopRule = coopRules.some((rule) => rule.key === chosen.coopRule) ? chosen.coopRule : 'all';
     renderCoopRuleFilter();
   }
 
@@ -1014,19 +1029,29 @@
     );
     coopRuleFilter.hidden = modeScope !== 'salmon' || coopRules.length < 2;
   }
+  function pressSegmented(container, attribute, value) {
+    for (const button of container.querySelectorAll(`button[${attribute}]`)) button.setAttribute('aria-pressed', String(button.getAttribute(attribute) === value));
+  }
   function bindSegmented(container, attribute, apply) {
     container.addEventListener('click', (event) => {
       const button = event.target.closest(`button[${attribute}]`);
       if (!button) return;
-      for (const other of container.querySelectorAll(`button[${attribute}]`)) other.setAttribute('aria-pressed', String(other === button));
+      pressSegmented(container, attribute, button.getAttribute(attribute));
       apply(button.getAttribute(attribute));
     });
   }
+  // 记下的选择已经不在按钮里时回到默认。
+  const rangeFilter = document.getElementById('range-filter');
+  const optionsOf = (container, attribute) => [...container.querySelectorAll(`button[${attribute}]`)].map((button) => button.getAttribute(attribute));
+  if (!optionsOf(rangeFilter, 'data-range').includes(state.range)) state.range = '30d';
+  if (!optionsOf(modeFilter, 'data-mode').includes(chosen.mode)) chosen.mode = state.mode = 'all';
+  pressSegmented(rangeFilter, 'data-range', state.range);
+  pressSegmented(modeFilter, 'data-mode', state.mode);
   // 时间范围和模式筛选由总览和对战记录共用，改动后通知当前页面重新绘制。
   const filtersChanged = () => (filterListener ? filterListener() : render());
-  bindSegmented(document.getElementById('range-filter'), 'data-range', (value) => { state.range = value; filtersChanged(); });
-  bindSegmented(modeFilter, 'data-mode', (value) => { state.mode = value; filtersChanged(); });
-  bindSegmented(coopRuleFilter, 'data-coop-rule', (value) => { state.coopRule = value; filtersChanged(); });
+  bindSegmented(rangeFilter, 'data-range', (value) => { state.range = value; saveFilters(); filtersChanged(); });
+  bindSegmented(modeFilter, 'data-mode', (value) => { chosen.mode = state.mode = value; saveFilters(); filtersChanged(); });
+  bindSegmented(coopRuleFilter, 'data-coop-rule', (value) => { chosen.coopRule = state.coopRule = value; saveFilters(); filtersChanged(); });
   bindSegmented(document.getElementById('heat-metric'), 'data-metric', (value) => { state.heatMetric = value; renderHeat(); });
   for (const button of document.querySelectorAll('[data-table-toggle]')) {
     button.addEventListener('click', () => {
@@ -1070,10 +1095,9 @@
       coopRuleFilter.hidden = scope !== 'salmon' || coopRules.length < 2;
       modeFilter.hidden = scope === 'salmon';
       modeFilter.querySelector('[data-mode="salmon"]').hidden = scope === 'battles';
-      if (scope === 'battles' && state.mode === 'salmon') {
-        state.mode = 'all';
-        for (const button of modeFilter.querySelectorAll('button[data-mode]')) button.setAttribute('aria-pressed', String(button.getAttribute('data-mode') === 'all'));
-      }
+      // 选着「打工」时，这几页先按全部模式显示，回到其他页面再恢复。
+      state.mode = scope === 'battles' && chosen.mode === 'salmon' ? 'all' : chosen.mode;
+      pressSegmented(modeFilter, 'data-mode', state.mode);
     },
     ui: Object.freeze({
       el, fmtDateTime, fmtDate, fmtShortDate, fmtSince, count, pct, fixed, signed, deltaNode,
