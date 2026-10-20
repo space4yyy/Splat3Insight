@@ -275,6 +275,8 @@ button:focus-visible, [tabindex]:focus-visible, textarea:focus-visible { outline
 .chart svg { display: block; overflow: visible; }
 .scroll-x { overflow-x: auto; }
 .table-wrap { max-height: 320px; overflow: auto; }
+.rotation-stage { display: inline-flex; align-items: center; gap: 6px; }
+.rotation-ongoing { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--mode-salmon); box-shadow: 0 0 0 3px color-mix(in srgb, var(--mode-salmon) 18%, transparent); }
 table.data { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
 table.data th { position: sticky; top: 0; padding: 6px 8px; border-bottom: 1px solid var(--line-strong); background: var(--panel); color: var(--ink-3); text-align: left; white-space: nowrap; }
 table.data td { padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }

@@ -802,36 +802,91 @@
     if (!weapons.length) return '—';
     return el('span', { class: 'weapon-icons' }, weapons.map((weapon) => records.img(weapon.image, 'weapon-icon', weapon.name ?? '') || el('span', { class: 'supplied-name', text: weapon.name ?? '?' })));
   }
+  const ROTATION_PAGE_SIZE = 20;
+  let rotationPage = 0;
+  let rotationSource = '';
+  let rotationScrollBound = false;
+  function bindRotationScroll(box) {
+    if (rotationScrollBound) return;
+    rotationScrollBound = true;
+    let lastWheel = -Infinity;
+    let lastDirection = 0;
+    let releaseGesture = false;
+    // 间隔不足 50ms 的同向滚动视为同一次手势，边界处拦住惯性。
+    box.addEventListener('wheel', (event) => {
+      if (event.ctrlKey || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      if (box.scrollHeight <= box.clientHeight) return;
+      const direction = Math.sign(event.deltaY);
+      const sameGesture = event.timeStamp - lastWheel < 50 && direction === lastDirection;
+      lastWheel = event.timeStamp;
+      lastDirection = direction;
+      const canScroll = direction > 0
+        ? box.scrollTop + box.clientHeight < box.scrollHeight - 1
+        : box.scrollTop > 1;
+      if (!sameGesture) releaseGesture = !canScroll;
+      if (releaseGesture) return;
+      event.preventDefault();
+      if (canScroll) {
+        const unit = event.deltaMode === 1 ? 32 : event.deltaMode === 2 ? box.clientHeight : 1;
+        box.scrollTop += event.deltaY * unit;
+      }
+    }, { passive: false });
+  }
   function renderRotations(list) {
     const box = $('rotation-table');
+    const pager = $('rotation-pager');
     const groups = analysis.rotationGroups(list);
+    bindRotationScroll(box);
+    const source = groups.map((group) => `${group.start ?? group.first}:${group.end ?? group.last}:${group.rule}:${group.stage}`).join('|');
+    if (source !== rotationSource) { rotationPage = 0; rotationSource = source; box.scrollTop = 0; }
+    pager.replaceChildren();
     if (!groups.length) { noShifts(box); return; }
+    const pages = Math.ceil(groups.length / ROTATION_PAGE_SIZE);
+    rotationPage = Math.min(rotationPage, pages - 1);
+    const first = rotationPage * ROTATION_PAGE_SIZE;
+    const previous = el('button', { type: 'button', class: 'ghost', text: '上一页' });
+    const next = el('button', { type: 'button', class: 'ghost', text: '下一页' });
+    previous.disabled = rotationPage === 0;
+    next.disabled = rotationPage === pages - 1;
+    const changePage = (delta) => {
+      rotationPage += delta;
+      renderRotations(list);
+      box.scrollTop = 0;
+    };
+    previous.addEventListener('click', () => changePage(-1));
+    next.addEventListener('click', () => changePage(1));
+    pager.replaceChildren(
+      el('span', { text: `共 ${groups.length} 期 · 第 ${first + 1}–${Math.min(first + ROTATION_PAGE_SIZE, groups.length)} 期` }),
+      el('span', { class: 'log-pager-buttons' }, [previous, el('span', { class: 'font-number', 'aria-live': 'polite', text: `${rotationPage + 1} / ${pages}` }), next]),
+    );
     renderTable(box, [
       { label: '时间', number: true },
       { label: '场地' },
       { label: '发放武器' },
       { label: '场次', num: true },
       { label: '通关率', num: true },
-      { label: '场均金鲑鱼卵', num: true },
+      { label: '评级', num: true },
       { label: '头目鲑鱼' },
       { label: '鳞片' },
-      { label: '评级', num: true },
-    ], groups.map((group) => {
+      { label: '场均金鲑鱼卵', num: true },
+    ], groups.slice(first, first + ROTATION_PAGE_SIZE).map((group) => {
       const range = group.start != null ? [group.start, group.end] : [group.first, group.last];
       const hasScales = group.scales.gold || group.scales.silver || group.scales.bronze;
       return [
-        el('span', {}, [document.createTextNode(`${fmtDateTime(range[0])} – ${fmtDateTime(range[1])}`), group.ongoing ? el('span', { class: 'pill', text: '进行中' }) : null]),
+        `${fmtDateTime(range[0])} – ${fmtDateTime(range[1])}`,
         // 鲑鱼跑以外的打工模式（大型跑、团队打工竞赛）在场地后面标出来。
-        group.rule && group.rule !== 'REGULAR'
-          ? el('span', {}, [document.createTextNode(group.stage), el('span', { class: 'pill', text: COOP_RULE_LABEL[group.rule] ?? group.rule })])
-          : group.stage,
+        el('span', { class: 'rotation-stage' }, [
+          document.createTextNode(group.stage),
+          group.ongoing ? el('span', { class: 'rotation-ongoing', role: 'img', 'aria-label': '进行中', title: '进行中' }) : null,
+          group.rule && group.rule !== 'REGULAR' ? el('span', { class: 'pill', text: COOP_RULE_LABEL[group.rule] ?? group.rule }) : null,
+        ]),
         suppliedCell(group.supplied),
         String(group.n),
         pct(group.cleared / group.n, 0),
-        fixed(group.avgGoldenEggs),
+        group.grade ? gradeText(group.grade.name, group.grade.point) : '—',
         group.king ? `${group.king.name ?? '头目鲑鱼'} ${group.king.defeated} / ${group.king.appeared}` : '—',
         hasScales ? el('span', { class: 'scale-inline' }, records.scaleCounts(group.scales)) : '—',
-        group.grade ? gradeText(group.grade.name, group.grade.point) : '—',
+        fixed(group.avgGoldenEggs),
       ];
     }));
   }
