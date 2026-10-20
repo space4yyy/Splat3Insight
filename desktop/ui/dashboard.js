@@ -21,7 +21,7 @@
 
   const MODES = [
     { key: 'x', label: 'X 比赛', short: 'X' },
-    { key: 'anarchy', label: '蛮颓比赛', short: '蛮颓' },
+    { key: 'anarchy', label: '蛮颓比赛', short: '真格' },
     { key: 'event', label: '活动比赛', short: '活动' },
     { key: 'regular', label: '一般比赛', short: '一般' },
     { key: 'private', label: '私人比赛', short: '私人' },
