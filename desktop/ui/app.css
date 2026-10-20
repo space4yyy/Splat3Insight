@@ -591,3 +591,5 @@ dialog.share-dialog:focus { outline: none; }
 dialog.share-dialog #share-status { margin: 12px 0; overflow-wrap: anywhere; }
 .share-dialog #share-reveal { margin-left: 8px; }
 .share-dialog .close-prompt-actions { margin-top: 16px; }
+
+.battle-assists { font-size: .8em; }

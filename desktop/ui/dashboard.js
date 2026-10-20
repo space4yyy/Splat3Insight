@@ -950,8 +950,8 @@
     const box = document.getElementById('recent-table');
     const [start, end] = rangeBounds(state.range);
     const salmon = state.mode === 'salmon';
-    box.classList.toggle('is-full', salmon);
-    document.getElementById('recent-more').hidden = !salmon;
+    box.classList.add('is-full');
+    document.getElementById('recent-more').hidden = false;
     document.getElementById('recent-title').textContent = salmon ? '最近打工' : '最近对战';
     document.getElementById('recent-sub').textContent = salmon
       ? '每场打工的结果、金鲑鱼卵、救援和评级。'
@@ -970,7 +970,7 @@
       ]), { onRow: (index) => openRecordListener?.('coop', recentShifts[index].id) });
       return;
     }
-    const list = battlesIn(start, end).slice(-8).reverse();
+    const list = battlesIn(start, end).slice(-10).reverse();
     if (!list.length) { emptyState(box, '这段时间没有对战', '换一个时间范围看看。'); return; }
     renderTable(box, [{ label: '时间', number: true }, { label: '模式' }, { label: '规则 · 场地' }, { label: '武器' }, { label: '结果' }, { label: '击倒 / 协助 / 死亡', num: true }, { label: '战力', num: true }], list.map((battle) => [
       fmtDateTime(battle.t),

@@ -139,8 +139,7 @@
     { label: '规则 · 场地' },
     { label: '武器' },
     { label: '结果' },
-    { label: '击倒 / 协助 / 死亡', sort: 'kills', num: true },
-    { label: '特殊', num: true },
+    { label: '击倒/死亡/特殊', sort: 'kills', num: true },
     { label: '涂地', sort: 'paint', num: true },
     { label: '用时', sort: 'duration', num: true },
     { label: '战力', num: true },
@@ -156,14 +155,18 @@
     { label: '评级', num: true },
     { label: '用时（估算）', sort: 'duration', num: true },
   ];
+  const battleStats = (record) => el('span', {}, [
+    document.createTextNode(count(record.kills)),
+    el('span', { class: 'battle-assists', text: `(${count(record.assists)})` }),
+    document.createTextNode(` / ${count(record.deaths)} / ${count(record.specials)}`),
+  ]);
   const battleCells = (battle) => [
     fmtDateTime(battle.t),
     el('span', {}, [swatch(modeColor(battle.mode)), document.createTextNode(modeLabelOf(battle))]),
     `${ruleLabel(battle)} · ${battle.stage}`,
     iconWithName(battle.weaponImage, battle.weapon),
     battleChip(battle),
-    `${count(battle.kills)} / ${count(battle.assists)} / ${count(battle.deaths)}`,
-    count(battle.specials),
+    battleStats(battle),
     count(battle.paint),
     fmtClock(battle.duration),
     powerNode(battle),
@@ -321,10 +324,10 @@
     if (background && plate.textColor) node.style.color = plate.textColor;
     return node;
   }
-  function weaponSet(player) {
+  function weaponSet(player, showName = true) {
     return el('span', { class: 'weapon-set' }, [
       img(player.weaponImage, 'weapon-icon', player.weapon),
-      el('span', { text: player.weapon ?? '—' }),
+      showName ? el('span', { text: player.weapon ?? '—' }) : null,
       player.sub ? img(player.sub.image, 'kit-icon', player.sub.name) : null,
       player.special ? img(player.special.image, 'kit-icon', player.special.name) : null,
     ]);
@@ -334,12 +337,11 @@
     return el('div', { class: 'team' }, [
       el('div', { class: 'team-head' }, [el('span', { class: 'team-dot', style: `background: ${team.color || `var(${team.mine ? '--win' : '--lose'})`}`, 'aria-hidden': 'true' }), document.createTextNode(label)]),
       simpleTable(
-        [{ label: '玩家' }, { label: '武器' }, { label: '击倒/协助/死亡', num: true }, { label: '特殊', num: true }, { label: '涂地', num: true }],
+        [{ label: '玩家' }, { label: '武器' }, { label: '击倒/死亡/特殊', num: true }, { label: '涂地', num: true }],
         team.players.map((player) => [
           nameplate(player.name, player.nameplate, player.me),
           weaponSet(player),
-          `${count(player.kills)} / ${count(player.assists)} / ${count(player.deaths)}`,
-          count(player.specials),
+          battleStats(player),
           count(player.paint),
         ]),
         (rowIndex) => (team.players[rowIndex].me ? 'is-me' : ''),
@@ -371,7 +373,7 @@
     return [
       section('比分', scoreBar(battle)),
       section('我的数据', stats([
-        ['武器', me ? weaponSet({ ...me, weapon: me.weapon ?? item.weapon }) : item.weapon],
+        ['武器', me ? weaponSet({ ...me, weapon: me.weapon ?? item.weapon, weaponImage: me.weaponImage ?? item.weaponImage }, false) : img(item.weaponImage, 'weapon-icon', item.weapon) || '—'],
         ['击倒 / 协助 / 死亡', `${count(item.kills)} / ${count(item.assists)} / ${count(item.deaths)}`],
         ['特殊武器', item.specials == null ? '—' : `${item.specials} 次`],
         ['涂地', item.paint == null ? '—' : `${count(item.paint)} 点`],
