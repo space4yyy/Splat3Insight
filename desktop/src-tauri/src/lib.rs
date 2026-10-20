@@ -17,9 +17,12 @@ use splat3_widget_core::{
     AccountMetadata, AccountRegistry, AccountSecret, CachedSecretStore, KeyringSecretStore,
     SecretStore,
 };
+#[cfg(not(target_os = "macos"))]
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
+};
+use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalPosition, RunEvent, State,
     WebviewWindow,
 };
@@ -1795,6 +1798,7 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
     get_autostart(app)
 }
 
+#[cfg(not(target_os = "macos"))]
 fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let open_item = MenuItem::with_id(app, "open-main", "打开主界面", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
@@ -1973,6 +1977,7 @@ pub fn run() {
 
             overlay_service.start().map_err(std::io::Error::other)?;
 
+            #[cfg(not(target_os = "macos"))]
             build_tray(app)?;
             if !launch_in_background {
                 main_window.show()?;

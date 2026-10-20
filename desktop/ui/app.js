@@ -91,7 +91,7 @@
     message.classList.toggle('is-error', error);
   }
 
-  // 关闭窗口：第一次询问是否在后台运行，之后直接隐藏到状态栏。
+  // 关闭窗口：第一次询问是否在后台运行，之后直接在后台运行。
   const closePrompt = $('#background-close-prompt');
   let closePromptAcknowledged = false;
   try {
@@ -120,7 +120,7 @@
     event.preventDefault();
     closePrompt.close();
   });
-  $('#hide-to-tray').addEventListener('click', async () => {
+  $('#hide-to-background').addEventListener('click', async () => {
     acknowledgeClosePrompt();
     closePrompt.close();
     try {
