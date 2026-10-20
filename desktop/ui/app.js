@@ -28,6 +28,7 @@
     obs: ['其他工具', '直播用的 OBS 数据卡片等附加工具。'],
     settings: ['设置', '账号、外观和开机启动。'],
   };
+  const VIEW_KEY = 'splat3-view';
   const OBS_SELECTION_KEY = 'splat3-obs-card-selection';
   const OBS_TRANSPARENCY_KEY = 'splat3-obs-card-transparency';
   // 卡片默认背景 #383838（overlay-card.css），透明度只改它的 alpha。
@@ -236,6 +237,10 @@
     if (view === 'accounts') view = 'settings';
     if (!VIEWS[view]) view = 'overview';
     app.view = view;
+    // 重新打开应用时回到这一页。
+    try {
+      localStorage.setItem(VIEW_KEY, view);
+    } catch {}
     for (const button of document.querySelectorAll('#nav button[data-view]')) {
       if (button.getAttribute('data-view') === view) button.setAttribute('aria-current', 'page');
       else button.removeAttribute('aria-current');
@@ -1166,7 +1171,11 @@
     }));
   }).observe($('.main'));
 
-  showView(location.hash.slice(1) || 'overview');
+  let lastView = null;
+  try {
+    lastView = localStorage.getItem(VIEW_KEY);
+  } catch {}
+  showView(location.hash.slice(1) || lastView || 'overview');
   renderSyncStatus(null);
   loadObsTransparency();
   renderObsTransparency();
