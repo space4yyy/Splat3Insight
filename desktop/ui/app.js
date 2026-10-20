@@ -310,10 +310,25 @@
   function renderAnalysis(view) {
     if (!showDataNotice($(`#${view}-status`), $(`#${view}-content`))) analysis.render(view);
   }
+  // 重新绘制时页面会先变短，浏览器随之把滚动位置往上收，画完也不会回去。画之前撑住当前页面的
+  // 高度，画完放开，再回到原来的位置：数据更新、换筛选、窗口变宽变窄时都停在原处。
+  function keepScroll(render) {
+    const view = document.querySelector('.main > .view:not([hidden])');
+    const top = window.scrollY;
+    if (view) view.style.minHeight = `${view.offsetHeight}px`;
+    try {
+      render();
+    } finally {
+      if (view) view.style.minHeight = '';
+      if (window.scrollY !== top) window.scrollTo(0, top);
+    }
+  }
   function renderDataView() {
-    if (app.view === 'overview') renderOverview();
-    else if (analysis.VIEWS.includes(app.view)) renderAnalysis(app.view);
-    else if (app.view === 'log') renderLog();
+    keepScroll(() => {
+      if (app.view === 'overview') renderOverview();
+      else if (analysis.VIEWS.includes(app.view)) renderAnalysis(app.view);
+      else if (app.view === 'log') renderLog();
+    });
   }
   dashboard.onFiltersChange(renderDataView);
   // 总览里点最近的一场：切到对战记录并打开这一条的详情。
@@ -1144,11 +1159,11 @@
     if (width === lastWidth) return;
     lastWidth = width;
     cancelAnimationFrame(resizeFrame);
-    resizeFrame = requestAnimationFrame(() => {
+    resizeFrame = requestAnimationFrame(() => keepScroll(() => {
       if (app.view === 'overview') renderOverview();
       else if (analysis.VIEWS.includes(app.view)) renderAnalysis(app.view);
       else if (app.view === 'obs') fitObsPreview();
-    });
+    }));
   }).observe($('.main'));
 
   showView(location.hash.slice(1) || 'overview');
