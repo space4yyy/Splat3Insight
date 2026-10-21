@@ -67,6 +67,7 @@
   font-size: clamp(16px, 3.8cqi, 21px);
   line-height: .9;
   letter-spacing: .04em;
+  transition: color .25s ease-out;
 }
 
 .overlay-card__mode.mode-x-match {
@@ -155,6 +156,7 @@
   line-height: .9;
   letter-spacing: 0;
   white-space: nowrap;
+  transition: color .25s ease-out;
 }
 
 .overlay-card__power-value.is-placeholder,
@@ -392,6 +394,7 @@
   background-repeat: no-repeat;
   background-size: 100% var(--boss-wave-y-scale, 100%);
   animation: salmon-run-boss-wave-scroll 12s linear infinite;
+  transition: background-size .5s cubic-bezier(.22, 1, .36, 1);
   opacity: 0.8;
 }
 
@@ -577,6 +580,36 @@
   display: none;
 }
 
+/* 卡片首次显示或切换类型时渐入，内部内容轻微上浮，不越出卡片圆角边界。 */
+@keyframes overlay-card-enter {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes overlay-card-content-enter {
+  from {
+    translate: 0 3px;
+  }
+}
+
+.overlay-card,
+.salmon-run-card,
+.defeat-count-card,
+.clock-card {
+  animation: overlay-card-enter .22s cubic-bezier(.22, 1, .36, 1);
+}
+
+.overlay-card__top,
+.overlay-card__bottom,
+.salmon-run-card__top,
+.salmon-run-card__stats,
+.salmon-run-card > .salmon-run-card__bottom > .salmon-run-card__details,
+.defeat-count-card__item,
+.clock-card__time {
+  animation: overlay-card-content-enter .22s cubic-bezier(.22, 1, .36, 1);
+}
+
 /* 数字变化时短暂发光，配合渲染器里的数字滚动。不写起止帧，前后沿用元素原本的样式。 */
 @keyframes overlay-card-number-changed {
   20% {
@@ -589,7 +622,25 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .is-number-changed {
+  .overlay-card,
+  .salmon-run-card,
+  .defeat-count-card,
+  .clock-card,
+  .overlay-card__top,
+  .overlay-card__bottom,
+  .salmon-run-card__top,
+  .salmon-run-card__stats,
+  .salmon-run-card > .salmon-run-card__bottom > .salmon-run-card__details,
+  .defeat-count-card__item,
+  .clock-card__time,
+  .is-number-changed,
+  .salmon-run-card__boss-gauge-fill::before {
     animation: none;
+  }
+
+  .overlay-card__mode,
+  .overlay-card__power-delta,
+  .salmon-run-card__boss-gauge-fill::before {
+    transition: none;
   }
 }

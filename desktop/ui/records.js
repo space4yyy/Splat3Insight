@@ -541,7 +541,6 @@
     if (drawer.hidden) return;
     drawer.hidden = true;
     backdrop.hidden = true;
-    drawer.replaceChildren();
     const row = state.selected ? document.querySelector(`#log-table tr[data-record="${CSS.escape(state.selected)}"]`) : null;
     state.selected = null;
     overviewList = null;
