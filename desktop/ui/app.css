@@ -8,7 +8,9 @@
    --color-xmatch、--color-bankara、--color-league、--color-private、--color-coop。
    黄色用于主要选中、胜利、上升；蓝色用于次要控件、账号、失败、下降。图表、标志和模式色在两种主题下都用原色；
    只有文字为了看清调了深浅（深色主题的蓝字调浅，浅色主题的黄字调深）。
-   按百分比着色的色阶两端就是官方黄、蓝，中间几档向中间的灰色过渡。 */
+   按百分比着色的色阶两端就是官方黄、蓝，中间几档向中间的灰色过渡。
+   鲑鱼跑的色阶两端换成打工色：低于平均取 --color-coop 橙，高于平均取 --color-salmon-green 绿 #00f82d，
+   和 SplatNet 3 打工记录里失败波次用橙、通关和击倒头目鲑鱼用绿一致。 */
 :root {
   color-scheme: dark;
   --bg: #111117;
@@ -31,11 +33,12 @@
   --mode-regular: var(--splat-yellow);
   --mode-private: #a51ee1;
   --mode-salmon: #ff5033;
+  --salmon-green: #00f82d;
   --good: #0ca30c;
   --danger-text: #ff668a;
   --danger-solid: #c8254a;
   --danger-wash: rgba(255, 102, 138, 0.1);
-  --salmon-total: #00f82d;
+  --salmon-total: var(--salmon-green);
   --up-text: var(--splat-yellow);
   --down-text: #9598fe;
   --context: #6e6c80;
@@ -52,6 +55,12 @@
   --div-pos-1: #717845;
   --div-pos-2: #a7b449;
   --div-pos-3: var(--splat-yellow);
+  --salmon-div-neg-3: var(--mode-salmon);
+  --salmon-div-neg-2: #b74e3a;
+  --salmon-div-neg-1: #7c463a;
+  --salmon-div-pos-1: #447740;
+  --salmon-div-pos-2: #40b140;
+  --salmon-div-pos-3: var(--salmon-green);
   --shadow: rgba(0, 0, 0, 0.45);
   --hover-wash: rgba(255, 255, 255, 0.06);
   --scrim: rgba(6, 6, 10, 0.55);
@@ -107,6 +116,10 @@
     --div-mid: #ecebe8;
     --div-pos-1: #ebf3bb;
     --div-pos-2: #eafa86;
+    --salmon-div-neg-2: #ff876f;
+    --salmon-div-neg-1: #fbbbac;
+    --salmon-div-pos-1: #bbf2b5;
+    --salmon-div-pos-2: #7ef67b;
     --shadow: rgba(24, 20, 48, 0.14);
     --hover-wash: rgba(24, 20, 48, 0.05);
     --scrim: rgba(20, 18, 40, 0.28);
@@ -146,6 +159,10 @@
   --div-mid: #ecebe8;
   --div-pos-1: #ebf3bb;
   --div-pos-2: #eafa86;
+  --salmon-div-neg-2: #ff876f;
+  --salmon-div-neg-1: #fbbbac;
+  --salmon-div-pos-1: #bbf2b5;
+  --salmon-div-pos-2: #7ef67b;
   --shadow: rgba(24, 20, 48, 0.14);
   --hover-wash: rgba(24, 20, 48, 0.05);
   --scrim: rgba(20, 18, 40, 0.28);

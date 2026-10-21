@@ -44,8 +44,8 @@
     document.createTextNode(pct(rate, digits)),
   ]));
   const legendSwatch = (background, text) => el('span', {}, [el('span', { class: 'swatch', style: `background:${background}` }), document.createTextNode(text)]);
-  const divergingLegend = (low, high, thin) => [
-    el('span', {}, [document.createTextNode(`${low} `), el('span', { class: 'legend-scale' }, COLOR.div.map((color) => el('span', { style: `background:${color}` }))), document.createTextNode(` ${high}`)]),
+  const divergingLegend = (low, high, thin, colors = COLOR.div) => [
+    el('span', {}, [document.createTextNode(`${low} `), el('span', { class: 'legend-scale' }, colors.map((color) => el('span', { style: `background:${color}` }))), document.createTextNode(` ${high}`)]),
     el('span', {}, [el('span', { class: 'legend-scale' }, [el('span', { class: 'thin-swatch' })]), document.createTextNode(` ${thin}`)]),
   ];
   const miniStat = (label, value) => el('div', { class: 'mini-stat' }, [el('span', { text: label }), el('strong', { class: value === '—' ? 'placeholder' : '', text: value })]);
@@ -757,7 +757,7 @@
       const tr = el('tr', {}, el('td', { text: row.event ?? '无' }));
       for (const cell of row.cells) {
         tr.append(matrixCell({
-          n: cell.n, rate: cell.rate, fill: cell.n >= analysis.MIN_DECIDED ? divergingColor(cell.rate - matrix.average + 0.5) : null, unit: '波',
+          n: cell.n, rate: cell.rate, fill: cell.n >= analysis.MIN_DECIDED ? divergingColor(cell.rate - matrix.average + 0.5, COLOR.salmonDiv) : null, unit: '波',
           title: `${row.event ?? '无特殊波次'} · ${cell.water}`, detail: `通关 ${cell.cleared} / ${cell.n} 波`,
         }));
       }
@@ -765,7 +765,7 @@
     }
     table.append(body);
     box.replaceChildren(table);
-    legend.append(...divergingLegend('低于平均', `高于平均（${pct(matrix.average, 0)}）`, '少于 3 波'));
+    legend.append(...divergingLegend('低于平均', `高于平均（${pct(matrix.average, 0)}）`, '少于 3 波', COLOR.salmonDiv));
   }
   const CONTRIBUTION = [
     { key: 'goldenEggs', label: '金鲑鱼卵', unit: '个', step: 2, cap: 40, every: 5 },

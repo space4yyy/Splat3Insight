@@ -12,6 +12,7 @@
     salmon: token('--mode-salmon'), context: token('--context'), seq0: token('--seq-0'),
     seq: ['--seq-1', '--seq-2', '--seq-3', '--seq-4', '--seq-5'].map(token),
     div: ['--div-neg-3', '--div-neg-2', '--div-neg-1', '--div-mid', '--div-pos-1', '--div-pos-2', '--div-pos-3'].map(token),
+    salmonDiv: ['--salmon-div-neg-3', '--salmon-div-neg-2', '--salmon-div-neg-1', '--div-mid', '--salmon-div-pos-1', '--salmon-div-pos-2', '--salmon-div-pos-3'].map(token),
     modes: {
       x: token('--mode-x'), anarchy: token('--mode-anarchy'), event: token('--mode-event'),
       regular: token('--mode-regular'), private: token('--mode-private'), other: token('--context'),
@@ -224,12 +225,12 @@
     });
     return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.22 ? '#0b0b0b' : '#ffffff';
   }
-  function divergingColor(winRate) {
+  function divergingColor(winRate, colors = COLOR.div) {
     const delta = winRate - 0.5;
     const distance = Math.abs(delta);
     const step = distance < 0.03 ? 0 : distance < 0.08 ? 1 : distance < 0.15 ? 2 : 3;
-    if (step === 0) return COLOR.div[3];
-    return delta > 0 ? COLOR.div[3 + step] : COLOR.div[3 - step];
+    if (step === 0) return colors[3];
+    return delta > 0 ? colors[3 + step] : colors[3 - step];
   }
 
   const tip = document.getElementById('tip');
