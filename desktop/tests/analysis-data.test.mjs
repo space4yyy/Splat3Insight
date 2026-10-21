@@ -199,6 +199,37 @@ test('kit rows group by sub or special weapon and list the main weapons by use',
   assert.equal(rows[0].image, 'sub.png');
 });
 
+test('opponent weapon rows deduplicate within a battle, track appearances, and rank matchup extremes', () => {
+  const opp = (id, name, image = null) => ({ id, name, image });
+  const list = [
+    battle({ t: 1, result: 'win', kills: 8, deaths: 2, opponents: [opp('o1', '斯普拉射击枪', 's1.png'), opp('o1', '斯普拉射击枪', 's2.png'), opp('o2', '北斋')] }),
+    battle({ t: 2, result: 'win', kills: 6, deaths: 3, opponents: [opp('o1', '斯普拉射击枪'), opp('o2', '北斋', 'b.png')] }),
+    battle({ t: 3, result: 'win', kills: 7, deaths: 4, opponents: [opp('o1', '斯普拉射击枪')] }),
+    battle({ t: 4, result: 'lose', kills: 3, deaths: 6, opponents: [opp('o2', '北斋'), opp('o3', '公升4K')] }),
+    battle({ t: 5, result: 'lose', kills: 2, deaths: 5, opponents: [opp('o2', '北斋'), opp('o3', '公升4K')] }),
+    battle({ t: 6, result: 'win', kills: 5, deaths: 5, opponents: [] }),
+  ];
+  const rows = analysis.opponentWeaponRows(list);
+  deepEqual(rows.map((row) => [row.key, row.n, row.appearances, row.wins, row.losses]), [
+    ['o2', 4, 4, 2, 2],
+    ['o1', 3, 4, 3, 0],
+    ['o3', 2, 2, 0, 2],
+  ]);
+  // 登场率分母是有对手武器数据的 5 场对战。
+  assert.equal(rows[0].share, 4 / 5);
+  assert.equal(rows[1].share, 3 / 5);
+  assert.equal(rows[1].image, 's2.png');
+  assert.equal(rows[1].wr, 1);
+  assert.equal(rows[0].wr, 0.5);
+
+  // o3 只有 2 场分出胜负，不进入对阵胜率对比；o1（100%）与 o2（50%）各满 3 场。
+  const extremes = analysis.opponentExtremes(rows, 5);
+  deepEqual(extremes.best.map((row) => row.key), ['o1']);
+  deepEqual(extremes.worst.map((row) => row.key), ['o2']);
+  deepEqual(extremes.ordered.map((row) => row.key), ['o1', 'o2']);
+  assert.equal(analysis.opponentExtremes(rows.filter((row) => row.key !== 'o1')), null);
+});
+
 test('stage ranking and the stage × weapon matrix only trust three decided games', () => {
   const list = [
     ...Array.from({ length: 3 }, () => battle({ stage: 'A', weapon: 'W1', result: 'win' })),

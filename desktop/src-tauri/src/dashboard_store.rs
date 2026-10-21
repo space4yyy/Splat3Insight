@@ -14,8 +14,8 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 use serde_json::Value;
 use splat3_widget_core::dashboard::{
-    battle_fact, coop_defeat_facts, coop_fact, BattleFact, CoopDefeatFact, CoopDefeatFacts,
-    CoopFact, CoopWaveFact, CoopWeaponFact, DASHBOARD_FACTS_VERSION,
+    battle_fact, coop_defeat_facts, coop_fact, BattleFact, BattleWeaponFact, CoopDefeatFact,
+    CoopDefeatFacts, CoopFact, CoopWaveFact, CoopWeaponFact, DASHBOARD_FACTS_VERSION,
 };
 use splat3_widget_core::history::{BattleRecord, CoopRecord};
 use std::collections::HashMap;
@@ -57,6 +57,7 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
                  paint INTEGER,
                  power REAL,
                  power_kind TEXT,
+                 opponent_weapons_json TEXT,
                  PRIMARY KEY (account_id, record_id)
              );
              CREATE INDEX IF NOT EXISTS idx_extension_dashboard_battles_time
@@ -112,6 +113,7 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
             ("sub_weapon_image", "TEXT"),
             ("special_weapon_name", "TEXT"),
             ("special_weapon_image", "TEXT"),
+            ("opponent_weapons_json", "TEXT"),
         ],
     )?;
     add_missing_columns(
@@ -194,6 +196,8 @@ fn write_battle(
     account_id: &str,
     fact: &BattleFact,
 ) -> Result<(), String> {
+    let opponent_weapons_json = serde_json::to_string(&fact.opponent_weapons)
+        .map_err(|error| format!("序列化面板对手武器失败：{error}"))?;
     connection
         .execute(
             "INSERT OR REPLACE INTO extension_dashboard_battles(
@@ -201,8 +205,8 @@ fn write_battle(
                  stage_id, stage_name, weapon_id, weapon_name, judgement, knockout,
                  duration_seconds, kills, assists, deaths, specials, paint, power, power_kind,
                  weapon_image, sub_weapon_name, sub_weapon_image, special_weapon_name,
-                 special_weapon_image
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
+                 special_weapon_image, opponent_weapons_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
             params![
                 account_id,
                 fact.record_id,
@@ -230,6 +234,7 @@ fn write_battle(
                 fact.sub_weapon_image,
                 fact.special_weapon_name,
                 fact.special_weapon_image,
+                opponent_weapons_json,
             ],
         )
         .map_err(|error| format!("保存面板对战数据失败：{error}"))?;
@@ -578,6 +583,14 @@ pub(crate) struct BattleRow {
     paint: Option<i64>,
     power: Option<f64>,
     power_kind: Option<String>,
+    opponent_weapons: Vec<BattleWeaponRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct BattleWeaponRow {
+    id: Option<String>,
+    name: Option<String>,
+    image: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -638,7 +651,7 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
                         stage_id, stage_name, weapon_id, weapon_name, judgement, knockout,
                         duration_seconds, kills, assists, deaths, specials, paint, power, power_kind,
                         weapon_image, sub_weapon_name, sub_weapon_image, special_weapon_name,
-                        special_weapon_image
+                        special_weapon_image, opponent_weapons_json
                  FROM extension_dashboard_battles
                  WHERE account_id = ?1 AND played_at_ms IS NOT NULL
                  ORDER BY played_at_ms, record_id",
@@ -646,6 +659,7 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
             .map_err(|error| format!("准备面板对战查询失败：{error}"))?;
         let rows = statement
             .query_map([account_id], |row| {
+                let opponent_weapons_json: Option<String> = row.get(25)?;
                 Ok(BattleRow {
                     id: row.get(0)?,
                     played_at_ms: row.get(1)?,
@@ -672,6 +686,16 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
                     sub_weapon_image: images.add(row.get(22)?),
                     special_weapon_name: row.get(23)?,
                     special_weapon_image: images.add(row.get(24)?),
+                    opponent_weapons: opponent_weapons_json
+                        .and_then(|json| serde_json::from_str::<Vec<BattleWeaponFact>>(&json).ok())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|weapon| BattleWeaponRow {
+                            id: weapon.id,
+                            name: weapon.name,
+                            image: images.add(weapon.image),
+                        })
+                        .collect(),
                 })
             })
             .map_err(|error| format!("读取面板对战数据失败：{error}"))?;
@@ -909,6 +933,7 @@ mod tests {
             "sub_weapon_image",
             "special_weapon_name",
             "special_weapon_image",
+            "opponent_weapons_json",
         ] {
             assert!(battles.iter().any(|name| name == column), "{column}");
         }
@@ -939,6 +964,15 @@ mod tests {
                 "subWeapon": { "name": "吸盘炸弹", "image": { "url": "https://example.test/sub.png" } },
                 "specialWeapon": { "name": "螃蟹坦克", "image": { "url": "https://example.test/sp.png" } }
             });
+            armed.raw["otherTeams"] = json!([{
+                "players": [{
+                    "weapon": {
+                        "id": "weapon-10",
+                        "name": "新叶射击枪",
+                        "image": { "url": "https://example.test/c1.png" }
+                    }
+                }]
+            }]);
             writer
                 .save("account", 1, HistoryFetchedRecord::Battle(armed))
                 .unwrap();
@@ -963,6 +997,16 @@ mod tests {
         assert_eq!(
             link(battle.special_weapon_image),
             Some("https://example.test/sp.png")
+        );
+        assert_eq!(battle.opponent_weapons.len(), 1);
+        assert_eq!(battle.opponent_weapons[0].id.as_deref(), Some("weapon-10"));
+        assert_eq!(
+            battle.opponent_weapons[0].name.as_deref(),
+            Some("新叶射击枪")
+        );
+        assert_eq!(
+            link(battle.opponent_weapons[0].image),
+            Some("https://example.test/c1.png")
         );
         // 两场用的是同一套图片：每个链接只传一份。
         assert_eq!(facts.battles[1].sub_weapon_image, battle.sub_weapon_image);

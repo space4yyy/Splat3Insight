@@ -149,12 +149,27 @@ test('stage and weapon names merge by id across languages', () => {
       battleRow({ id: 'b1', played_at_ms: 1, stage_id: 'stage-1', stage_name: '溫泉花大峽谷', weapon_id: 'weapon-40', weapon_name: '斯普拉射擊槍' }),
       battleRow({ id: 'b2', played_at_ms: 2, stage_id: 'stage-1', stage_name: 'Scorch Gorge', weapon_id: 'weapon-40', weapon_name: 'Splattershot' }),
       battleRow({ id: 'b3', played_at_ms: 3, stage_id: 'stage-9', stage_name: '未來場地', weapon_id: 'weapon-9', weapon_name: '未來武器' }),
-      battleRow({ id: 'b4', played_at_ms: 4, stage_id: 'stage-9', stage_name: 'Future Stage', weapon_id: 'weapon-9', weapon_name: 'Future Weapon' }),
+      battleRow({
+        id: 'b4',
+        played_at_ms: 4,
+        stage_id: 'stage-9',
+        stage_name: 'Future Stage',
+        weapon_id: 'weapon-9',
+        weapon_name: 'Future Weapon',
+        opponent_weapons: [
+          { id: 'weapon-50', name: '北齋', image: null },
+          { id: 'weapon-50', name: 'Octobrush', image: 'https://example.test/octo.png' },
+        ],
+      }),
     ],
     coop: [],
   });
   assert.deepEqual(Array.from(battles, (battle) => battle.stage), ['温泉花大峡谷', '温泉花大峡谷', 'Future Stage', 'Future Stage']);
   assert.deepEqual(Array.from(battles, (battle) => battle.weapon), ['斯普拉射击枪', '斯普拉射击枪', 'Future Weapon', 'Future Weapon']);
+  assert.deepEqual(JSON.parse(JSON.stringify(battles[3].opponents)), [
+    { id: 'weapon-50', name: '北斋', image: null },
+    { id: 'weapon-50', name: '北斋', image: 'https://example.test/octo.png' },
+  ]);
 });
 
 test('Salmon Run stages, grades and kings use the game text', () => {

@@ -53,6 +53,13 @@
       subImage: link(row.sub_weapon_image),
       special: gameName('specialWeapons', row.special_weapon_name),
       specialImage: link(row.special_weapon_image),
+      opponents: (row.opponent_weapons || [])
+        .map((weapon) => ({
+          id: weapon?.id || weapon?.name || null,
+          name: nameOf(names?.weapons, weapon?.id, weapon?.name, 'weapons') || '未知武器',
+          image: link(weapon?.image),
+        }))
+        .filter((weapon) => weapon.id),
       win: row.judgement === 'WIN',
       lose: LOSSES.has(row.judgement),
       duration: isNum(row.duration_seconds) ? row.duration_seconds : null,
@@ -158,9 +165,13 @@
     const byTime = (a, b) => a.played_at_ms - b.played_at_ms;
     const battleRows = (facts?.battles || []).filter((row) => isNum(row.played_at_ms)).sort(byTime);
     const coopRows = (facts?.coop || []).filter((row) => isNum(row.played_at_ms)).sort(byTime);
+    const opponentWeaponRows = battleRows.flatMap((row) => (row.opponent_weapons || []).map((weapon) => ({
+      weapon_id: weapon?.id,
+      weapon_name: weapon?.name,
+    })));
     const names = {
       stages: namesById(battleRows, 'stage_id', 'stage_name', 'stages'),
-      weapons: namesById(battleRows, 'weapon_id', 'weapon_name', 'weapons'),
+      weapons: namesById([...battleRows, ...opponentWeaponRows], 'weapon_id', 'weapon_name', 'weapons'),
       coopStages: namesById(coopRows, 'stage_id', 'stage_name', 'coopStages'),
     };
     const link = linkIn(Array.isArray(facts?.images) ? facts.images : []);

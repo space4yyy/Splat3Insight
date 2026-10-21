@@ -418,6 +418,7 @@
     }
     renderWeaponRanking();
     renderWeaponDetail();
+    renderOpponents(battles);
     renderKitTable('sub-table', 'sub', '副武器', battles);
     renderKitTable('special-table', 'special', '特殊武器', battles);
   }
@@ -543,6 +544,143 @@
     const extremes = analysis.stageExtremes(row.battles);
     if (!extremes) emptyState(stageBox, '场地样本不足', '每张图至少 3 场分出胜负后比较。');
     else stageBox.append(stageRanks('最好', extremes.best), stageRanks('最差', extremes.worst));
+  }
+  function opponentRanks(label, items) {
+    const body = el('tbody', {}, items.map((item) => el('tr', {}, [
+      el('td', {}, records.iconWithName(item.image, item.name)),
+      el('td', {}, meterCell(item.wr, 0)),
+      el('td', { class: 'num font-number', text: `${item.n} 场` }),
+    ])));
+    return el('div', { class: 'stage-split' }, [el('p', { class: 'mini-label', text: label }), el('div', { class: 'scroll-x' }, el('table', { class: 'data compact' }, body))]);
+  }
+  function renderOpponents(list) {
+    const chartBox = $('opponent-chart');
+    const extremesBox = $('opponent-extremes');
+    chartBox.style.minHeight = '';
+    extremesBox.style.minHeight = '';
+    const rows = analysis.opponentWeaponRows(list);
+    if (!rows.length) {
+      if (!list.length) {
+        noBattles(chartBox);
+        noBattles(extremesBox);
+      } else {
+        emptyState(chartBox, '没有对手武器数据', '同步包含对局详情的记录后显示。');
+        emptyState(extremesBox, '没有对手武器数据', '同步包含对局详情的记录后显示。');
+      }
+      return;
+    }
+
+    // 先按默认视图量出两侧卡片的自然高度；切换“查看表格”时沿用同一高度，避免卡片跳动或底部留白。
+    extremesBox.textContent = '';
+    const extremes = analysis.opponentExtremes(rows, 4);
+    if (!extremes) {
+      emptyState(extremesBox, '对阵样本不足', '至少 2 把对手武器各有 3 场分出胜负后比较。');
+    } else {
+      extremesBox.append(opponentRanks('最好打（胜率最高）', extremes.best), opponentRanks('最难打（胜率最低）', extremes.worst));
+    }
+
+    const shown = rows.slice(0, 12);
+    const top = 4;
+    const bottom = 20;
+    const chartNaturalHeight = top + shown.length * 26 + bottom;
+    const extremesNaturalHeight = Math.floor(extremesBox.offsetHeight);
+    const chartCard = chartBox.closest('.card');
+    const extremesCard = extremesBox.closest('.card');
+    const sideBySide = Boolean(chartCard && extremesCard && chartCard.getBoundingClientRect().top === extremesCard.getBoundingClientRect().top);
+    const sharedHeight = Math.max(chartNaturalHeight, extremesNaturalHeight);
+
+    if (extremes && dashboard.tableOn('opponentRank')) {
+      const targetHeight = sideBySide ? sharedHeight : extremesNaturalHeight;
+      renderTable(extremesBox, [
+        { label: '对手武器' },
+        { label: '遇到场次', num: true },
+        { label: '对阵胜率' },
+        { label: 'K/D', num: true },
+      ], extremes.ordered.map((row) => [
+        records.iconWithName(row.image, row.name),
+        String(row.n),
+        meterCell(row.wr),
+        fixed(row.kd, 2),
+      ]));
+      if (targetHeight > 0) {
+        extremesBox.style.minHeight = `${targetHeight}px`;
+        const wrap = extremesBox.querySelector('.table-wrap');
+        if (wrap) wrap.style.maxHeight = `${targetHeight}px`;
+      }
+    }
+
+    if (dashboard.tableOn('opponents')) {
+      const targetHeight = sideBySide ? sharedHeight : chartNaturalHeight;
+      renderTable(chartBox, [
+        { label: '对手武器' },
+        { label: '遇到场次', num: true },
+        { label: '登场率', num: true },
+        { label: '对阵胜率' },
+        { label: 'K/D', num: true },
+      ], rows.map((row) => [
+        records.iconWithName(row.image, row.name),
+        String(row.n),
+        pct(row.share, 0),
+        enough(row) ? meterCell(row.wr) : '样本不足',
+        fixed(row.kd, 2),
+      ]));
+      if (targetHeight > 0) {
+        chartBox.style.minHeight = `${targetHeight}px`;
+        const wrap = chartBox.querySelector('.table-wrap');
+        if (wrap) wrap.style.maxHeight = `${targetHeight}px`;
+      }
+      return;
+    }
+
+    chartBox.textContent = '';
+    const width = Math.max(280, Math.floor(chartBox.clientWidth));
+    const iconSize = 22;
+    const iconGap = 6;
+    const textX = shown.some((row) => records.imageSrc(row.image)) ? iconSize + iconGap : 0;
+    const labelWidth = Math.min(204, textX + Math.ceil(Math.max(0, ...shown.map((row) => textWidth(row.name, 13)))) + 14);
+    const rightWidth = 92;
+    const height = sideBySide && extremesNaturalHeight > chartNaturalHeight && (extremesNaturalHeight - top - bottom) / shown.length <= 38
+      ? extremesNaturalHeight
+      : chartNaturalHeight;
+    const rowHeight = (height - top - bottom) / shown.length;
+    const barHeight = Math.round(Math.max(14, Math.min(18, rowHeight * 0.55)));
+    const plotWidth = Math.max(80, width - labelWidth - rightWidth);
+    const eligible = shown.filter(enough);
+    const deviation = Math.max(0.2, Math.ceil(Math.max(0, ...eligible.map((row) => Math.abs(row.wr - 0.5))) * 10 - 1e-9) / 10);
+    const x = (value) => labelWidth + ((Math.max(0.5 - deviation, Math.min(0.5 + deviation, value)) - (0.5 - deviation)) / (2 * deviation)) * plotWidth;
+    const svg = svgEl('svg', { width, height, viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': `常见对手武器及对阵胜率：${shown.map((row) => `${row.name} ${row.n} 场 ${enough(row) ? pct(row.wr, 0) : '样本不足'}`).join('，')}` }, chartBox);
+    const step = plotWidth / (deviation * 20) >= 34 ? 0.1 : 0.2;
+    for (let offset = -Math.floor(deviation / step + 1e-9) * step; offset <= deviation + 1e-9; offset += step) {
+      const tick = 0.5 + offset;
+      const middle = Math.abs(offset) < 1e-9;
+      svgEl('line', { x1: x(tick), x2: x(tick), y1: top, y2: top + shown.length * rowHeight, stroke: middle ? COLOR.ink3 : COLOR.line, 'stroke-width': 1, 'stroke-dasharray': middle ? '3 3' : 'none' }, svg);
+      svgText(svg, x(tick), height - 4, `${Math.round(tick * 100)}%`, { 'text-anchor': 'middle', class: 'font-number' });
+    }
+    const maxLabel = labelWidth - textX - 10;
+    shown.forEach((row, index) => {
+      const cy = top + index * rowHeight + rowHeight / 2;
+      const src = records.imageSrc(row.image);
+      if (src) {
+        const icon = svgEl('image', { href: src, x: 0, y: cy - iconSize / 2, width: iconSize, height: iconSize, preserveAspectRatio: 'xMidYMid meet' }, svg);
+        icon.addEventListener('error', () => icon.remove());
+      }
+      const label = svgText(svg, textX, cy + 5, row.name, { fill: COLOR.ink2, 'font-size': 13 });
+      for (let length = row.name.length - 1; length > 0 && textWidth(label.textContent, 13) > maxLabel; length -= 1) {
+        label.textContent = `${row.name.slice(0, length)}…`;
+      }
+      if (enough(row)) {
+        svgEl('path', { d: hbarPath(x(0.5), x(row.wr), cy - barHeight / 2, cy + barHeight / 2), fill: row.wr >= 0.5 ? COLOR.meterWin : COLOR.meterLose }, svg);
+        svgText(svg, width - rightWidth + 10, cy + 5, pct(row.wr, 0), { fill: COLOR.ink, 'font-size': 13, class: 'font-number' });
+      } else {
+        svgText(svg, width - rightWidth + 10, cy + 5, '样本不足', {});
+      }
+      svgText(svg, width, cy + 5, `${row.n} 场`, { 'text-anchor': 'end', class: 'font-number' });
+      bindTip(rowHit(svg, cy - rowHeight / 2, width, rowHeight), () => [row.name, [
+        { value: enough(row) ? pct(row.wr) : '样本不足', label: `对阵 ${row.wins} 胜 ${row.losses} 负`, color: enough(row) ? (row.wr >= 0.5 ? COLOR.meterWin : COLOR.meterLose) : COLOR.seq0, box: true },
+        { value: `${row.n} 场`, label: `登场率 ${pct(row.share, 0)} · 共 ${row.appearances} 人次` },
+        { value: fixed(row.kd, 2), label: `我方 K/D · 场均 ${fixed(row.avgK)} 击倒 / ${fixed(row.avgD)} 死亡` },
+      ]]);
+    });
   }
   function renderKitTable(boxId, key, label, list) {
     const box = $(boxId);

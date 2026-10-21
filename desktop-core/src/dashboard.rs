@@ -10,7 +10,15 @@ use serde_json::Value;
 use crate::history::{BattleRecord, CoopRecord};
 
 /// Bump when the extraction below changes so stored facts are rebuilt.
-pub const DASHBOARD_FACTS_VERSION: i64 = 3;
+pub const DASHBOARD_FACTS_VERSION: i64 = 4;
+
+/// 对战里一把武器的标识、名称和图片（名称跟着账号语言，图片是带签名的原链接）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BattleWeaponFact {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub image: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BattleFact {
@@ -41,6 +49,9 @@ pub struct BattleFact {
     pub paint: Option<i64>,
     pub power: Option<f64>,
     pub power_kind: Option<String>,
+    /// 对方队伍这场的武器（按对方队伍和队员顺序）。
+    #[serde(default)]
+    pub opponent_weapons: Vec<BattleWeaponFact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -163,7 +174,31 @@ pub fn battle_fact(record: &BattleRecord, raw: &Value) -> BattleFact {
         paint: record.paint,
         power: record.power,
         power_kind: record.power_kind.clone(),
+        opponent_weapons: opponent_battle_weapons(raw),
     }
+}
+
+fn opponent_battle_weapons(raw: &Value) -> Vec<BattleWeaponFact> {
+    let Some(teams) = raw.get("otherTeams").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    teams
+        .iter()
+        .filter_map(|team| team.get("players")?.as_array())
+        .flatten()
+        .filter_map(|player| {
+            let id = text(player, "/weapon/id");
+            let name = text(player, "/weapon/name");
+            if id.is_none() && name.is_none() {
+                return None;
+            }
+            Some(BattleWeaponFact {
+                id,
+                name,
+                image: text(player, "/weapon/image/url"),
+            })
+        })
+        .collect()
 }
 
 pub fn coop_fact(record: &CoopRecord, raw: &Value) -> CoopFact {
@@ -346,7 +381,13 @@ mod tests {
                     "subWeapon": { "name": "吸盘炸弹", "image": { "url": "https://example.test/sub.png" } },
                     "specialWeapon": { "name": "螃蟹坦克", "image": { "url": "https://example.test/sp.png" } }
                 } }
-            ] }
+            ] },
+            "otherTeams": [{
+                "players": [
+                    { "weapon": { "id": "V2VhcG9uLTEw", "name": "新叶射击枪", "image": { "url": "https://example.test/o1.png" } } },
+                    { "weapon": { "id": null, "name": null } }
+                ]
+            }]
         });
         let fact = battle_fact(&battle_record(), &raw);
         assert_eq!(fact.rule_code.as_deref(), Some("AREA"));
@@ -372,6 +413,14 @@ mod tests {
         assert_eq!(fact.power, Some(1987.4));
         assert_eq!(fact.power_kind.as_deref(), Some("weapon"));
         assert_eq!(fact.kills, Some(7));
+        assert_eq!(
+            fact.opponent_weapons,
+            vec![BattleWeaponFact {
+                id: Some("V2VhcG9uLTEw".to_owned()),
+                name: Some("新叶射击枪".to_owned()),
+                image: Some("https://example.test/o1.png".to_owned()),
+            }]
+        );
     }
 
     #[test]
@@ -384,6 +433,7 @@ mod tests {
         assert_eq!(fact.duration_seconds, None);
         assert_eq!(fact.sub_weapon_name, None);
         assert_eq!(fact.special_weapon_image, None);
+        assert!(fact.opponent_weapons.is_empty());
         assert_eq!(fact.rule_name.as_deref(), Some("真格区域"));
     }
 

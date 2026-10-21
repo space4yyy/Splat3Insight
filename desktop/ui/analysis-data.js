@@ -191,6 +191,58 @@
       .sort((a, b) => b.n - a.n);
   }
 
+  // 对手武器：同一场里对方有多把相同武器时，遇到场次和胜负只算一场，appearances 记总人次。
+  function opponentWeaponRows(battles) {
+    const withOpponents = battles.filter((battle) => Array.isArray(battle.opponents) && battle.opponents.length > 0);
+    const totalBattles = withOpponents.length;
+    const byWeapon = new Map();
+    for (const battle of withOpponents) {
+      const seenInBattle = new Set();
+      for (const opponent of battle.opponents) {
+        const key = opponent?.id || opponent?.name;
+        if (!key) continue;
+        let entry = byWeapon.get(key);
+        if (!entry) {
+          entry = { key, name: opponent.name || '未知武器', image: null, games: [], appearances: 0, last: battle.t };
+          byWeapon.set(key, entry);
+        }
+        if (opponent.name) entry.name = opponent.name;
+        if (opponent.image != null) entry.image = opponent.image;
+        entry.appearances += 1;
+        entry.last = battle.t;
+        if (!seenInBattle.has(key)) {
+          seenInBattle.add(key);
+          entry.games.push(battle);
+        }
+      }
+    }
+    return [...byWeapon.values()]
+      .map((entry) => ({
+        key: entry.key,
+        name: entry.name,
+        image: entry.image,
+        appearances: entry.appearances,
+        share: totalBattles ? entry.games.length / totalBattles : null,
+        last: entry.last,
+        ...summarize(entry.games),
+      }))
+      .sort((a, b) => b.n - a.n || b.appearances - a.appearances || b.last - a.last);
+  }
+
+  // 对阵胜率最好、最差的对手武器：每把至少 3 场分出胜负，各取最多 take 把。
+  function opponentExtremes(rows, take = 4) {
+    const eligible = rows
+      .filter((row) => decided(row) >= MIN_DECIDED)
+      .sort((a, b) => b.wr - a.wr || b.n - a.n);
+    if (eligible.length < 2) return null;
+    const count = Math.min(take, Math.floor(eligible.length / 2));
+    return {
+      best: eligible.slice(0, count),
+      worst: eligible.slice(-count).reverse(),
+      ordered: eligible,
+    };
+  }
+
   // ----- 场地 -----
 
   function stageRows(battles) {
@@ -366,6 +418,8 @@
     rollingWinRate,
     stageExtremes,
     kitRows,
+    opponentWeaponRows,
+    opponentExtremes,
     stageRows,
     rankStages,
     stageWeaponMatrix,
