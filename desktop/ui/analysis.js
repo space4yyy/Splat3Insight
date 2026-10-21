@@ -1083,6 +1083,8 @@
     if (!record) return;
     $('defeat-sub').title = record.fetchedAt ? `${fmtDateTime(record.fetchedAt)} 更新` : '';
     for (const button of $('defeat-view').querySelectorAll('button[data-defeat-view]')) button.setAttribute('aria-pressed', String(button.getAttribute('data-defeat-view') === defeatView));
+    // 排行条画的是离击倒数徽章最高一级还差多少，标题跟着换成「徽章进度」。
+    $('defeat-title').textContent = defeatView === 'bars' ? '徽章进度' : '击倒数量';
     const groups = [
       ['巨大鲑鱼', record.enemies, analysis.DEFEAT_TARGETS.enemies],
       ['头目鲑鱼', record.bosses, analysis.DEFEAT_TARGETS.bosses],
