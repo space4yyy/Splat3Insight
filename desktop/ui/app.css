@@ -408,6 +408,8 @@ table.data .num { text-align: right; }
 .sort-button:hover, .sort-button[aria-pressed="true"] { color: var(--accent-2-text); }
 .log-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-top: 10px; color: var(--ink-3); font-size: 13px; }
 .log-pager-buttons { display: inline-flex; align-items: center; gap: 10px; }
+.rotation-page-size { display: inline-flex; align-items: center; gap: 6px; }
+.rotation-page-size select { appearance: none; width: 44px; min-width: 0; padding: 4px 10px; text-align: center; text-align-last: center; font-family: var(--font-number); cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='4' viewBox='0 0 6 4'%3E%3Cpath d='m1 1 2 2 2-2' fill='none' stroke='%238e8b9a' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 4px center; }
 table.data tr.is-clickable { cursor: pointer; }
 table.data tr.is-clickable:hover td, table.data tr.is-selected td { background: var(--select-wash); }
 table.data tr.is-clickable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }

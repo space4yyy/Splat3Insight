@@ -307,8 +307,23 @@
                 <div class="card-head">
                   <h2 class="card-title">各期打工</h2>
                 </div>
-                <div class="table-wrap scroll-x" id="rotation-table" tabindex="0" role="region" aria-label="各期打工表格"></div>
+                <div class="table-wrap is-full scroll-x" id="rotation-table" tabindex="0" role="region" aria-label="各期打工表格"></div>
                 <div class="log-pager" id="rotation-pager"></div>
+              </article>
+              <article class="card span-12" id="defeat-card" hidden>
+                <div class="card-head">
+                  <div>
+                    <h2 class="card-title">击倒数量</h2>
+                    <p class="card-sub" id="defeat-sub">累计数量，不受筛选影响</p>
+                  </div>
+                  <div class="card-actions">
+                    <div class="segmented small" id="defeat-view" role="group" aria-label="击倒数量的显示方式">
+                      <button type="button" data-defeat-view="bars" aria-pressed="true">排行</button>
+                      <button type="button" data-defeat-view="grid" aria-pressed="false">图鉴</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="defeat-groups" id="defeat-list"></div>
               </article>
               <article class="card span-8">
                 <div class="card-head">
@@ -337,21 +352,6 @@
                   <div class="card-actions"><button type="button" class="ghost" data-table-toggle="contrib">查看表格</button></div>
                 </div>
                 <div class="chart" id="contrib-chart"></div>
-              </article>
-              <article class="card span-12" id="defeat-card" hidden>
-                <div class="card-head">
-                  <div>
-                    <h2 class="card-title">击倒数量</h2>
-                    <p class="card-sub" id="defeat-sub">累计数量，不受筛选影响</p>
-                  </div>
-                  <div class="card-actions">
-                    <div class="segmented small" id="defeat-view" role="group" aria-label="击倒数量的显示方式">
-                      <button type="button" data-defeat-view="grid" aria-pressed="true">图鉴</button>
-                      <button type="button" data-defeat-view="bars" aria-pressed="false">排行</button>
-                    </div>
-                  </div>
-                </div>
-                <div class="defeat-groups" id="defeat-list"></div>
               </article>
             </div>
           </div>
