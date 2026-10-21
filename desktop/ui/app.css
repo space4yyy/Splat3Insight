@@ -348,10 +348,11 @@ table.data .num { text-align: right; }
 .service-addr { margin-left: 8px; color: var(--ink-3); font-size: 12px; }
 .obs-layout { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); align-items: start; gap: 18px 24px; }
 .obs-column { display: grid; gap: 18px; min-width: 0; }
-.obs-field { display: grid; gap: 8px; min-width: 0; }
+.obs-field { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; }
 .obs-layout .subhead { margin: 0; }
-.obs-url { display: flex; align-items: flex-start; gap: 8px; }
-.obs-url code { flex: 1 1 auto; min-width: 0; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-raised); color: var(--ink); font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0; overflow-wrap: anywhere; }
+.obs-url { display: flex; align-items: flex-start; gap: 8px; min-width: 0; max-width: 100%; }
+.obs-url code { flex: 1 1 0%; min-width: 0; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-raised); color: var(--ink); font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0; overflow-wrap: anywhere; }
+#obs-url code { white-space: nowrap; overflow-wrap: normal; overflow-x: auto; }
 .obs-url .button-primary { flex: none; min-height: 41px; padding: 0 18px; border-radius: 10px; font-size: 14px; }
 .obs-url-warning { margin: 0; color: var(--ink-2); font-size: 12px; }
 .obs-url-warning.is-error { color: var(--danger-text); }
@@ -376,7 +377,9 @@ table.data .num { text-align: right; }
 .overlay-preview__viewport { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; width: 100%; }
 .overlay-preview__scale { width: max-content; transform-origin: top center; font-size: 16px; line-height: normal; letter-spacing: normal; }
 .overlay-preview__scale > .overlay-card, .overlay-preview__scale > .salmon-run-card { --obs-card-width: 320px; --obs-card-height: 80px; }
-.overlay-preview__scale > .clock-card { --obs-card-width: 144px; --obs-card-height: 48px; }
+.overlay-preview__scale > .clock-card { --obs-card-width: 160px; --obs-card-height: 60px; }
+/* 时钟居中放在与数据卡片相同的预览画布内，切换时不改变预览高度。 */
+.overlay-preview[data-card="clock"] .overlay-preview__scale { display: flex; align-items: center; justify-content: center; width: 320px; height: 80px; }
 
 /* 对战记录 */
 .log-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }

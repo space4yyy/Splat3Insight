@@ -1068,8 +1068,8 @@
       .flatMap((id) => Array.from(new URL(obsCardOf(id).route, 'http://localhost').searchParams.keys()));
     return `/overlay?${keys.join('&')}`;
   }
-  // 卡片按浏览器来源的宽高等比缩放：来源按卡片的 4 倍建好，卡片就按那个分辨率绘制，缩小时保持清晰。
-  const obsSourceSize = (card) => [card.width * 4, card.height * 4];
+  // 建议尺寸与卡片目录中的实际尺寸一致。
+  const obsSourceSize = (card) => [card.width, card.height];
   function renderObsUrl() {
     const box = $('#obs-url');
     const card = obsCardOf(app.obs.active) || app.obs.catalog[0];
@@ -1086,7 +1086,7 @@
     });
     box.replaceChildren(el('code', { text: url }), copy);
     const [width, height] = obsSourceSize(card);
-    $('#obs-size-hint').textContent = `在浏览器来源属性里把宽高设为 ${width} × ${height}，卡片会按这个分辨率绘制；在画面里缩小保持清晰，放大会略糊。`;
+    $('#obs-size-hint').textContent = `在浏览器来源属性里把宽高设为 ${width} × ${height}，与卡片实际尺寸一致。`;
   }
   async function copyText(text, button, failure) {
     try {
@@ -1255,9 +1255,9 @@
     const scale = preview?.querySelector('.overlay-preview__scale');
     const card = preview?.querySelector('.overlay-card, .salmon-run-card, .clock-card');
     if (!viewport || !scale || !card) return;
-    const ratio = card.offsetWidth > 0 && preview.clientWidth > 0 ? Math.min(1, preview.clientWidth / card.offsetWidth) : 1;
+    const ratio = scale.offsetWidth > 0 && preview.clientWidth > 0 ? Math.min(1, preview.clientWidth / scale.offsetWidth) : 1;
     scale.style.transform = `scale(${ratio})`;
-    viewport.style.height = `${Math.ceil(card.offsetHeight * ratio)}px`;
+    viewport.style.height = `${Math.ceil(scale.offsetHeight * ratio)}px`;
   }
 
   // 标题栏贴住窗口顶部时（top: -1px，露出的部分少了一像素）加上底色和分隔线。
