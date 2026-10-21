@@ -833,7 +833,7 @@
     };
     previous.addEventListener('click', () => changePage(-1));
     next.addEventListener('click', () => changePage(1));
-    const pageSize = el('select', { class: 'card-select', 'aria-label': '每页打工期数' }, ROTATION_PAGE_SIZES.map((size) => {
+    const pageSize = el('select', { 'aria-label': '每页打工期数' }, ROTATION_PAGE_SIZES.map((size) => {
       const option = el('option', { value: String(size), text: String(size) });
       option.selected = size === rotationPageSize;
       return option;
@@ -851,7 +851,7 @@
       box.scrollTop = 0;
     });
     pager.replaceChildren(
-      el('label', { class: 'rotation-page-size' }, [el('span', { text: `共 ${groups.length} 期 · 每页` }), pageSize, document.createTextNode('期')]),
+      el('label', { class: 'rotation-page-size' }, [el('span', { text: `共 ${groups.length} 期 · 每页` }), el('span', { class: 'page-size-select' }, [pageSize]), document.createTextNode('期')]),
       el('span', { class: 'log-pager-buttons' }, [previous, el('span', { class: 'font-number', 'aria-live': 'polite', text: `${rotationPage + 1} / ${pages}` }), next]),
     );
     renderTable(box, [

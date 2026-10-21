@@ -84,7 +84,7 @@ test('page size dropdown offers 5/10/15, persists choices and resets to the firs
   const { box, pager, stored, render } = setup();
   render(groups(21));
   pager.children[1].children[2].listeners.click();
-  let select = pager.children[0].children[1];
+  let select = pager.children[0].children[1].children[0];
   assert.equal(select.tag, 'select');
   assert.deepEqual(Array.from(select.children, (option) => option.value), ['5', '10', '15']);
   select.value = '10';
@@ -94,7 +94,7 @@ test('page size dropdown offers 5/10/15, persists choices and resets to the firs
   assert.equal(pager.children[1].children[1].text, '1 / 3');
   assert.equal(stored.get('splat3-rotation-page-size'), '10');
   for (const value of ['', '0', '7', '20']) {
-    select = pager.children[0].children[1];
+    select = pager.children[0].children[1].children[0];
     select.value = value;
     select.listeners.change();
     assert.equal(select.value, '10');

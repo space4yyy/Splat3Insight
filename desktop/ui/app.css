@@ -192,6 +192,8 @@ h1, h2, h3, strong, b, th { font-weight: 400; }
 .font-number, .brand, .kpi-value, .kpi-meta, .rule-value, .delta-up, .delta-down, .delta-flat, table.data td.num, .tip-title, .tip-row strong, .mini-stat strong, .form-summary strong { font-family: var(--font-number); }
 .placeholder, .mini-stat strong.placeholder, table.data td.placeholder { font-family: var(--font-system); color: var(--ink-3); }
 button:focus-visible, [tabindex]:focus-visible, textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* 下拉框被鼠标点开后也算 :focus-visible；app.js 记下输入方式，用鼠标时不画焦点框，免得关掉菜单后一直留着。 */
+:root[data-input="pointer"] select:focus-visible { outline: none; }
 
 .app { display: grid; grid-template-columns: 212px minmax(0, 1fr); gap: 20px; max-width: 1440px; margin: 0 auto; align-items: start; }
 .sidebar { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 14px; padding: 18px 12px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); }
@@ -409,7 +411,13 @@ table.data .num { text-align: right; }
 .log-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-top: 10px; color: var(--ink-3); font-size: 13px; }
 .log-pager-buttons { display: inline-flex; align-items: center; gap: 10px; }
 .rotation-page-size { display: inline-flex; align-items: center; gap: 6px; }
-.rotation-page-size select { appearance: none; width: 44px; min-width: 0; padding: 4px 10px; text-align: center; text-align-last: center; font-family: var(--font-number); cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='4' viewBox='0 0 6 4'%3E%3Cpath d='m1 1 2 2 2-2' fill='none' stroke='%238e8b9a' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 4px center; }
+/* 每页期数和翻页按钮同高、同线框；箭头画在外层，跟着主题和悬停变色。 */
+.page-size-select { position: relative; display: inline-flex; color: var(--ink-3); }
+.page-size-select::after { content: ""; position: absolute; top: 50%; right: 11px; width: 5px; height: 5px; margin-top: -4.5px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); pointer-events: none; }
+.page-size-select select { appearance: none; height: 27px; margin: 0; padding: 0 24px 0 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; color: var(--ink-2); font: 13px/25px var(--font-number); letter-spacing: inherit; text-align: center; text-align-last: center; cursor: pointer; }
+.page-size-select:hover { color: var(--accent-2-text); }
+.page-size-select:hover select { border-color: var(--accent-2-text); color: var(--accent-2-text); }
+.page-size-select select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 table.data tr.is-clickable { cursor: pointer; }
 table.data tr.is-clickable:hover td, table.data tr.is-selected td { background: var(--select-wash); }
 table.data tr.is-clickable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }

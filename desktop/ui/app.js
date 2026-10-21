@@ -18,6 +18,16 @@
     });
   }
 
+  // 鼠标点开的下拉框也算 :focus-visible，不改选项就关掉菜单、或者筛选后重新聚焦时，焦点框会一直留着。
+  // 记下最近一次用的是鼠标还是键盘；用鼠标时样式里不给下拉框画焦点框，按键后再画。
+  const setInput = (mode) => {
+    if (document.documentElement.dataset.input !== mode) document.documentElement.dataset.input = mode;
+  };
+  document.addEventListener('pointerdown', () => setInput('pointer'), true);
+  document.addEventListener('keydown', (event) => {
+    if (!event.metaKey && !event.ctrlKey && !event.altKey) setInput('keyboard');
+  }, true);
+
   const VIEWS = {
     overview: ['总览', '最近的状态、战力走势和常用配置，一页看完。'],
     battles: ['对战', '规则、连胜连败、击倒和对局时长。'],
