@@ -1,4 +1,3 @@
-// 由 desktop/scripts/game-names.mjs 生成，请勿手改。
 // 来源：Leanny 整理的游戏文本 https://leanny.github.io/splat3/data/language/（CNzh、TWzh、EUen）。
 (() => {
   'use strict';

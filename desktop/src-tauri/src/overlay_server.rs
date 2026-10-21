@@ -18,10 +18,6 @@ pub const OVERLAY_PORT: u16 = 17_353;
 const OBS_CARD_CATALOG: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/obs-cards.json"));
 const OVERLAY_HTML: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/overlay.html"));
-const SALMON_RUN_HTML: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../ui/salmon-run.html"
-));
 const CLOCK_HTML: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/clock.html"));
 const DEFEAT_COUNTS_HTML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -153,7 +149,6 @@ fn overlay_url() -> String {
 fn render_card_page(card: &ObsCardDefinition) -> HttpResponse {
     let template = match card.page.as_str() {
         "overlay" => OVERLAY_HTML,
-        "salmon-run" => SALMON_RUN_HTML,
         "clock" => CLOCK_HTML,
         "defeat-counts" => DEFEAT_COUNTS_HTML,
         _ => return not_found(),
@@ -592,21 +587,6 @@ fn route_request(
             .find(|card| card.id == "overlay")
             .expect("OBS card catalog must include the overlay card");
         return Ok(render_card_page(card));
-    }
-
-    if path == "/salmon-run" {
-        let card = obs_card_catalog()
-            .iter()
-            .find(|card| card.id == "salmon-run")
-            .expect("OBS card catalog must include the salmon run card");
-        let body = SALMON_RUN_HTML
-            .replace("__OBS_CARD_WIDTH__", &card.width.to_string())
-            .replace("__OBS_CARD_HEIGHT__", &card.height.to_string());
-        return Ok(HttpResponse {
-            status: "200 OK",
-            content_type: "text/html; charset=utf-8",
-            body: body.into_bytes(),
-        });
     }
 
     if let Some(card) = obs_card_catalog().iter().find(|card| card.route == path) {
@@ -1378,7 +1358,7 @@ mod tests {
         assert_eq!(response.status, "200 OK");
         assert_eq!(response.content_type, "text/javascript; charset=utf-8");
         assert_eq!(response.body, GAME_NAMES.as_bytes());
-        for page in [OVERLAY_HTML, SALMON_RUN_HTML, DEFEAT_COUNTS_HTML] {
+        for page in [OVERLAY_HTML, DEFEAT_COUNTS_HTML] {
             let names_at = page.find("/game-names.js").unwrap();
             assert!(names_at < page.find("/overlay-card-renderer.js").unwrap());
         }

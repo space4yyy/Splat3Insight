@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const ui = new URL('../ui/', import.meta.url);
-const [cards, indexHtml, appJs, dashboardJs, dashboardDataJs, overlayCss, overlayHtml, salmonRunHtml, clockHtml, defeatCountsHtml, tauriConfig, rendererJs] = await Promise.all([
+const [cards, indexHtml, appJs, dashboardJs, dashboardDataJs, overlayCss, overlayHtml, clockHtml, defeatCountsHtml, tauriConfig, rendererJs] = await Promise.all([
   readFile(new URL('obs-cards.json', ui), 'utf8').then(JSON.parse),
   readFile(new URL('index.html', ui), 'utf8'),
   readFile(new URL('app.js', ui), 'utf8'),
@@ -12,7 +12,6 @@ const [cards, indexHtml, appJs, dashboardJs, dashboardDataJs, overlayCss, overla
   readFile(new URL('dashboard-data.js', ui), 'utf8'),
   readFile(new URL('overlay-card.css', ui), 'utf8'),
   readFile(new URL('overlay.html', ui), 'utf8'),
-  readFile(new URL('salmon-run.html', ui), 'utf8'),
   readFile(new URL('clock.html', ui), 'utf8'),
   readFile(new URL('defeat-counts.html', ui), 'utf8'),
   readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8').then(JSON.parse),
@@ -168,7 +167,7 @@ test('the main window accepts the click that activates it on macOS', () => {
 test('OBS page templates receive dimensions from the card catalog', () => {
   assert.match(overlayCss, /width: var\(--obs-card-width\)/);
   assert.match(overlayCss, /height: var\(--obs-card-height\)/);
-  for (const page of [overlayHtml, salmonRunHtml, clockHtml, defeatCountsHtml]) {
+  for (const page of [overlayHtml, clockHtml, defeatCountsHtml]) {
     assert.match(page, /__OBS_CARD_WIDTH__/);
     assert.match(page, /__OBS_CARD_HEIGHT__/);
   }
