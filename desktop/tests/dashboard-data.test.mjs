@@ -172,6 +172,30 @@ test('Salmon Run stages, grades and kings use the game text', () => {
   assert.equal(shifts[0].waves[0].event, '大胖鱼大量出现');
 });
 
+test('Salmon Run Stats defeat counts use the game text and resolve shared image links', () => {
+  const { coopRecord } = data.prepare({
+    battles: [],
+    coop: [],
+    images: ['https://example.test/steelhead.png', 'https://example.test/cohozuna.png'],
+    coop_record: {
+      fetched_at_ms: 42,
+      enemies: [
+        { enemy_id: 4, name: 'Steelhead', image: 0, defeat_count: 2048 },
+        { enemy_id: 99, name: 'Unknown Salmonid', image: null, defeat_count: 0 },
+        { enemy_id: 5, name: 'Flyfish', image: null, defeat_count: null },
+      ],
+      bosses: [{ enemy_id: 23, name: 'Cohozuna', image: 1, defeat_count: 31 }],
+    },
+  });
+  assert.equal(coopRecord.fetchedAt, 42);
+  assert.deepEqual(JSON.parse(JSON.stringify(coopRecord.enemies)), [
+    { id: 4, name: '炸弹鱼', image: 'https://example.test/steelhead.png', count: 2048 },
+    { id: 99, name: 'Unknown Salmonid', image: null, count: 0 },
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(coopRecord.bosses)), [{ id: 23, name: '横纲', image: 'https://example.test/cohozuna.png', count: 31 }]);
+  assert.equal(data.prepare({ battles: [], coop: [] }).coopRecord, null);
+});
+
 test('OBS cards show official names and keep their short rule labels', () => {
   assert.equal(cards.labels.rule('真格魚虎對戰'), '真格鱼虎');
   assert.equal(cards.labels.rule('占地對戰'), '占地对战');

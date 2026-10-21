@@ -24,6 +24,7 @@ const BATTLE_DETAIL_QUERY: &str =
     "94faa2ff992222d11ced55e0f349920a82ac50f414ae33c83d1d1c9d8161c5dd";
 const COOP_QUERY: &str = "e11a8cf2c3de7348495dea5cdcaa25e0c153541c4ed63f044b6c174bc5b703df";
 const COOP_DETAIL_QUERY: &str = "f2d55873a9281213ae27edc171e2b19131b3021a2ae263757543cdd3bf015cc8";
+const COOP_RECORD_QUERY: &str = "56f989a59643642e0799c90d3f6d0457f5f5f72d4444dfae87043c4a23d13043";
 
 const APP_USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 14; Pixel 7a) AppleWebKit/537.36 Chrome/120.0.6099.230 Mobile Safari/537.36";
 const MAX_NETWORK_RETRIES: usize = 3;
@@ -279,7 +280,7 @@ pub struct HistorySyncSummary {
     pub fetched_at_ms: i64,
     pub added_battle_count: usize,
     pub added_coop_count: usize,
-    /// 已有记录被更新过（X 赛结算分数、补上的打工期），面板数据也要重新读取。
+    /// 已有记录被更新过（X 赛结算分数、补上的打工期、鲑鱼跑记录），面板数据也要重新读取。
     #[serde(default)]
     pub records_updated: bool,
 }
@@ -823,6 +824,31 @@ impl SplatNetDataClient {
             battles,
             coop,
         })
+    }
+
+    /// SplatNet「鲑鱼跑记录」页：各种巨大鲑鱼和头目鲑鱼的累计击倒数量、各场地最高评价等，
+    /// 原样返回 `coopRecord`。和打工列表一样用英文查询，名称按游戏文本换成中文显示。
+    pub async fn fetch_coop_record(
+        &self,
+        progress: Option<&HistoryProgressCallback>,
+    ) -> Result<Value, HistoryError> {
+        notify_progress(progress, "coop-record", 0, 1, 0);
+        let value = self
+            .graphql(
+                COOP_RECORD_QUERY,
+                json!({}),
+                Some("en-US"),
+                progress,
+                "coop-record",
+            )
+            .await?;
+        let record = value
+            .pointer("/data/coopRecord")
+            .filter(|record| record.is_object())
+            .cloned()
+            .ok_or_else(|| HistoryError::other("SplatNet 返回中缺少 coopRecord"))?;
+        notify_progress(progress, "coop-record", 1, 1, 0);
+        Ok(record)
     }
 
     async fn fetch_ids(

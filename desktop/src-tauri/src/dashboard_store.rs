@@ -5,14 +5,17 @@
 //! and the facts can be dropped and rebuilt at any time. The tables use the
 //! `extension_` prefix with an `account_id` column, so deleting an account
 //! removes them through `history_store::delete_extension_account_data`.
+//!
+//! `extension_coop_record` is not derived from the archive: it keeps the latest
+//! SplatNet 「鲑鱼跑记录」 response (all-time defeat counts) for each account.
 
 use crate::history_store;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 use serde_json::Value;
 use splat3_widget_core::dashboard::{
-    battle_fact, coop_fact, BattleFact, CoopFact, CoopWaveFact, CoopWeaponFact,
-    DASHBOARD_FACTS_VERSION,
+    battle_fact, coop_defeat_facts, coop_fact, BattleFact, CoopDefeatFact, CoopDefeatFacts,
+    CoopFact, CoopWaveFact, CoopWeaponFact, DASHBOARD_FACTS_VERSION,
 };
 use splat3_widget_core::history::{BattleRecord, CoopRecord};
 use std::collections::HashMap;
@@ -90,7 +93,13 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
                  PRIMARY KEY (account_id, record_id)
              );
              CREATE INDEX IF NOT EXISTS idx_extension_dashboard_coop_time
-                 ON extension_dashboard_coop(account_id, played_at_ms);",
+                 ON extension_dashboard_coop(account_id, played_at_ms);
+             CREATE TABLE IF NOT EXISTS extension_coop_record (
+                 account_id TEXT PRIMARY KEY,
+                 fetched_at_ms INTEGER NOT NULL,
+                 raw_json BLOB NOT NULL,
+                 raw_encoding TEXT NOT NULL DEFAULT 'gzip'
+             );",
         )
         .map_err(|error| format!("初始化面板数据表失败：{error}"))?;
     // 新版事实表增加的列：旧数据库补上这些列，事实行会按版本号重建。
@@ -299,6 +308,71 @@ pub(crate) fn update_coop_rotation(
     Ok(())
 }
 
+/// 保存 SplatNet「鲑鱼跑记录」的原始 JSON。SplatNet 只给当前的累计数，这里也只留最新一份。
+/// 返回击倒数量是否和之前存的不同（只是图片链接的签名变了不算）。
+pub(crate) fn save_coop_record(
+    history_dir: &Path,
+    account_id: &str,
+    fetched_at_ms: i64,
+    raw: &Value,
+) -> Result<bool, String> {
+    let connection = history_store::open_database(history_dir)?;
+    let previous = load_coop_record_raw(&connection, account_id)?;
+    let changed =
+        previous.map(|(_, previous)| defeat_counts(&previous)) != Some(defeat_counts(raw));
+    connection
+        .execute(
+            "INSERT INTO extension_coop_record(account_id, fetched_at_ms, raw_json, raw_encoding)
+             VALUES (?1, ?2, ?3, 'gzip')
+             ON CONFLICT(account_id) DO UPDATE SET
+                 fetched_at_ms = excluded.fetched_at_ms,
+                 raw_json = excluded.raw_json,
+                 raw_encoding = excluded.raw_encoding",
+            params![
+                account_id,
+                fetched_at_ms,
+                history_store::encode_raw_json(raw)?
+            ],
+        )
+        .map_err(|error| format!("保存鲑鱼跑记录失败：{error}"))?;
+    Ok(changed)
+}
+
+fn defeat_counts(raw: &Value) -> CoopDefeatFacts {
+    let mut facts = coop_defeat_facts(raw);
+    for fact in facts.enemies.iter_mut().chain(facts.bosses.iter_mut()) {
+        fact.image = None;
+    }
+    facts
+}
+
+/// 存着的「鲑鱼跑记录」：查询时间和原始 JSON。原始 JSON 读不出来时当作没有。
+fn load_coop_record_raw(
+    connection: &Connection,
+    account_id: &str,
+) -> Result<Option<(i64, Value)>, String> {
+    let row = connection
+        .query_row(
+            "SELECT fetched_at_ms, raw_json, raw_encoding FROM extension_coop_record
+             WHERE account_id = ?1",
+            [account_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("读取鲑鱼跑记录失败：{error}"))?;
+    Ok(row.and_then(|(fetched_at_ms, raw_json, raw_encoding)| {
+        history_store::decode_raw_json(&raw_json, &raw_encoding)
+            .ok()
+            .map(|raw| (fetched_at_ms, raw))
+    }))
+}
+
 /// Makes the account's facts match the archive: rebuilds them when the
 /// extraction version changed, then fills in any archived record that has no
 /// fact yet. Work is committed in small batches so a running sync is never
@@ -426,6 +500,25 @@ pub(crate) struct DashboardFacts {
     pub(crate) images: Vec<String>,
     pub(crate) battles: Vec<BattleRow>,
     pub(crate) coop: Vec<CoopRow>,
+    /// SplatNet「鲑鱼跑记录」的累计击倒数量；还没查到时为 None。
+    pub(crate) coop_record: Option<CoopRecordFacts>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CoopRecordFacts {
+    fetched_at_ms: i64,
+    /// 巨大鲑鱼
+    enemies: Vec<DefeatCountRow>,
+    /// 头目鲑鱼
+    bosses: Vec<DefeatCountRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct DefeatCountRow {
+    enemy_id: Option<i64>,
+    name: Option<String>,
+    image: Option<usize>,
+    defeat_count: i64,
 }
 
 /// 图片链接表：同一个链接只记一次。
@@ -636,12 +729,32 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
             .map_err(|error| format!("读取面板打工数据行失败：{error}"))?
     };
 
+    let coop_record = load_coop_record_raw(&connection, account_id)?.map(|(fetched_at_ms, raw)| {
+        let facts = coop_defeat_facts(&raw);
+        let mut rows = |list: Vec<CoopDefeatFact>| -> Vec<DefeatCountRow> {
+            list.into_iter()
+                .map(|fact| DefeatCountRow {
+                    enemy_id: fact.enemy_id,
+                    name: fact.name,
+                    image: images.add(fact.image),
+                    defeat_count: fact.defeat_count,
+                })
+                .collect()
+        };
+        CoopRecordFacts {
+            fetched_at_ms,
+            enemies: rows(facts.enemies),
+            bosses: rows(facts.bosses),
+        }
+    });
+
     Ok(DashboardFacts {
         account_id: account_id.to_owned(),
         fetched_at_ms,
         images: images.links,
         battles,
         coop,
+        coop_record,
     })
 }
 
@@ -1039,13 +1152,88 @@ mod tests {
                     HistoryFetchedRecord::Coop(coop("c1", "2026-10-16T12:00:00Z")),
                 )
                 .unwrap();
+            save_coop_record(directory.path(), account, 1, &coop_record_response(1, "a")).unwrap();
         }
         drop(writer);
         history_store::delete_account(directory.path(), "first").unwrap();
-        for table in ["extension_dashboard_battles", "extension_dashboard_coop"] {
+        for table in [
+            "extension_dashboard_battles",
+            "extension_dashboard_coop",
+            "extension_coop_record",
+        ] {
             assert_eq!(fact_count(directory.path(), table, "first"), 0);
             assert_eq!(fact_count(directory.path(), table, "second"), 1);
         }
+    }
+
+    fn coop_record_response(steelhead: i64, signature: &str) -> Value {
+        json!({
+            "defeatEnemyRecords": [{
+                "enemy": {
+                    "coopEnemyId": 4,
+                    "name": "Steelhead",
+                    "image": { "url": format!("https://example.test/steelhead.png?Signature={signature}") }
+                },
+                "defeatCount": steelhead
+            }],
+            "defeatBossRecords": [{
+                "enemy": { "coopEnemyId": 23, "name": "Cohozuna", "image": null },
+                "defeatCount": 3
+            }]
+        })
+    }
+
+    #[test]
+    fn coop_record_keeps_the_latest_response_and_reports_count_changes() {
+        let directory = tempdir().unwrap();
+        assert!(load_facts(directory.path(), "account")
+            .unwrap()
+            .coop_record
+            .is_none());
+
+        assert!(save_coop_record(
+            directory.path(),
+            "account",
+            10,
+            &coop_record_response(5, "a")
+        )
+        .unwrap());
+        // 只是图片链接的签名变了：数量没变，面板不用重新读取。
+        assert!(!save_coop_record(
+            directory.path(),
+            "account",
+            20,
+            &coop_record_response(5, "b")
+        )
+        .unwrap());
+        assert!(save_coop_record(
+            directory.path(),
+            "account",
+            30,
+            &coop_record_response(6, "b")
+        )
+        .unwrap());
+        assert_eq!(
+            fact_count(directory.path(), "extension_coop_record", "account"),
+            1
+        );
+
+        let facts = load_facts(directory.path(), "account").unwrap();
+        let record = facts.coop_record.unwrap();
+        assert_eq!(record.fetched_at_ms, 30);
+        assert_eq!(record.enemies.len(), 1);
+        assert_eq!(record.enemies[0].enemy_id, Some(4));
+        assert_eq!(record.enemies[0].name.as_deref(), Some("Steelhead"));
+        assert_eq!(record.enemies[0].defeat_count, 6);
+        assert_eq!(
+            record.enemies[0]
+                .image
+                .map(|position| facts.images[position].as_str()),
+            Some("https://example.test/steelhead.png?Signature=b")
+        );
+        assert_eq!(record.bosses[0].enemy_id, Some(23));
+        assert_eq!(record.bosses[0].image, None);
+        assert_eq!(record.bosses[0].defeat_count, 3);
     }
 
     #[test]

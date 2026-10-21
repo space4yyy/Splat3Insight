@@ -254,6 +254,24 @@
       }))
       .sort((a, b) => order(a.id) - order(b.id) || b.appeared - a.appeared);
   }
+  // 击倒数量的排行条：横条按目标画，巨大鲑鱼的目标是 10000，头目鲑鱼是 1000，头目联合没有目标。
+  // 有超过目标的，刻度放大到最多的那个，横条照实际数量画；anchor 是目标在刻度上的位置（0–1）。
+  // 横条按数量从多到少，没有目标的排在最后，不画横条（share 为 null）。
+  const DEFEAT_TARGETS = { enemies: 10000, bosses: 1000 };
+  const UNTARGETED_IDS = [30];
+  function defeatBars(rows, target) {
+    const untargeted = (row) => UNTARGETED_IDS.includes(row.id);
+    const targeted = rows.filter((row) => !untargeted(row)).sort((a, b) => b.count - a.count);
+    const scale = Math.max(target, ...targeted.map((row) => row.count));
+    return {
+      target,
+      anchor: target / scale,
+      rows: [
+        ...targeted.map((row) => ({ ...row, share: row.count / scale })),
+        ...rows.filter(untargeted).map((row) => ({ ...row, share: null })),
+      ],
+    };
+  }
   function scaleTotals(shifts) {
     const totals = { gold: 0, silver: 0, bronze: 0 };
     for (const shift of shifts) {
@@ -336,6 +354,7 @@
     SESSION_GAP_MS,
     GRADES,
     KING_IMAGES,
+    DEFEAT_TARGETS,
     median,
     sortRows,
     ruleBreakdown,
@@ -353,6 +372,7 @@
     gradeLadder,
     gradeLabel,
     kingRows,
+    defeatBars,
     scaleTotals,
     tideEventMatrix,
     rotationGroups,

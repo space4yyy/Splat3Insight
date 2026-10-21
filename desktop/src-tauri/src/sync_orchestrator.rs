@@ -1,6 +1,6 @@
 use super::{
-    account_auth_error, history_store, load_history_summary, now_ms, update_sync_status,
-    write_account_log, Registry, SyncError, SyncRuntime, HISTORY_WINDOW_SIZE,
+    account_auth_error, dashboard_store, history_store, load_history_summary, now_ms,
+    update_sync_status, write_account_log, Registry, SyncError, SyncRuntime, HISTORY_WINDOW_SIZE,
 };
 use splat3_widget_core::history::{
     HistoryFetchProgress, HistoryFetchedRecord, HistoryProgressCallback, HistoryRecordCallback,
@@ -205,6 +205,7 @@ pub(super) async fn sync_account_inner(
                 "coop-list" => "正在获取最近打工列表…".to_owned(),
                 "battle-details" => "正在获取对战详情…".to_owned(),
                 "coop-details" => "正在获取打工详情…".to_owned(),
+                "coop-record" => "正在获取鲑鱼跑记录…".to_owned(),
                 "partial-details" => {
                     format!("{} 条详情暂不可读，正在完成同步…", progress.completed)
                 }
@@ -340,6 +341,31 @@ pub(super) async fn sync_account_inner(
             error,
         )
     })?;
+    // 鲑鱼跑记录里的累计击倒数量只在打完工后才会变：启动后第一次同步、或同步到新的打工记录时才查。
+    // 查不到或存不下不影响这次同步，下次同步再查。
+    let mut coop_record_changed = false;
+    if added_coop_count > 0 || !sync_runtime.coop_record_checked(account_id) {
+        let saved = match client.fetch_coop_record(Some(&progress)).await {
+            Ok(raw) => dashboard_store::save_coop_record(history_dir, account_id, now_ms(), &raw),
+            Err(error) => Err(error.to_string()),
+        };
+        match saved {
+            Ok(changed) => {
+                coop_record_changed = changed;
+                sync_runtime.set_coop_record_checked(account_id, true);
+            }
+            Err(error) => {
+                sync_runtime.set_coop_record_checked(account_id, false);
+                write_account_log(
+                    auth_log_path,
+                    "coop-record",
+                    &metadata.display_name,
+                    account_id,
+                    &format!("鲑鱼跑记录更新失败，下次同步再试：{error}"),
+                );
+            }
+        }
+    }
     let mut summary = load_history_summary(history_dir, account_id)
         .map_err(|error| {
             account_auth_error(
@@ -353,7 +379,8 @@ pub(super) async fn sync_account_inner(
         .unwrap_or_default();
     summary.added_battle_count = added_battle_count;
     summary.added_coop_count = added_coop_count;
-    summary.records_updated = x_settlement_update_count > 0 || rotation_update_count > 0;
+    summary.records_updated =
+        x_settlement_update_count > 0 || rotation_update_count > 0 || coop_record_changed;
     write_account_log(
         auth_log_path,
         "history-sync",

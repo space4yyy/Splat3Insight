@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -314,7 +314,7 @@ struct SyncStatus {
     initial: bool,
     added_battle_count: usize,
     added_coop_count: usize,
-    /// 已有记录被更新过（X 赛结算分数、补上的打工期）。
+    /// 已有记录被更新过（X 赛结算分数、补上的打工期、鲑鱼跑记录）。
     records_updated: bool,
     battle_count: usize,
     coop_count: usize,
@@ -330,6 +330,8 @@ struct SyncRuntime {
     web_view_version: Mutex<Option<String>>,
     /// 每个账号下次同步要不要查 X 比赛记录。
     x_settlement_checks: Mutex<HashMap<String, XSettlementCheck>>,
+    /// 这次启动后已经查过鲑鱼跑记录的账号。之后只在同步到新的打工记录时再查。
+    coop_record_checked: Mutex<HashSet<String>>,
 }
 
 type SyncResult = Result<HistorySyncSummary, String>;
@@ -391,6 +393,7 @@ impl SyncRuntime {
             tasks: Mutex::new(HashMap::new()),
             web_view_version: Mutex::new(None),
             x_settlement_checks: Mutex::new(HashMap::new()),
+            coop_record_checked: Mutex::new(HashSet::new()),
         }
     }
 
@@ -419,6 +422,23 @@ impl SyncRuntime {
     fn set_x_settlement_check(&self, account_id: &str, check: XSettlementCheck) {
         if let Ok(mut checks) = self.x_settlement_checks.lock() {
             checks.insert(account_id.to_owned(), check);
+        }
+    }
+
+    fn coop_record_checked(&self, account_id: &str) -> bool {
+        self.coop_record_checked
+            .lock()
+            .is_ok_and(|checked| checked.contains(account_id))
+    }
+
+    /// 查到鲑鱼跑记录后记下；查询失败时清掉，下次同步再查。
+    fn set_coop_record_checked(&self, account_id: &str, checked: bool) {
+        if let Ok(mut accounts) = self.coop_record_checked.lock() {
+            if checked {
+                accounts.insert(account_id.to_owned());
+            } else {
+                accounts.remove(account_id);
+            }
         }
     }
 
@@ -2673,6 +2693,19 @@ mod tests {
         );
         runtime.set_web_view_version(None);
         assert_eq!(runtime.web_view_version(), None);
+    }
+
+    #[test]
+    fn sync_runtime_checks_the_coop_record_once_per_launch_and_after_failures() {
+        let runtime = SyncRuntime::new();
+        assert!(!runtime.coop_record_checked("account"));
+
+        runtime.set_coop_record_checked("account", true);
+        assert!(runtime.coop_record_checked("account"));
+        assert!(!runtime.coop_record_checked("other"));
+
+        runtime.set_coop_record_checked("account", false);
+        assert!(!runtime.coop_record_checked("account"));
     }
 
     #[test]

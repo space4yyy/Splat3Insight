@@ -237,6 +237,25 @@ test('kings are listed in game order with their images', () => {
   deepEqual(analysis.scaleTotals([shift({ scales: { gold: 1, silver: 2, bronze: null } }), shift({ scales: { gold: 0, silver: 1, bronze: 3 } })]), { gold: 1, silver: 3, bronze: 3 });
 });
 
+test('defeat bars fill toward the target, grow past it, and leave the Triumvirate without one', () => {
+  deepEqual(analysis.DEFEAT_TARGETS, { enemies: 10000, bosses: 1000 });
+  deepEqual(analysis.defeatBars([{ id: 4, count: 2500 }, { id: 5, count: 5000 }], 10000), {
+    target: 10000,
+    anchor: 1,
+    rows: [{ id: 5, count: 5000, share: 0.5 }, { id: 4, count: 2500, share: 0.25 }],
+  });
+  // 超过目标时刻度放大到最多的那个，目标的锚线跟着往左移。
+  const past = analysis.defeatBars([{ id: 4, count: 12500 }, { id: 5, count: 5000 }], 10000);
+  assert.equal(past.anchor, 0.8);
+  deepEqual(past.rows.map((row) => row.share), [1, 0.4]);
+  // 头目联合没有目标：不算进刻度，也不画横条，排在最后。
+  deepEqual(analysis.defeatBars([{ id: 30, count: 4000 }, { id: 23, count: 250 }], 1000), {
+    target: 1000,
+    anchor: 1,
+    rows: [{ id: 23, count: 250, share: 0.25 }, { id: 30, count: 4000, share: null }],
+  });
+});
+
 test('the tide × event matrix keeps plain waves first and orders events by frequency', () => {
   const wave = (water, event, cleared) => ({ water, event, cleared });
   const matrix = analysis.tideEventMatrix([

@@ -91,6 +91,49 @@ pub struct CoopFact {
     pub rotation_end_time: Option<String>,
 }
 
+/// SplatNet「鲑鱼跑记录」里一种鲑鱼的累计击倒数量（名称是英文，图片是带签名的原链接）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CoopDefeatFact {
+    pub enemy_id: Option<i64>,
+    pub name: Option<String>,
+    pub image: Option<String>,
+    pub defeat_count: i64,
+}
+
+/// 「鲑鱼跑记录」的击倒数量，按 SplatNet 给的顺序：巨大鲑鱼（`defeatEnemyRecords`）和
+/// 头目鲑鱼（`defeatBossRecords`）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CoopDefeatFacts {
+    pub enemies: Vec<CoopDefeatFact>,
+    pub bosses: Vec<CoopDefeatFact>,
+}
+
+pub fn coop_defeat_facts(coop_record: &Value) -> CoopDefeatFacts {
+    let list = |key: &str| -> Vec<CoopDefeatFact> {
+        coop_record
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|records| {
+                records
+                    .iter()
+                    .filter_map(|record| {
+                        Some(CoopDefeatFact {
+                            enemy_id: integer(record, "/enemy/coopEnemyId"),
+                            name: text(record, "/enemy/name"),
+                            image: text(record, "/enemy/image/url"),
+                            defeat_count: integer(record, "/defeatCount")?,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    CoopDefeatFacts {
+        enemies: list("defeatEnemyRecords"),
+        bosses: list("defeatBossRecords"),
+    }
+}
+
 pub fn battle_fact(record: &BattleRecord, raw: &Value) -> BattleFact {
     let player = my_battle_player(raw);
     BattleFact {
@@ -444,5 +487,67 @@ mod tests {
         assert_eq!(fact.golden_assists, None);
         assert!(fact.supplied_weapons.is_empty());
         assert_eq!(fact.rotation_start_time, None);
+    }
+
+    #[test]
+    fn coop_defeat_facts_keep_splatnet_order_and_skip_rows_without_a_count() {
+        // CoopRecordQuery 的 coopRecord（SplatNet 10.0.0），只留和击倒数量有关的字段。
+        let coop_record = json!({
+            "stageHighestRecords": [],
+            "defeatEnemyRecords": [
+                {
+                    "enemy": {
+                        "coopEnemyId": 4,
+                        "id": "Q29vcEVuZW15LTQ=",
+                        "name": "Steelhead",
+                        "image": { "url": "https://example.test/steelhead.png" }
+                    },
+                    "defeatCount": 2048
+                },
+                {
+                    "enemy": { "coopEnemyId": 5, "name": "Flyfish", "image": null },
+                    "defeatCount": 977
+                },
+                { "enemy": { "coopEnemyId": 6, "name": "Steel Eel" }, "defeatCount": null }
+            ],
+            "defeatBossRecords": [
+                {
+                    "enemy": {
+                        "coopEnemyId": 23,
+                        "name": "Cohozuna",
+                        "image": { "url": "https://example.test/cohozuna.png" }
+                    },
+                    "defeatCount": 31
+                }
+            ]
+        });
+        let facts = coop_defeat_facts(&coop_record);
+        assert_eq!(
+            facts.enemies,
+            vec![
+                CoopDefeatFact {
+                    enemy_id: Some(4),
+                    name: Some("Steelhead".to_owned()),
+                    image: Some("https://example.test/steelhead.png".to_owned()),
+                    defeat_count: 2048,
+                },
+                CoopDefeatFact {
+                    enemy_id: Some(5),
+                    name: Some("Flyfish".to_owned()),
+                    image: None,
+                    defeat_count: 977,
+                },
+            ]
+        );
+        assert_eq!(
+            facts.bosses,
+            vec![CoopDefeatFact {
+                enemy_id: Some(23),
+                name: Some("Cohozuna".to_owned()),
+                image: Some("https://example.test/cohozuna.png".to_owned()),
+                defeat_count: 31,
+            }]
+        );
+        assert_eq!(coop_defeat_facts(&json!({})), CoopDefeatFacts::default());
     }
 }

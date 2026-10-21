@@ -558,6 +558,27 @@ table.data.sticky-first th:first-child { z-index: 2; }
 .scale-count { display: inline-flex; align-items: center; gap: 4px; color: var(--ink); font-family: var(--font-number); }
 .scale-count img { width: 18px; height: 18px; }
 .supplied-name { color: var(--ink-2); font-size: 12px; }
+.defeat-groups { display: grid; gap: 14px; }
+.defeat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.defeat-tile { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--panel-raised); }
+.defeat-icon, .defeat-icon img { display: block; width: 40px; height: 40px; object-fit: contain; }
+.defeat-text { min-width: 0; }
+.defeat-text span { display: block; overflow: hidden; color: var(--ink-2); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.defeat-text strong { display: block; font-family: var(--font-number); font-size: 18px; line-height: 1.25; }
+.defeat-tile.is-zero strong { color: var(--ink-3); }
+/* 排行条：刻度默认就是目标，超过目标时放大，锚线留在目标的位置。 */
+.defeat-bars { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 32px; align-items: start; }
+.defeat-bar-col { display: grid; gap: 6px; }
+.defeat-bar-axis, .defeat-bar-row { display: grid; grid-template-columns: 32px 6.5em minmax(0, 1fr) 4.5em; align-items: center; gap: 10px; }
+.defeat-bar-row .defeat-icon, .defeat-bar-row .defeat-icon img { width: 32px; height: 32px; }
+.defeat-bar-name { overflow: hidden; color: var(--ink-2); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.defeat-bar-row strong { font-family: var(--font-number); text-align: right; }
+.defeat-bar { position: relative; height: 8px; border-radius: 4px; background: var(--seq-0); }
+.defeat-bar-fill { display: block; height: 100%; border-radius: 4px; background: var(--mode-salmon); }
+.defeat-bar-anchor { position: absolute; top: -4px; bottom: -4px; width: 2px; border-radius: 1px; background: var(--ink-2); }
+.defeat-bar-scale { position: relative; height: 14px; }
+.defeat-bar-mark { position: absolute; bottom: 0; color: var(--ink-3); font-family: var(--font-number); font-size: 12px; line-height: 1; white-space: nowrap; transform: translateX(-50%); }
+.defeat-bar-mark.is-end { transform: translateX(-100%); }
 .pill { display: inline-block; margin-left: 8px; padding: 0 8px; border-radius: 999px; background: var(--accent-2-wash); color: var(--accent-2-text); font-size: 12px; }
 
 @media (max-width: 1180px) {
@@ -588,6 +609,8 @@ table.data.sticky-first th:first-child { z-index: 2; }
 @media (max-width: 760px) {
   .span-6 { grid-column: span 12; }
   .salmon-cols { grid-template-columns: minmax(0, 1fr); }
+  .defeat-bars { grid-template-columns: minmax(0, 1fr); }
+  .defeat-bar-col + .defeat-bar-col .defeat-bar-axis { display: none; }
   .form-strip { grid-template-columns: repeat(10, minmax(0, 1fr)); }
   .obs-url { flex-direction: column; align-items: stretch; }
   .account-row { grid-template-columns: auto minmax(0, 1fr); }

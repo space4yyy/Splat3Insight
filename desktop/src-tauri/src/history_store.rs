@@ -2111,7 +2111,7 @@ fn remove_matching_files(directory: &Path, prefix: &str, description: &str) -> R
     Ok(())
 }
 
-fn encode_raw_json(raw: &Value) -> Result<Vec<u8>, String> {
+pub(crate) fn encode_raw_json(raw: &Value) -> Result<Vec<u8>, String> {
     let bytes = serde_json::to_vec(raw).map_err(|error| format!("序列化原始记录失败：{error}"))?;
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     encoder

@@ -893,6 +893,73 @@
       ];
     }));
   }
+  // 击倒数量：SplatNet「鲑鱼跑记录」里的累计数，和 SplatNet 一样分巨大鲑鱼、头目鲑鱼两组。
+  // 不受时间范围和打工模式筛选影响；还没查到时不显示这张卡片。
+  // 两种显示方式：图鉴格子，或按目标画的排行条（analysis.defeatBars），选择记在本机。
+  const DEFEAT_VIEW_KEY = 'splat3-defeat-view';
+  let defeatView = 'grid';
+  try {
+    if (localStorage.getItem(DEFEAT_VIEW_KEY) === 'bars') defeatView = 'bars';
+  } catch {}
+  $('defeat-view').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-defeat-view]');
+    if (!button) return;
+    defeatView = button.getAttribute('data-defeat-view');
+    try {
+      localStorage.setItem(DEFEAT_VIEW_KEY, defeatView);
+    } catch {}
+    renderDefeats();
+  });
+  const defeatIcon = (row) => el('span', { class: 'defeat-icon' }, row.image
+    ? records.img(row.image, '', row.name)
+    : analysis.KING_IMAGES[row.id] ? el('img', { src: analysis.KING_IMAGES[row.id], alt: row.name ?? '' }) : null);
+  function defeatGridView(rows) {
+    return el('div', { class: 'defeat-grid' }, rows.map((row) => el('div', { class: `defeat-tile${row.count ? '' : ' is-zero'}` }, [
+      defeatIcon(row),
+      el('div', { class: 'defeat-text' }, [el('span', { text: row.name ?? '—' }), el('strong', { text: count(row.count) })]),
+    ])));
+  }
+  // 排行条分两列，先读完左列；每列顶上标出目标的位置，横条上的锚线也画在那里。
+  function defeatBarView(rows, target) {
+    const bars = analysis.defeatBars(rows, target);
+    const percent = (share) => `${(share * 100).toFixed(2)}%`;
+    const anchorLeft = `min(calc(${percent(bars.anchor)} - 1px), calc(100% - 2px))`;
+    const column = (list) => el('div', { class: 'defeat-bar-col' }, [
+      el('div', { class: 'defeat-bar-axis', 'aria-hidden': 'true' }, [
+        el('span'), el('span'),
+        el('span', { class: 'defeat-bar-scale' }, el('span', { class: `defeat-bar-mark${bars.anchor > 0.9 ? ' is-end' : ''}`, style: `left:${percent(bars.anchor)}`, text: count(bars.target) })),
+        el('span'),
+      ]),
+      ...list.map((row) => el('div', { class: 'defeat-bar-row' }, [
+        defeatIcon(row),
+        el('span', { class: 'defeat-bar-name', text: row.name ?? '—' }),
+        row.share == null ? el('span') : el('span', { class: 'defeat-bar', role: 'img', 'aria-label': `${count(row.count)} / ${count(bars.target)}` }, [
+          el('span', { class: 'defeat-bar-fill', style: `width:${percent(row.share)}` }),
+          el('span', { class: 'defeat-bar-anchor', style: `left:${anchorLeft}` }),
+        ]),
+        el('strong', { text: count(row.count) }),
+      ])),
+    ]);
+    const half = Math.ceil(bars.rows.length / 2);
+    return el('div', { class: 'defeat-bars' }, [bars.rows.slice(0, half), bars.rows.slice(half)].filter((list) => list.length).map(column));
+  }
+  function renderDefeats() {
+    const record = dashboard.coopRecord();
+    const box = $('defeat-list');
+    $('defeat-card').hidden = !record;
+    if (!record) return;
+    $('defeat-sub').title = record.fetchedAt ? `${fmtDateTime(record.fetchedAt)} 更新` : '';
+    for (const button of $('defeat-view').querySelectorAll('button[data-defeat-view]')) button.setAttribute('aria-pressed', String(button.getAttribute('data-defeat-view') === defeatView));
+    const groups = [
+      ['巨大鲑鱼', record.enemies, analysis.DEFEAT_TARGETS.enemies],
+      ['头目鲑鱼', record.bosses, analysis.DEFEAT_TARGETS.bosses],
+    ].filter(([, rows]) => rows.length);
+    if (!groups.length) { emptyState(box, '还没有击倒记录', '打工之后再来看看。'); return; }
+    box.replaceChildren(...groups.map(([label, rows, target]) => el('div', { class: 'defeat-group' }, [
+      el('p', { class: 'subhead', text: label }),
+      defeatView === 'bars' ? defeatBarView(rows, target) : defeatGridView(rows),
+    ])));
+  }
   function renderSalmon() {
     const { shifts, start, end } = dashboard.analysisSource();
     renderGradeChart(shifts, start, end);
@@ -900,6 +967,7 @@
     renderTideEvents(shifts);
     renderContribution(shifts);
     renderRotations(shifts);
+    renderDefeats();
   }
 
   const RENDERERS = { battles: renderBattles, weapons: renderWeapons, stages: renderStages, salmon: renderSalmon };

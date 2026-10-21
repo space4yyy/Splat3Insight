@@ -167,7 +167,17 @@
     const battles = battleRows.map((row) => normalizeBattle(row, names, link));
     const shifts = coopRows.map((row) => normalizeShift(row, names, link));
     assignPowerDeltas(battles);
-    return { battles, shifts, xSettlements: deriveXSettlements(battles) };
+    return { battles, shifts, xSettlements: deriveXSettlements(battles), coopRecord: normalizeCoopRecord(facts?.coop_record, link) };
+  }
+
+  // SplatNet「鲑鱼跑记录」的累计击倒数量：巨大鲑鱼（enemies）和头目鲑鱼（bosses），按 SplatNet 给的顺序。
+  // 还没查到时为 null。
+  function normalizeCoopRecord(record, link = ownLinks) {
+    if (!record || typeof record !== 'object') return null;
+    const rows = (list) => (Array.isArray(list) ? list : [])
+      .filter((row) => isNum(row?.defeat_count))
+      .map((row) => ({ id: isNum(row.enemy_id) ? row.enemy_id : null, name: gameName('bosses', row.name), image: link(row.image), count: row.defeat_count }));
+    return { fetchedAt: isNum(record.fetched_at_ms) ? record.fetched_at_ms : null, enemies: rows(record.enemies), bosses: rows(record.bosses) };
   }
 
   // 赛季从每年 3、6、9、12 月 1 日（UTC）开始。
@@ -252,6 +262,7 @@
     prepare,
     normalizeBattle,
     normalizeShift,
+    normalizeCoopRecord,
     assignPowerDeltas,
     deriveXSettlements,
     gameName,

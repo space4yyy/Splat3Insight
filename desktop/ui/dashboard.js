@@ -41,6 +41,7 @@
   let battles = [];
   let shifts = [];
   let xSettlements = [];
+  let coopRecord = null;
   let xRules = new Set();
   let salmonRun = null;
   let filterListener = null;
@@ -1011,7 +1012,7 @@
   }
 
   function setData(facts) {
-    ({ battles, shifts, xSettlements } = data.prepare(facts));
+    ({ battles, shifts, xSettlements, coopRecord } = data.prepare(facts));
     xRules = new Set(xSettlements.map((item) => item.rule));
     if (!xRules.has(state.rule)) state.rule = RANKED_RULES.find((rule) => xRules.has(rule)) || RANKED_RULES[0];
     coopRules = COOP_RULES.filter((rule) => shifts.some((shift) => shift.rule === rule.key));
@@ -1077,6 +1078,8 @@
     setData,
     // 返回已整理的数据引用，供分享图按完整时间段统计；调用方不修改这些数组。
     records: () => ({ battles, shifts, xSettlements, mode: state.mode }),
+    // SplatNet「鲑鱼跑记录」的累计击倒数量，不随时间范围变化；还没查到时为 null。
+    coopRecord: () => coopRecord,
     setSalmonRun(run) {
       salmonRun = run || null;
       renderRotation();
