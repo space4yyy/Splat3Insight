@@ -107,15 +107,23 @@ pub(crate) async fn respond(
     if image_key(&source).as_deref() != Some(key) {
         return (404, "text/plain", Vec::new());
     }
-    match cache.client.download(&source).await {
-        Ok(bytes) => {
-            if let Err(error) = store(&cache.dir, key, &bytes) {
-                crate::log_console_error("image-cache", &error);
-            }
-            (200, content_type(key), bytes)
-        }
-        Err(_) => (404, "text/plain", Vec::new()),
+    match load(cache, &source).await {
+        Some((kind, bytes)) => (200, kind, bytes),
+        None => (404, "text/plain", Vec::new()),
     }
+}
+
+/// 按原链接读图：有缓存直接返回，没有时下载后存下来。OBS 卡片的图片也走这里。
+pub(crate) async fn load(cache: &ImageCache, source: &str) -> Option<(&'static str, Vec<u8>)> {
+    let key = image_key(source)?;
+    if let Some(bytes) = read_cached(&cache.dir, &key) {
+        return Some((content_type(&key), bytes));
+    }
+    let bytes = cache.client.download(source).await.ok()?;
+    if let Err(error) = store(&cache.dir, &key, &bytes) {
+        crate::log_console_error("image-cache", &error);
+    }
+    Some((content_type(&key), bytes))
 }
 
 fn read_marker(cache_dir: &Path) -> i64 {

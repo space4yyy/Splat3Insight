@@ -338,6 +338,16 @@ pub(crate) fn save_coop_record(
     Ok(changed)
 }
 
+/// 存着的「鲑鱼跑记录」里的击倒数量（图片是带签名的原链接），给 OBS 击倒数量卡片用。
+/// 还没查到时为 None。
+pub(crate) fn load_coop_defeats(
+    history_dir: &Path,
+    account_id: &str,
+) -> Result<Option<CoopDefeatFacts>, String> {
+    let connection = history_store::open_database(history_dir)?;
+    Ok(load_coop_record_raw(&connection, account_id)?.map(|(_, raw)| coop_defeat_facts(&raw)))
+}
+
 fn defeat_counts(raw: &Value) -> CoopDefeatFacts {
     let mut facts = coop_defeat_facts(raw);
     for fact in facts.enemies.iter_mut().chain(facts.bosses.iter_mut()) {

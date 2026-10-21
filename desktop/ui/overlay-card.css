@@ -517,6 +517,62 @@
   text-align: center;
 }
 
+/* 击倒数量卡片：一行鲑鱼图标，下面是累计击倒数，巨大鲑鱼和头目鲑鱼之间一条竖线。 */
+.defeat-count-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: var(--obs-card-width);
+  height: var(--obs-card-height);
+  overflow: hidden;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: #f5f5f2;
+  background: var(--obs-card-background, #383838);
+  font-family: "BlitzMain", "DFP GBZY7", sans-serif;
+  font-synthesis: none;
+  line-height: 1;
+}
+
+.defeat-count-card[hidden] {
+  display: none;
+}
+
+/* 每格同宽，五位数（12,345）也放得下。 */
+.defeat-count-card__item {
+  display: flex;
+  flex: 0 0 38px;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.defeat-count-card__icon {
+  display: block;
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+
+.defeat-count-card__count {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.defeat-count-card__count.is-zero {
+  color: #9699a3;
+}
+
+.defeat-count-card__divider {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  margin: 12px 4px;
+  background: rgba(245, 245, 242, .25);
+}
+
 .empty {
   display: none;
 }

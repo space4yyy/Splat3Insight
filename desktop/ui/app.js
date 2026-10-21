@@ -48,6 +48,7 @@
     'bankara-match': '同步蛮颓开放或挑战记录后显示最近比赛。',
     'x-match': '同步 X 比赛记录后显示最近比赛。',
     'salmon-run': '同步打工历史后显示鲑鱼跑卡片。',
+    'defeat-counts': '同步打工历史后显示击倒数量。',
   };
 
   const app = {
@@ -361,6 +362,8 @@
       if (app.view === 'overview') renderOverview();
       else if (analysis.VIEWS.includes(app.view)) renderAnalysis(app.view);
       else if (app.view === 'log') renderLog();
+      // 击倒数量卡片的预览用数据面板的数据，读到新数据时一起刷新。
+      else if (app.view === 'obs') renderObsPreview();
     });
   }
   dashboard.onFiltersChange(renderDataView);
@@ -1221,6 +1224,10 @@
     if (card.id === 'clock') {
       // 时钟不需要账号数据，直接显示本机时间。
       hasData = Boolean(cards?.updateClock(scale));
+    } else if (card.id === 'defeat-counts') {
+      // 击倒数量用数据面板读到的「鲑鱼跑记录」，图片走本地图片缓存；换账号后等新账号的数据读完再显示。
+      const factsReady = app.facts.status === 'ready' && app.facts.accountId === app.activeAccountId;
+      hasData = Boolean(factsReady && cards?.updateDefeatCounts(scale, dashboard.coopRecord(), records.imageSrc));
     } else if (cards && states) {
       if (card.id === 'overlay') {
         const type = cards.updateAuto(scale, states.overlay);
@@ -1263,7 +1270,7 @@
     const preview = $('#obs-preview .overlay-preview');
     const viewport = preview?.querySelector('.overlay-preview__viewport');
     const scale = preview?.querySelector('.overlay-preview__scale');
-    const card = preview?.querySelector('.overlay-card, .salmon-run-card, .clock-card');
+    const card = preview?.querySelector('.overlay-card, .salmon-run-card, .clock-card, .defeat-count-card');
     if (!viewport || !scale || !card) return;
     const ratio = scale.offsetWidth > 0 && preview.clientWidth > 0 ? Math.min(1, preview.clientWidth / scale.offsetWidth) : 1;
     scale.style.transform = `scale(${ratio})`;

@@ -1957,7 +1957,7 @@ pub fn run() {
                 sync_schedule::ObsActivity::new(move || sync_trigger.notify_one())
             };
             warm_up_history(history_dir.clone(), fact_account_ids);
-            match splat3_widget_core::images::ImageClient::new() {
+            let image_cache = match splat3_widget_core::images::ImageClient::new() {
                 Ok(client) => {
                     let image_cache = Arc::new(image_cache::ImageCache {
                         dir: config_dir.join("image-cache"),
@@ -1967,15 +1967,20 @@ pub fn run() {
                         history_dir.clone(),
                         Arc::clone(&image_cache),
                     ));
-                    app.manage(image_cache);
+                    app.manage(Arc::clone(&image_cache));
+                    Some(image_cache)
                 }
-                Err(error) => log_console_error("image-cache", &error),
-            }
+                Err(error) => {
+                    log_console_error("image-cache", &error);
+                    None
+                }
+            };
             let overlay_service = overlay_server::OverlayServiceController::new(
                 overlay_server::OverlayServerConfig {
                     accounts_path: metadata_path,
                     history_dir: history_dir.clone(),
                     activity: obs_activity.clone(),
+                    image_cache,
                 },
             );
             app.manage(AppState {

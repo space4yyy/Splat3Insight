@@ -44,6 +44,17 @@
     "height": 80
   },
   {
+    "id": "defeat-counts",
+    "route": "/defeat-counts",
+    "page": "defeat-counts",
+    "name": "击倒数量卡片",
+    "optionLabel": "击倒数量",
+    "description": "一行显示鲑鱼跑记录里巨大鲑鱼和头目鲑鱼的累计击倒数量。",
+    "sizeLabel": "OBS 尺寸推荐",
+    "width": 768,
+    "height": 64
+  },
+  {
     "id": "clock",
     "route": "/clock",
     "page": "clock",

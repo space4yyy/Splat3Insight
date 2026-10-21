@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use splat3_widget_core::dashboard::CoopDefeatFact;
 use splat3_widget_core::overlay::{OverlayMatchCategory, OverlayState};
 
 pub const OVERLAY_HOST: &str = "127.0.0.1";
@@ -22,6 +23,12 @@ const SALMON_RUN_HTML: &str = include_str!(concat!(
     "/../ui/salmon-run.html"
 ));
 const CLOCK_HTML: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/clock.html"));
+const DEFEAT_COUNTS_HTML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../ui/defeat-counts.html"
+));
+/// 击倒数量卡片的鲑鱼图片，后面接 coopEnemyId。
+const COOP_ENEMY_IMAGE_ROUTE: &str = "/images/coop-enemy/";
 const OVERLAY_CARD_CSS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/overlay-card.css"
@@ -148,6 +155,7 @@ fn render_card_page(card: &ObsCardDefinition) -> HttpResponse {
         "overlay" => OVERLAY_HTML,
         "salmon-run" => SALMON_RUN_HTML,
         "clock" => CLOCK_HTML,
+        "defeat-counts" => DEFEAT_COUNTS_HTML,
         _ => return not_found(),
     };
     let body = template
@@ -194,6 +202,8 @@ pub struct OverlayServerConfig {
     pub history_dir: PathBuf,
     /// Card data requests tell the background sync that OBS is showing the cards.
     pub(crate) activity: crate::sync_schedule::ObsActivity,
+    /// The app's SplatNet image cache, for the Salmonid icons on the defeat count card.
+    pub(crate) image_cache: Option<Arc<crate::image_cache::ImageCache>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -603,6 +613,14 @@ fn route_request(
         return Ok(render_card_page(card));
     }
 
+    if let Some(enemy_id) = path.strip_prefix(COOP_ENEMY_IMAGE_ROUTE) {
+        return Ok(enemy_id
+            .parse()
+            .ok()
+            .and_then(|enemy_id| coop_enemy_image(config, enemy_id))
+            .unwrap_or_else(not_found));
+    }
+
     match path {
         "/favicon.png" => Ok(HttpResponse {
             status: "200 OK",
@@ -731,24 +749,15 @@ fn route_request(
         }),
         "/api/overlay" => {
             config.activity.record_request(crate::now_ms());
-            match load_overlay_state(config, overlay_match_category(request_target)) {
-                Ok(state) => Ok(HttpResponse {
-                    status: "200 OK",
-                    content_type: "application/json; charset=utf-8",
-                    body: serde_json::to_vec(&state).map_err(|error| error.to_string())?,
-                }),
-                Err(error) => {
-                    let message = format!("Overlay 数据请求失败: {error}");
-                    write_log(config, &message);
-                    crate::log_console_error("overlay", &message);
-                    Ok(HttpResponse {
-                        status: "500 Internal Server Error",
-                        content_type: "application/json; charset=utf-8",
-                        body: serde_json::to_vec(&json!({ "error": error }))
-                            .map_err(|error| error.to_string())?,
-                    })
-                }
-            }
+            card_data_response(
+                config,
+                "Overlay 数据",
+                load_overlay_state(config, overlay_match_category(request_target)),
+            )
+        }
+        "/api/defeat-counts" => {
+            config.activity.record_request(crate::now_ms());
+            card_data_response(config, "击倒数量数据", load_defeat_counts(config))
         }
         "/healthz" => Ok(HttpResponse {
             status: "200 OK",
@@ -795,21 +804,43 @@ fn overlay_match_category(request_target: &str) -> Option<OverlayMatchCategory> 
     }
 }
 
-fn load_overlay_state(
+/// 卡片数据接口的响应：成功时是数据本身，失败时记日志并返回 `{"error": …}`。
+fn card_data_response<T: Serialize>(
     config: &OverlayServerConfig,
-    category: Option<OverlayMatchCategory>,
-) -> Result<OverlayState, String> {
+    label: &str,
+    result: Result<T, String>,
+) -> Result<HttpResponse, String> {
+    match result {
+        Ok(data) => Ok(HttpResponse {
+            status: "200 OK",
+            content_type: "application/json; charset=utf-8",
+            body: serde_json::to_vec(&data).map_err(|error| error.to_string())?,
+        }),
+        Err(error) => {
+            let message = format!("{label}请求失败: {error}");
+            write_log(config, &message);
+            crate::log_console_error("overlay", &message);
+            Ok(HttpResponse {
+                status: "500 Internal Server Error",
+                content_type: "application/json; charset=utf-8",
+                body: serde_json::to_vec(&json!({ "error": error }))
+                    .map_err(|error| error.to_string())?,
+            })
+        }
+    }
+}
+
+/// 卡片显示的账号：活动账号。没有账号配置、没有活动账号，或它正在被删除时为 None。
+fn active_account(config: &OverlayServerConfig) -> Result<Option<String>, String> {
     let registry = match fs::read_to_string(&config.accounts_path) {
         Ok(registry) => registry,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(crate::empty_overlay_state());
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("读取账号配置失败: {error}")),
     };
     let snapshot: RegistrySnapshot =
         serde_json::from_str(&registry).map_err(|error| format!("读取账号配置失败: {error}"))?;
     let Some(account_id) = snapshot.active_account_id else {
-        return Ok(crate::empty_overlay_state());
+        return Ok(None);
     };
     if !is_safe_account_id(&account_id) {
         return Err("活动账号标识无效".to_owned());
@@ -819,8 +850,84 @@ fn load_overlay_state(
         .iter()
         .any(|pending| pending == &account_id)
     {
-        return Ok(crate::empty_overlay_state());
+        return Ok(None);
     }
+    Ok(Some(account_id))
+}
+
+/// 击倒数量卡片的数据：巨大鲑鱼（enemies）和头目鲑鱼（bosses），按 SplatNet 的顺序。
+/// 图片换成本地服务的地址，OBS 不直接请求任天堂的链接。
+#[derive(Debug, Serialize)]
+struct DefeatCountCard {
+    enemies: Vec<DefeatCountItem>,
+    bosses: Vec<DefeatCountItem>,
+}
+
+#[derive(Debug, Serialize)]
+struct DefeatCountItem {
+    id: Option<i64>,
+    name: Option<String>,
+    image: Option<String>,
+    count: i64,
+}
+
+/// 还没有活动账号，或还没查到「鲑鱼跑记录」时为 None，卡片隐藏。
+fn load_defeat_counts(config: &OverlayServerConfig) -> Result<Option<DefeatCountCard>, String> {
+    let Some(account_id) = active_account(config)? else {
+        return Ok(None);
+    };
+    let Some(facts) = crate::dashboard_store::load_coop_defeats(&config.history_dir, &account_id)?
+    else {
+        return Ok(None);
+    };
+    let items = |list: Vec<CoopDefeatFact>| -> Vec<DefeatCountItem> {
+        list.into_iter()
+            .map(|fact| DefeatCountItem {
+                image: fact
+                    .image
+                    .and(fact.enemy_id)
+                    .map(|id| format!("{COOP_ENEMY_IMAGE_ROUTE}{id}")),
+                id: fact.enemy_id,
+                name: fact.name,
+                count: fact.defeat_count,
+            })
+            .collect()
+    };
+    Ok(Some(DefeatCountCard {
+        enemies: items(facts.enemies),
+        bosses: items(facts.bosses),
+    }))
+}
+
+/// 击倒数量卡片里的鲑鱼图片：按活动账号「鲑鱼跑记录」里的原链接读本地图片缓存，没有缓存时下载后存下。
+/// 只给记录里有的鲑鱼，其他一律 404。
+fn coop_enemy_image(config: &OverlayServerConfig, enemy_id: i64) -> Option<HttpResponse> {
+    let cache = config.image_cache.as_ref()?;
+    let account_id = active_account(config).ok()??;
+    let facts =
+        crate::dashboard_store::load_coop_defeats(&config.history_dir, &account_id).ok()??;
+    let source = facts
+        .enemies
+        .into_iter()
+        .chain(facts.bosses)
+        .find(|fact| fact.enemy_id == Some(enemy_id))?
+        .image?;
+    let (content_type, body) =
+        tauri::async_runtime::block_on(crate::image_cache::load(cache, &source))?;
+    Some(HttpResponse {
+        status: "200 OK",
+        content_type,
+        body,
+    })
+}
+
+fn load_overlay_state(
+    config: &OverlayServerConfig,
+    category: Option<OverlayMatchCategory>,
+) -> Result<OverlayState, String> {
+    let Some(account_id) = active_account(config)? else {
+        return Ok(crate::empty_overlay_state());
+    };
 
     match category {
         Some(category) => crate::history_store::load_overlay_state_for_match_category(
@@ -918,6 +1025,7 @@ mod tests {
                 accounts_path,
                 history_dir,
                 activity: Default::default(),
+                image_cache: None,
             },
         )
         .unwrap();
@@ -946,6 +1054,7 @@ mod tests {
                 accounts_path,
                 history_dir,
                 activity: Default::default(),
+                image_cache: None,
             },
         )
         .unwrap();
@@ -955,28 +1064,158 @@ mod tests {
         assert!(body.contains("\"sample_size\":0"));
     }
 
+    /// 「鲑鱼跑记录」：炸弹鱼、横纲带图片，头目联合没有图片也没击倒过。
+    fn coop_record() -> serde_json::Value {
+        let image = |name: &str| {
+            format!("https://api.lp1.av5ja.srv.nintendo.net/resources/prod/v3/coop_enemy_img/{name}_0.png?Expires=1&Signature=s&Key-Pair-Id=k")
+        };
+        serde_json::json!({
+            "defeatEnemyRecords": [{
+                "enemy": { "coopEnemyId": 4, "name": "Steelhead", "image": { "url": image("steelhead") } },
+                "defeatCount": 4812
+            }],
+            "defeatBossRecords": [
+                {
+                    "enemy": { "coopEnemyId": 23, "name": "Cohozuna", "image": { "url": image("cohozuna") } },
+                    "defeatCount": 171
+                },
+                { "enemy": { "coopEnemyId": 30, "name": "Triumvirate" }, "defeatCount": 0 }
+            ]
+        })
+    }
+
+    fn active_account_config(
+        directory: &std::path::Path,
+        image_cache: Option<Arc<crate::image_cache::ImageCache>>,
+    ) -> OverlayServerConfig {
+        let accounts_path = directory.join("accounts.json");
+        std::fs::write(&accounts_path, r#"{"active_account_id":"account"}"#).unwrap();
+        OverlayServerConfig {
+            accounts_path,
+            history_dir: directory.join("history"),
+            activity: Default::default(),
+            image_cache,
+        }
+    }
+
+    #[test]
+    fn defeat_count_api_serves_the_coop_record_with_local_image_routes() {
+        let directory = tempdir().unwrap();
+        let config = active_account_config(directory.path(), None);
+        // 还没查到「鲑鱼跑记录」：返回 null，卡片隐藏。
+        let response = route_request("GET", "/api/defeat-counts", &config).unwrap();
+        assert_eq!(response.status, "200 OK");
+        assert_eq!(response.body, b"null");
+
+        crate::dashboard_store::save_coop_record(&config.history_dir, "account", 1, &coop_record())
+            .unwrap();
+        let response = route_request("GET", "/api/defeat-counts", &config).unwrap();
+        assert_eq!(response.status, "200 OK");
+        assert_eq!(response.content_type, "application/json; charset=utf-8");
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(
+            body,
+            json!({
+                "enemies": [{ "id": 4, "name": "Steelhead", "image": "/images/coop-enemy/4", "count": 4812 }],
+                "bosses": [
+                    { "id": 23, "name": "Cohozuna", "image": "/images/coop-enemy/23", "count": 171 },
+                    { "id": 30, "name": "Triumvirate", "image": null, "count": 0 }
+                ]
+            })
+        );
+
+        // 账号正在删除时不再显示。
+        std::fs::write(
+            &config.accounts_path,
+            r#"{"active_account_id":"account","pending_account_deletions":["account"]}"#,
+        )
+        .unwrap();
+        let response = route_request("GET", "/api/defeat-counts", &config).unwrap();
+        assert_eq!(response.body, b"null");
+    }
+
+    #[test]
+    fn coop_enemy_images_come_from_the_record_and_the_local_cache() {
+        let directory = tempdir().unwrap();
+        let cache_dir = directory.path().join("image-cache");
+        crate::image_cache::store(
+            &cache_dir,
+            "v3/coop_enemy_img/steelhead_0.png",
+            b"steelhead",
+        )
+        .unwrap();
+        let config = active_account_config(
+            directory.path(),
+            Some(Arc::new(crate::image_cache::ImageCache {
+                dir: cache_dir,
+                client: splat3_widget_core::images::ImageClient::new().unwrap(),
+            })),
+        );
+        assert_eq!(
+            route_request("GET", "/images/coop-enemy/4", &config)
+                .unwrap()
+                .status,
+            "404 Not Found"
+        );
+
+        crate::dashboard_store::save_coop_record(&config.history_dir, "account", 1, &coop_record())
+            .unwrap();
+        let response = route_request("GET", "/images/coop-enemy/4", &config).unwrap();
+        assert_eq!(
+            (
+                response.status,
+                response.content_type,
+                response.body.as_slice()
+            ),
+            ("200 OK", "image/png", &b"steelhead"[..])
+        );
+        // 记录里没有的鲑鱼、没有图片的头目鲑鱼和不是编号的地址都是 404，不会去下载。
+        for path in [
+            "/images/coop-enemy/99",
+            "/images/coop-enemy/30",
+            "/images/coop-enemy/4.png",
+            "/images/coop-enemy/",
+        ] {
+            assert_eq!(
+                route_request("GET", path, &config).unwrap().status,
+                "404 Not Found",
+                "{path}"
+            );
+        }
+    }
+
     #[test]
     fn card_data_requests_tell_the_sync_that_obs_shows_the_cards() {
         let directory = tempdir().unwrap();
-        let starts = Arc::new(AtomicUsize::new(0));
-        let counter = Arc::clone(&starts);
-        let config = OverlayServerConfig {
-            accounts_path: directory.path().join("missing-accounts.json"),
-            history_dir: directory.path().join("history"),
-            activity: crate::sync_schedule::ObsActivity::new(move || {
-                counter.fetch_add(1, Ordering::Relaxed);
-            }),
-        };
+        for (page, requests) in [
+            ("/overlay", ["/api/overlay", "/api/overlay?xmatch"]),
+            (
+                "/defeat-counts",
+                ["/api/defeat-counts", "/api/defeat-counts"],
+            ),
+        ] {
+            let starts = Arc::new(AtomicUsize::new(0));
+            let counter = Arc::clone(&starts);
+            let config = OverlayServerConfig {
+                accounts_path: directory.path().join("missing-accounts.json"),
+                history_dir: directory.path().join("history"),
+                activity: crate::sync_schedule::ObsActivity::new(move || {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                }),
+                image_cache: None,
+            };
 
-        // Loading a card page is not enough; the card has to poll its data.
-        route_request("GET", "/overlay", &config).unwrap();
-        assert_eq!(starts.load(Ordering::Relaxed), 0);
-        assert!(!config.activity.is_live(crate::now_ms()));
+            // Loading a card page is not enough; the card has to poll its data.
+            route_request("GET", page, &config).unwrap();
+            assert_eq!(starts.load(Ordering::Relaxed), 0, "{page}");
+            assert!(!config.activity.is_live(crate::now_ms()));
 
-        route_request("GET", "/api/overlay", &config).unwrap();
-        route_request("GET", "/api/overlay?xmatch", &config).unwrap();
-        assert_eq!(starts.load(Ordering::Relaxed), 1);
-        assert!(config.activity.is_live(crate::now_ms()));
+            for request in requests {
+                route_request("GET", request, &config).unwrap();
+            }
+            assert_eq!(starts.load(Ordering::Relaxed), 1, "{page}");
+            assert!(config.activity.is_live(crate::now_ms()));
+        }
     }
 
     #[test]
@@ -989,6 +1228,7 @@ mod tests {
                 accounts_path: directory.path().join("missing-accounts.json"),
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
+                image_cache: None,
             },
         )
         .unwrap();
@@ -1010,6 +1250,7 @@ mod tests {
                 accounts_path,
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
+                image_cache: None,
             },
         )
         .unwrap();
@@ -1029,6 +1270,7 @@ mod tests {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
+                image_cache: None,
             },
         )
         .unwrap();
@@ -1047,6 +1289,7 @@ mod tests {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
+                image_cache: None,
             },
         )
         .unwrap();
@@ -1066,6 +1309,7 @@ mod tests {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
+                image_cache: None,
             },
         )
         .unwrap();
@@ -1085,6 +1329,7 @@ mod tests {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
+                image_cache: None,
             },
         )
         .unwrap();
@@ -1105,6 +1350,7 @@ mod tests {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
+                image_cache: None,
             },
         )
         .unwrap();
@@ -1124,6 +1370,7 @@ mod tests {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
+                image_cache: None,
             },
         )
         .unwrap();
@@ -1131,7 +1378,7 @@ mod tests {
         assert_eq!(response.status, "200 OK");
         assert_eq!(response.content_type, "text/javascript; charset=utf-8");
         assert_eq!(response.body, GAME_NAMES.as_bytes());
-        for page in [OVERLAY_HTML, SALMON_RUN_HTML] {
+        for page in [OVERLAY_HTML, SALMON_RUN_HTML, DEFEAT_COUNTS_HTML] {
             let names_at = page.find("/game-names.js").unwrap();
             assert!(names_at < page.find("/overlay-card-renderer.js").unwrap());
         }
@@ -1144,6 +1391,7 @@ mod tests {
             accounts_path: directory.path().join("accounts.json"),
             history_dir: directory.path().join("history"),
             activity: Default::default(),
+            image_cache: None,
         };
 
         for card in obs_card_catalog() {
@@ -1172,6 +1420,7 @@ mod tests {
             accounts_path: directory.path().join("accounts.json"),
             history_dir: directory.path().join("history"),
             activity: Default::default(),
+            image_cache: None,
         };
 
         let response = route_request("GET", "/clock", &config).unwrap();
@@ -1191,6 +1440,7 @@ mod tests {
             accounts_path: directory.path().join("accounts.json"),
             history_dir: directory.path().join("history"),
             activity: Default::default(),
+            image_cache: None,
         };
 
         for path in [
@@ -1222,6 +1472,7 @@ mod tests {
                 accounts_path: directory.path().join("accounts.json"),
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
+                image_cache: None,
             },
         )
         .unwrap();

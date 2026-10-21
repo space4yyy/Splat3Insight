@@ -391,7 +391,6 @@ table.data .num { text-align: right; }
 /* 卡片是浅色文字，预览底板在两种主题下都用深色棋盘格，背景调成全透明也看得清。 */
 .obs-stage { min-width: 0; padding: 16px 10px; border: 1px solid var(--line); border-radius: 12px; background: repeating-conic-gradient(var(--check-a) 0 25%, var(--check-b) 0 50%) 0 0 / 16px 16px; }
 .obs-empty { padding: 22px 8px; color: var(--on-check); font-size: 13px; text-align: center; }
-.obs-usage { display: grid; gap: 2px; margin: 0; padding-left: 1.6em; color: var(--ink-3); font-size: 12px; line-height: 1.6; }
 .overlay-preview { min-width: 0; overflow: hidden; }
 .overlay-preview__viewport { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; width: 100%; }
 .overlay-preview__scale { width: max-content; transform-origin: top center; font-size: 16px; line-height: normal; letter-spacing: normal; }
@@ -399,6 +398,10 @@ table.data .num { text-align: right; }
 .overlay-preview__scale > .clock-card { --obs-card-width: 160px; --obs-card-height: 60px; }
 /* 时钟居中放在与数据卡片相同的预览画布内，切换时不改变预览高度。 */
 .overlay-preview[data-card="clock"] .overlay-preview__scale { display: flex; align-items: center; justify-content: center; width: 320px; height: 80px; }
+/* 击倒数量是长条，缩到预览宽度后在同样高的画布里上下居中。 */
+.overlay-preview__scale > .defeat-count-card { --obs-card-width: 768px; --obs-card-height: 64px; }
+.overlay-preview[data-card="defeat-counts"] .overlay-preview__viewport { align-items: center; min-height: 80px; }
+.overlay-preview[data-card="defeat-counts"] .overlay-preview__scale { transform-origin: center; }
 
 /* 对战记录 */
 .log-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }

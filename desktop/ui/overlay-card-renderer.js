@@ -22,13 +22,16 @@
   const mountedCards = new WeakMap();
   const mountedSalmonCards = new WeakMap();
   const mountedClockCards = new WeakMap();
+  const mountedDefeatCards = new WeakMap();
   const mountedCardTypes = new WeakMap();
   const isNumber = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
   const displayNumber = (value, digits = 0) => isNumber(value) ? Number(value).toFixed(digits) : '—';
 
   // 数字变化时滚动到新值并短暂发亮；第一次显示、没有变化或不是数字时直接替换。
   // target 可以是元素，也可以是元素里的文字节点（击倒、死亡、K/D 的数字后面还跟着单位）。
-  const NUMBER_PATTERN = /^([^\d-]*)(-?\d+(?:\.\d+)?)(.*)$/;
+  // 带千位分隔符的数字（击倒数量的 4,812）滚动时也保留分隔符。
+  const NUMBER_PATTERN = /^([^\d-]*)(-?\d{1,3}(?:,\d{3})+|-?\d+(?:\.\d+)?)(.*)$/;
+  const groupDigits = (text) => String(text).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   const NUMBER_ROLL_MS = 800;
   const NUMBER_GLOW_MS = 1200;
   const rollingNumbers = new WeakMap();
@@ -54,9 +57,11 @@
     const from = NUMBER_PATTERN.exec(current);
     const to = NUMBER_PATTERN.exec(text);
     if (from && to && from[1] === to[1] && from[3] === to[3]) {
-      const start = Number(from[2]);
-      const end = Number(to[2]);
+      const start = Number(from[2].replace(/,/g, ''));
+      const end = Number(to[2].replace(/,/g, ''));
       const digits = to[2].split('.')[1]?.length ?? 0;
+      const grouped = from[2].includes(',') || to[2].includes(',');
+      const format = (value) => (grouped ? groupDigits(value.toFixed(0)) : value.toFixed(digits));
       let began = null;
       const roll = { text, frame: 0, timer: 0 };
       roll.stop = () => {
@@ -76,7 +81,7 @@
           return;
         }
         const eased = 1 - (1 - progress) ** 3;
-        write(`${to[1]}${(start + (end - start) * eased).toFixed(digits)}${to[3]}`);
+        write(`${to[1]}${format(start + (end - start) * eased)}${to[3]}`);
         roll.frame = window.requestAnimationFrame(step);
       };
       rollingNumbers.set(target, roll);
@@ -113,6 +118,7 @@
       mountedCards.delete(root);
       mountedSalmonCards.delete(root);
       mountedClockCards.delete(root);
+      mountedDefeatCards.delete(root);
       root.replaceChildren();
     }
     mountedCardTypes.set(root, type);
@@ -430,6 +436,85 @@ ${SALMON_TOTALS_HTML}
     return newest?.type ?? null;
   }
 
+  // 击倒数量卡片：「鲑鱼跑记录」里的累计击倒数量，一行图标加数字，巨大鲑鱼和头目鲑鱼之间用竖线隔开。
+  // record 的 enemies（巨大鲑鱼）和 bosses（头目鲑鱼）按 SplatNet 的顺序，每项是 { id, name, image, count }。
+  // image 交给 imageSrc 换成能显示的地址；头目鲑鱼没有图片时用卡片自带的彩色图。名称只放在提示里。
+  function defeatCountItems(record, imageSrc = (url) => url) {
+    const items = (group) => (Array.isArray(record?.[group]) ? record[group] : [])
+      .filter((row) => isNumber(row?.count))
+      .map((row) => {
+        const id = isNumber(row.id) ? Number(row.id) : null;
+        const name = String(row.name ?? '').trim();
+        const bundled = group === 'bosses' && salmonBossIcons[id] ? `./images/${salmonBossIcons[id].color}` : null;
+        return {
+          key: `${group}:${id ?? name}`,
+          name: officialName('bosses', name) || name,
+          image: (row.image && imageSrc(row.image)) || bundled,
+          fallback: bundled,
+          count: Number(row.count),
+        };
+      });
+    return { enemies: items('enemies'), bosses: items('bosses') };
+  }
+
+  function createDefeatCountCard(root, items) {
+    const card = document.createElement('section');
+    card.className = 'defeat-count-card';
+    const counts = [];
+    const addItem = (item) => {
+      const cell = document.createElement('span');
+      cell.className = 'defeat-count-card__item';
+      cell.title = item.name;
+      const icon = document.createElement('img');
+      icon.className = 'defeat-count-card__icon';
+      icon.alt = item.name;
+      // 图片读不到时：头目鲑鱼换成自带的图，其他的留出空位，数字不挪位置。
+      icon.addEventListener('error', () => {
+        if (item.fallback && icon.getAttribute('src') !== item.fallback) icon.src = item.fallback;
+        else icon.style.visibility = 'hidden';
+      });
+      if (item.image) icon.src = item.image;
+      else icon.style.visibility = 'hidden';
+      const count = document.createElement('b');
+      count.className = 'defeat-count-card__count';
+      cell.append(icon, count);
+      card.append(cell);
+      counts.push(count);
+    };
+    items.enemies.forEach(addItem);
+    if (items.enemies.length && items.bosses.length) {
+      const divider = document.createElement('span');
+      divider.className = 'defeat-count-card__divider';
+      card.append(divider);
+    }
+    items.bosses.forEach(addItem);
+    root.replaceChildren(card);
+    return { card, counts };
+  }
+
+  // 每次刷新只改数字（变化时滚动并发亮）；种类或图片变了才重建。
+  function updateDefeatCounts(root, record, imageSrc) {
+    prepareCardType(root, 'defeat-counts');
+    const items = defeatCountItems(record, imageSrc);
+    const list = [...items.enemies, ...items.bosses];
+    let refs = mountedDefeatCards.get(root);
+    if (!list.length) {
+      if (refs) refs.card.hidden = true;
+      return false;
+    }
+    const layout = list.map((item) => `${item.key} ${item.image}`).join('\n');
+    if (!refs || refs.layout !== layout) {
+      refs = { ...createDefeatCountCard(root, items), layout };
+      mountedDefeatCards.set(root, refs);
+    }
+    refs.card.hidden = false;
+    list.forEach((item, index) => {
+      showNumber(refs.counts[index], groupDigits(item.count));
+      refs.counts[index].classList.toggle('is-zero', item.count === 0);
+    });
+    return true;
+  }
+
   // 时钟卡片：本机时区的当前时间，例如 16:31:09。
   // BlitzMain 的数字宽窄不一（1 比 0 窄很多），每位数字放进等宽格子，秒数跳动时整行不会左右晃。
   const CLOCK_FORMAT = '00:00:00';
@@ -469,6 +554,8 @@ ${SALMON_TOTALS_HTML}
     updateSalmonRun,
     updateSalmonTotals,
     newestCardType,
+    updateDefeatCounts,
+    defeatCountItems,
     updateClock,
     clockText,
     labels: Object.freeze({ rule: localizeRule, coopStage: localizeCoopStage, grade: localizeGrade }),

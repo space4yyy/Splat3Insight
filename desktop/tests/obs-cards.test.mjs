@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const ui = new URL('../ui/', import.meta.url);
-const [cards, indexHtml, appJs, dashboardJs, dashboardDataJs, overlayCss, overlayHtml, salmonRunHtml, clockHtml, tauriConfig, rendererJs] = await Promise.all([
+const [cards, indexHtml, appJs, dashboardJs, dashboardDataJs, overlayCss, overlayHtml, salmonRunHtml, clockHtml, defeatCountsHtml, tauriConfig, rendererJs] = await Promise.all([
   readFile(new URL('obs-cards.json', ui), 'utf8').then(JSON.parse),
   readFile(new URL('index.html', ui), 'utf8'),
   readFile(new URL('app.js', ui), 'utf8'),
@@ -14,6 +14,7 @@ const [cards, indexHtml, appJs, dashboardJs, dashboardDataJs, overlayCss, overla
   readFile(new URL('overlay.html', ui), 'utf8'),
   readFile(new URL('salmon-run.html', ui), 'utf8'),
   readFile(new URL('clock.html', ui), 'utf8'),
+  readFile(new URL('defeat-counts.html', ui), 'utf8'),
   readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8').then(JSON.parse),
   readFile(new URL('overlay-card-renderer.js', ui), 'utf8'),
 ]);
@@ -55,9 +56,9 @@ test('OBS card selection always keeps one option and defaults to automatic', () 
 });
 
 test('cards with their own page are picked alone instead of joining the combined overlay address', () => {
-  // 只有 /overlay?参数 形式的数据卡片能组合；自动和时钟的地址各自独立。
+  // 只有 /overlay?参数 形式的数据卡片能组合；自动、击倒数量和时钟的地址各自独立。
   const standalone = cards.filter((card) => !card.route.includes('?')).map((card) => card.id);
-  assert.deepEqual(standalone, ['overlay', 'clock']);
+  assert.deepEqual(standalone, ['overlay', 'defeat-counts', 'clock']);
   assert.match(appJs, /const obsStandalone = \(id\) => !obsCardOf\(id\)\?\.route\.includes\('\?'\);/);
   assert.match(appJs, /if \(standalone\) return obsCardOf\(standalone\)\.route;/);
   assert.match(appJs, /obsStandalone\(id\) \? \[id\] :/);
@@ -79,7 +80,7 @@ test('the clock card shows local time as HH:mm:ss in the number font', () => {
   assert.match(overlayCss, /\.clock-card__digit \{[^}]*width: \.6em;/);
   assert.match(clockHtml, /Splat3OverlayCard\.updateClock\(root\)/);
   assert.doesNotMatch(clockHtml, /\/api\/overlay/);
-  assert.match(appJs, /preview\?\.querySelector\('\.overlay-card, \.salmon-run-card, \.clock-card'\)/);
+  assert.match(appJs, /preview\?\.querySelector\('\.overlay-card, \.salmon-run-card, \.clock-card, \.defeat-count-card'\)/);
 });
 
 test('card catalog is loaded by the app without hardcoded service addresses', () => {
@@ -97,9 +98,9 @@ test('Tauri CSP allows the app to fetch its same-origin card catalog', () => {
   assert.match(connectSource, /(?:^|\s)'self'(?:\s|$)/);
 });
 
-test('battle, Salmon Run and clock cards share one background that OBS custom CSS can override', () => {
+test('battle, Salmon Run, defeat count and clock cards share one background that OBS custom CSS can override', () => {
   const rule = (selector) => overlayCss.match(new RegExp(`\\n${selector.replace('.', '\\.')} \\{([^}]*)\\}`))?.[1] ?? '';
-  for (const selector of ['.overlay-card', '.salmon-run-card', '.clock-card']) {
+  for (const selector of ['.overlay-card', '.salmon-run-card', '.defeat-count-card', '.clock-card']) {
     assert.match(rule(selector), /background: var\(--obs-card-background, #383838\);/, selector);
     assert.doesNotMatch(rule(selector), /border:/, selector);
   }
@@ -167,7 +168,7 @@ test('the main window accepts the click that activates it on macOS', () => {
 test('OBS page templates receive dimensions from the card catalog', () => {
   assert.match(overlayCss, /width: var\(--obs-card-width\)/);
   assert.match(overlayCss, /height: var\(--obs-card-height\)/);
-  for (const page of [overlayHtml, salmonRunHtml, clockHtml]) {
+  for (const page of [overlayHtml, salmonRunHtml, clockHtml, defeatCountsHtml]) {
     assert.match(page, /__OBS_CARD_WIDTH__/);
     assert.match(page, /__OBS_CARD_HEIGHT__/);
   }
