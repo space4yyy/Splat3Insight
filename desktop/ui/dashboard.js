@@ -49,17 +49,19 @@
   const state = { range: '30d', mode: 'all', coopRule: 'all', rule: 'AREA', heatMetric: 'count', tables: {} };
   // 右上角筛选的选择记在本机，重新打开应用时沿用。state 里是实际生效的值：对战、武器、场地页没有
   // 「打工」，打工模式也只能选记录里出现过的，这时先按全部模式显示，选择本身不变。
+  // period 是时间范围第三格显示的自然周期：当前选着的，或者上次选的。
   const FILTERS_KEY = 'splat3-filters';
-  const chosen = { mode: 'all', coopRule: 'all' };
+  const chosen = { mode: 'all', coopRule: 'all', period: 'season' };
   try {
     const saved = JSON.parse(localStorage.getItem(FILTERS_KEY) || 'null') || {};
     if (typeof saved.range === 'string') state.range = saved.range;
     if (typeof saved.mode === 'string') chosen.mode = state.mode = saved.mode;
     if (typeof saved.coopRule === 'string') chosen.coopRule = saved.coopRule;
+    if (typeof saved.period === 'string') chosen.period = saved.period;
   } catch {}
   function saveFilters() {
     try {
-      localStorage.setItem(FILTERS_KEY, JSON.stringify({ range: state.range, mode: chosen.mode, coopRule: chosen.coopRule }));
+      localStorage.setItem(FILTERS_KEY, JSON.stringify({ range: state.range, mode: chosen.mode, coopRule: chosen.coopRule, period: chosen.period }));
     } catch {}
   }
   // 打工模式（SplatNet 的 rule），名称取游戏里的说法。
@@ -76,6 +78,7 @@
   function dayStartOf(t) { const date = new Date(t); date.setHours(0, 0, 0, 0); return date.getTime(); }
   function addDays(t, days) { const date = new Date(t); date.setDate(date.getDate() + days); return date.getTime(); }
   function weekStartOf(t) { const day = dayStartOf(t); return addDays(day, -((new Date(day).getDay() + 6) % 7)); }
+  function monthStartOf(t) { const date = new Date(t); return new Date(date.getFullYear(), date.getMonth(), 1).getTime(); }
   function dataStart(nowMs) {
     const first = Math.min(battles[0]?.t ?? Infinity, shifts[0]?.t ?? Infinity);
     return Number.isFinite(first) ? dayStartOf(first) : addDays(dayStartOf(nowMs), -29);
@@ -85,15 +88,19 @@
     const today = dayStartOf(now);
     if (key === '7d') return [addDays(today, -6), now];
     if (key === '30d') return [addDays(today, -29), now];
+    if (key === 'week') return [weekStartOf(now), now];
+    if (key === 'month') return [monthStartOf(now), now];
     if (key === 'season') return [seasonStart(now), now];
     return [dataStart(now), now];
   }
+  // 本周、本月、本赛季和上一周、月、赛季的同一段比：从开头起经过同样长的时间，上一段没这么长时到它结束为止。
   function previousBounds(key) {
     if (key === 'all') return null;
     const [start, end] = rangeBounds(key);
     if (key === '7d') return [addDays(start, -7), start];
     if (key === '30d') return [addDays(start, -30), start];
-    return [start - (end - start), start];
+    const before = { week: weekStartOf, month: monthStartOf, season: seasonStart }[key](start - 1);
+    return [before, Math.min(before + (end - start), start)];
   }
   const inMode = (battle) => state.mode === 'all' || battle.mode === state.mode;
   const battlesIn = (start, end) => battles.filter((battle) => battle.t >= start && battle.t <= end && inMode(battle));
@@ -301,7 +308,7 @@
     const [start, end] = rangeBounds(state.range);
     const previous = previousBounds(state.range);
     const buckets = bucketEdges(start, end);
-    const versus = state.range === 'all' ? '' : '较上期';
+    const versus = { all: '', week: '较上周同期', month: '较上月同期', season: '较上赛季同期' }[state.range] ?? '较上期';
     const tiles = [];
     if (state.mode === 'salmon') {
       const shiftStats = (from, to) => {
@@ -1051,16 +1058,63 @@
       apply(button.getAttribute(attribute));
     });
   }
+  // 时间范围：近 7 天、近 30 天、全部是普通分段；第三格是菜单按钮，按下状态和文字跟着自然周期走。
+  function pressRange() {
+    for (const button of rangeFilter.querySelectorAll(':scope > button[data-range]')) button.setAttribute('aria-pressed', String(button.getAttribute('data-range') === state.range));
+    for (const item of periodMenu.querySelectorAll('button[data-range]')) item.setAttribute('aria-checked', String(item.getAttribute('data-range') === state.range));
+    const label = periodMenu.querySelector(`[data-range="${chosen.period}"] .range-item-name`).textContent;
+    periodButton.querySelector('.range-period-label').textContent = label;
+    periodButton.setAttribute('aria-label', `自然周期：${label}`);
+    periodButton.setAttribute('aria-pressed', String(periods.includes(state.range)));
+  }
+  // 和账号菜单一样：打开时焦点放在选中的一项，点外面或按 Esc 收起。每次打开时重算各项从哪天开始。
+  function setPeriodMenu(open) {
+    if (open) {
+      for (const item of periodMenu.querySelectorAll('button[data-range]')) {
+        item.querySelector('.range-item-from').textContent = `${fmtShortDate(rangeBounds(item.getAttribute('data-range'))[0])} 起`;
+      }
+    }
+    periodMenu.hidden = !open;
+    periodButton.setAttribute('aria-expanded', String(open));
+    if (open) (periodMenu.querySelector('[aria-checked="true"]') || periodMenu.querySelector('button'))?.focus();
+  }
   // 记下的选择已经不在按钮里时回到默认。
   const rangeFilter = document.getElementById('range-filter');
+  const periodButton = document.getElementById('range-period-button');
+  const periodMenu = document.getElementById('range-period-menu');
   const optionsOf = (container, attribute) => [...container.querySelectorAll(`button[${attribute}]`)].map((button) => button.getAttribute(attribute));
+  const periods = optionsOf(periodMenu, 'data-range');
   if (!optionsOf(rangeFilter, 'data-range').includes(state.range)) state.range = '30d';
+  if (periods.includes(state.range)) chosen.period = state.range;
+  else if (!periods.includes(chosen.period)) chosen.period = 'season';
   if (!optionsOf(modeFilter, 'data-mode').includes(chosen.mode)) chosen.mode = state.mode = 'all';
-  pressSegmented(rangeFilter, 'data-range', state.range);
+  pressRange();
   pressSegmented(modeFilter, 'data-mode', state.mode);
   // 时间范围和模式筛选由总览和对战记录共用，改动后通知当前页面重新绘制。
   const filtersChanged = () => (filterListener ? filterListener() : render());
-  bindSegmented(rangeFilter, 'data-range', (value) => { state.range = value; saveFilters(); filtersChanged(); });
+  rangeFilter.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-range]');
+    if (!button) return;
+    state.range = button.getAttribute('data-range');
+    if (periods.includes(state.range)) chosen.period = state.range;
+    if (periodMenu.contains(button)) {
+      setPeriodMenu(false);
+      periodButton.focus();
+    }
+    pressRange();
+    saveFilters();
+    filtersChanged();
+  });
+  periodButton.addEventListener('click', () => setPeriodMenu(periodMenu.hidden));
+  document.addEventListener('click', (event) => {
+    if (!periodMenu.hidden && !event.target.closest('.range-period')) setPeriodMenu(false);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !periodMenu.hidden) {
+      setPeriodMenu(false);
+      periodButton.focus();
+    }
+  });
   bindSegmented(modeFilter, 'data-mode', (value) => { chosen.mode = state.mode = value; saveFilters(); filtersChanged(); });
   bindSegmented(coopRuleFilter, 'data-coop-rule', (value) => { chosen.coopRule = state.coopRule = value; saveFilters(); filtersChanged(); });
   bindSegmented(document.getElementById('heat-metric'), 'data-metric', (value) => { state.heatMetric = value; renderHeat(); });

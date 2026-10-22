@@ -61,7 +61,15 @@
             <div class="segmented" id="range-filter" role="group" aria-label="时间范围">
               <button type="button" data-range="7d" aria-pressed="false">近 7 天</button>
               <button type="button" data-range="30d" aria-pressed="true">近 30 天</button>
-              <button type="button" data-range="season" aria-pressed="false">本赛季</button>
+              <div class="range-period">
+                <button type="button" class="range-period-button" id="range-period-button" aria-haspopup="menu" aria-expanded="false" aria-controls="range-period-menu" aria-pressed="false"><span class="range-period-label">本赛季</span><span class="range-caret" aria-hidden="true"></span></button>
+                <div class="range-menu" id="range-period-menu" role="menu" aria-label="自然周期" hidden>
+                  <div class="range-menu-title">自然周期</div>
+                  <button type="button" class="range-item" role="menuitemradio" aria-checked="false" data-range="week"><span class="range-item-name">本周</span><span class="range-item-from"></span></button>
+                  <button type="button" class="range-item" role="menuitemradio" aria-checked="false" data-range="month"><span class="range-item-name">本月</span><span class="range-item-from"></span></button>
+                  <button type="button" class="range-item" role="menuitemradio" aria-checked="false" data-range="season"><span class="range-item-name">本赛季</span><span class="range-item-from"></span></button>
+                </div>
+              </div>
               <button type="button" data-range="all" aria-pressed="false">全部</button>
             </div>
             <div class="segmented" id="mode-filter" role="group" aria-label="模式"></div>

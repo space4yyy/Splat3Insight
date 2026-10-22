@@ -186,7 +186,7 @@ body {
   letter-spacing: .02em;
 }
 * { box-sizing: border-box; }
-[hidden]:not(.drawer, .drawer-backdrop, .account-menu, .tip) { display: none !important; }
+[hidden]:not(.drawer, .drawer-backdrop, .account-menu, .range-menu, .tip) { display: none !important; }
 button { font: inherit; letter-spacing: inherit; }
 h1, h2, h3, strong, b, th { font-weight: 400; }
 .font-number, .brand, .kpi-value, .kpi-meta, .rule-value, .delta-up, .delta-down, .delta-flat, table.data td.num, .tip-title, .tip-row strong, .mini-stat strong, .form-summary strong { font-family: var(--font-number); }
@@ -212,10 +212,10 @@ button:focus-visible, [tabindex]:focus-visible, textarea:focus-visible { outline
 .account-text small { overflow: hidden; color: var(--ink-3); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .account-caret { width: 7px; height: 7px; margin: 0 4px 4px 0; border-right: 1.5px solid var(--ink-3); border-bottom: 1.5px solid var(--ink-3); transform: rotate(45deg); transition: transform .18s cubic-bezier(.22, 1, .36, 1); }
 .account-current[aria-expanded="true"] .account-caret { transform: translateY(2px) rotate(-135deg); }
-.account-menu { position: absolute; z-index: 15; top: calc(100% + 6px); left: 0; width: 100%; display: grid; gap: 2px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); box-shadow: 0 12px 32px var(--shadow); opacity: 1; transform: translateY(0) scale(1); transform-origin: top center; transition: opacity .15s ease-out, transform .15s cubic-bezier(.22, 1, .36, 1), display .15s; transition-behavior: allow-discrete; }
-@starting-style { .account-menu { opacity: 0; transform: translateY(-4px) scale(.98); } }
-.account-menu[hidden] { display: none; opacity: 0; transform: translateY(-4px) scale(.98); pointer-events: none; }
-.account-menu-title { padding: 4px 8px 6px; color: var(--ink-3); font-size: 12px; letter-spacing: .08em; }
+.account-menu, .range-menu { position: absolute; z-index: 15; top: calc(100% + 6px); left: 0; width: 100%; display: grid; gap: 2px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); box-shadow: 0 12px 32px var(--shadow); opacity: 1; transform: translateY(0) scale(1); transform-origin: top center; transition: opacity .15s ease-out, transform .15s cubic-bezier(.22, 1, .36, 1), display .15s; transition-behavior: allow-discrete; }
+@starting-style { .account-menu, .range-menu { opacity: 0; transform: translateY(-4px) scale(.98); } }
+.account-menu[hidden], .range-menu[hidden] { display: none; opacity: 0; transform: translateY(-4px) scale(.98); pointer-events: none; }
+.account-menu-title, .range-menu-title { padding: 4px 8px 6px; color: var(--ink-3); font-size: 12px; letter-spacing: .08em; }
 .account-item { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; padding: 8px; border: 0; border-radius: 9px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; transition: background-color .14s ease, color .14s ease; }
 .account-item:hover, .account-action:hover { background: var(--panel-raised); }
 .account-item[aria-checked="true"] { background: var(--accent-2-wash); }
@@ -262,6 +262,18 @@ button:focus-visible, [tabindex]:focus-visible, textarea:focus-visible { outline
 .segmented button:hover { color: var(--ink); }
 .segmented button:active { transform: scale(.97); }
 .segmented button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+/* 时间范围第三格：显示当前或上次选的自然周期，点开选本周、本月或本赛季。文字留足三个字宽，换选项时整组不挪动。
+   菜单在分段控件里面，外观和账号菜单一样，规则要压过 .segmented button。 */
+.range-period { position: relative; display: inline-flex; }
+.segmented .range-period-button { padding-right: 10px; }
+.range-period-label { min-width: 3.1em; text-align: center; }
+.range-caret { width: 5px; height: 5px; margin-top: -3px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); transition: transform .18s cubic-bezier(.22, 1, .36, 1); }
+.range-period-button[aria-expanded="true"] .range-caret { transform: translateY(3px) rotate(-135deg); }
+.range-menu { top: calc(100% + 10px); left: -4px; width: 176px; transform-origin: top left; }
+.range-menu .range-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; padding: 7px 10px; border-radius: 9px; color: var(--ink); text-align: left; }
+.range-menu .range-item:hover { background: var(--panel-raised); }
+.range-menu .range-item[aria-checked="true"] { background: var(--accent-2-wash); }
+.range-item-from { color: var(--ink-3); font-family: var(--font-number); font-size: 12px; }
 .segmented.small button { padding: 3px 10px; font-size: 12px; }
 .segmented.small button[aria-pressed="true"] { background: var(--accent-2); color: var(--on-accent-2); }
 .mode-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
@@ -692,7 +704,7 @@ dialog.share-dialog #share-status { margin: 12px 0; overflow-wrap: anywhere; }
 .battle-assists { font-size: .8em; }
 
 @media (prefers-reduced-motion: reduce) {
-  .account-current, .account-caret, .account-menu, .account-item, .account-action, .nav button, .status-dot, .topbar, .segmented button, .main > .view:not([hidden]), .ghost, .button-danger, .button-primary, .rule-tab, .form-cell, .meter > span, .col-hit, .tip, .cell, .obs-option, .sort-button, .page-size-select, .page-size-select select, table.data tr.is-clickable td, .drawer-backdrop, .drawer, .score-bar span, .switch, .switch::before, dialog.close-prompt, dialog.close-prompt::backdrop, .delete-option, .king-bar > span, .defeat-bar-fill { transition: none; }
+  .account-current, .account-caret, .account-menu, .range-menu, .range-caret, .account-item, .account-action, .nav button, .status-dot, .topbar, .segmented button, .main > .view:not([hidden]), .ghost, .button-danger, .button-primary, .rule-tab, .form-cell, .meter > span, .col-hit, .tip, .cell, .obs-option, .sort-button, .page-size-select, .page-size-select select, table.data tr.is-clickable td, .drawer-backdrop, .drawer, .score-bar span, .switch, .switch::before, dialog.close-prompt, dialog.close-prompt::backdrop, .delete-option, .king-bar > span, .defeat-bar-fill { transition: none; }
   .status-dot.is-busy, .drawer-head, .drawer-body, .drawer-banner { animation: none; }
   .nav button:active, .segmented button:active, .ghost:active:not(:disabled), .button-primary:active:not(:disabled), .button-danger:active:not(:disabled), .rule-tab:active, .obs-option:active, .form-cell:not(.none):hover, .form-cell:not(.none):focus-visible { transform: none; }
 }
