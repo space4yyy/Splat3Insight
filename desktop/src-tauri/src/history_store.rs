@@ -24,7 +24,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const DATABASE_FILE: &str = "history.sqlite3";
 const LEGACY_DIRECTORY: &str = "legacy-json";
-const EXPORT_DIRECTORY: &str = "exports";
 /// 导出文件的格式版本，和 `write_complete_archive` 写出的一致。
 const EXPORT_SCHEMA_VERSION: i64 = 2;
 /// 导入时每批提交的记录数，不长时间占住数据库，后台同步照常进行。
@@ -1349,9 +1348,18 @@ fn upsert_record<T: Serialize>(
     Ok(())
 }
 
-pub(crate) fn export(history_dir: &Path, account_id: &str) -> Result<PathBuf, String> {
-    let export_dir = history_dir.join(EXPORT_DIRECTORY);
-    fs::create_dir_all(&export_dir).map_err(|error| format!("创建导出目录失败：{error}"))?;
+/// 把账号的完整历史导出到 `export_dir`。导出位置由用户选择，这里不替用户新建文件夹。
+pub(crate) fn export(
+    history_dir: &Path,
+    export_dir: &Path,
+    account_id: &str,
+) -> Result<PathBuf, String> {
+    if !export_dir.is_dir() {
+        return Err(format!(
+            "导出位置“{}”不存在，请在设置里重新选择",
+            export_dir.display()
+        ));
+    }
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("读取导出时间失败：{error}"))?
@@ -2653,7 +2661,10 @@ mod tests {
             )
             .unwrap();
         drop(connection);
-        let export_path = export(directory.path(), "account").unwrap();
+        // Earlier versions exported into the history folder; those files stay too.
+        let exports = directory.path().join("exports");
+        fs::create_dir_all(&exports).unwrap();
+        let export_path = export(directory.path(), &exports, "account").unwrap();
         load_overlay_state(directory.path(), "account").unwrap();
         fs::write(
             legacy_path(directory.path(), "account"),
@@ -3282,7 +3293,7 @@ mod tests {
                 },
             )
             .unwrap();
-        fs::read(export(directory, "account").unwrap()).unwrap()
+        fs::read(export(directory, directory, "account").unwrap()).unwrap()
     }
 
     fn count_rows(directory: &Path, sql: &str) -> i64 {
@@ -3447,7 +3458,11 @@ mod tests {
             )
             .unwrap();
 
-        let archive_path = export(directory.path(), "account").unwrap();
+        let downloads = tempdir().unwrap();
+        let archive_path = export(directory.path(), downloads.path(), "account").unwrap();
+        assert_eq!(archive_path.parent(), Some(downloads.path()));
+        // Only the finished archive is left in the chosen folder.
+        assert_eq!(fs::read_dir(downloads.path()).unwrap().count(), 1);
         let mut decoder = GzDecoder::new(fs::File::open(archive_path).unwrap());
         let mut bytes = Vec::new();
         decoder.read_to_end(&mut bytes).unwrap();
@@ -3457,5 +3472,19 @@ mod tests {
         assert_eq!(archive["coop"][0]["raw"], coop_raw);
         assert_eq!(archive["x_battle_measurements"][0]["raw"], settlement_raw);
         assert_eq!(archive["schema_version"], 2);
+    }
+
+    #[test]
+    fn export_needs_an_existing_folder_and_leaves_nothing_when_it_fails() {
+        let directory = tempdir().unwrap();
+        save_cache(directory.path(), "account", &sample_cache()).unwrap();
+        let missing = directory.path().join("missing");
+        assert!(export(directory.path(), &missing, "account").is_err());
+        assert!(!missing.exists());
+
+        // An account without records exports nothing, not even a partial file.
+        let downloads = tempdir().unwrap();
+        assert!(export(directory.path(), downloads.path(), "other").is_err());
+        assert_eq!(fs::read_dir(downloads.path()).unwrap().count(), 0);
     }
 }

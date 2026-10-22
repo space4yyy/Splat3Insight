@@ -27,6 +27,7 @@ use tauri::{
     WebviewWindow,
 };
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
+use tauri_plugin_dialog::DialogExt;
 use tokio::sync::watch;
 
 mod app_update;
@@ -52,11 +53,13 @@ struct AppState {
     overlay_service: overlay_server::OverlayServiceController,
 }
 
-/// 窗口位置等应用设置。旧版本存过的其他字段（如已去掉的“保留程序坞图标”）读取时忽略。
+/// 窗口位置、数据导出位置等应用设置。旧版本存过的其他字段（如已去掉的“保留程序坞图标”）读取时忽略。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct AppPreferences {
     window_placement: Option<SavedWindowPlacement>,
+    /// 用户选的数据导出文件夹；没选过时导出到系统的下载文件夹。
+    export_directory: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1058,17 +1061,72 @@ fn resolve_account_id(
     Ok(account_id)
 }
 
+fn export_directory(app: &AppHandle, preferences_path: &Path) -> Result<PathBuf, String> {
+    match load_app_preferences(preferences_path)?.export_directory {
+        Some(directory) => Ok(directory),
+        None => app
+            .path()
+            .download_dir()
+            .map_err(|error| format!("找不到下载文件夹：{error}")),
+    }
+}
+
+#[tauri::command]
+fn get_export_directory(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    export_directory(&app, &state.preferences_path).map(|path| path.display().to_string())
+}
+
+/// 用系统的文件夹选择窗口换一个导出位置。取消时返回 `None`，设置保持不变。
+#[tauri::command]
+async fn choose_export_directory(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let app = window.app_handle();
+    let current = export_directory(app, &state.preferences_path)?;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    // 对话框在主线程打开，选择结果从回调送回来。
+    app.dialog()
+        .file()
+        .set_title("选择数据导出位置")
+        .set_directory(current)
+        .set_parent(&window)
+        .pick_folder(move |folder| {
+            let _ = sender.send(folder);
+        });
+    let Some(folder) = receiver.await.map_err(|_| "选择导出位置失败".to_owned())? else {
+        return Ok(None);
+    };
+    let directory = folder
+        .into_path()
+        .map_err(|error| format!("导出位置无效：{error}"))?;
+    // 删除账号时会清理应用数据文件夹里的旧文件，导出文件不能放在这里。
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?;
+    if directory.starts_with(&config_dir) {
+        return Err("不能导出到应用自己的数据文件夹，请换一个位置".to_owned());
+    }
+    let mut preferences = load_app_preferences(&state.preferences_path)?;
+    preferences.export_directory = Some(directory.clone());
+    store_app_preferences(&state.preferences_path, &preferences)?;
+    Ok(Some(directory.display().to_string()))
+}
+
 #[tauri::command]
 async fn export_history(
     account_id: Option<String>,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let account_id = resolve_account_id(&state.registry, account_id)?;
+    let export_dir = export_directory(&app, &state.preferences_path)?;
     let history_dir = state.history_dir.clone();
     let export_account_id = account_id.clone();
     // 记录多时导出要几十秒，放到后台线程，窗口照常可用。
     let path = tauri::async_runtime::spawn_blocking(move || {
-        history_store::export(&history_dir, &export_account_id)
+        history_store::export(&history_dir, &export_dir, &export_account_id)
     })
     .await
     .map_err(|error| format!("导出历史数据失败：{error}"))??;
@@ -1892,6 +1950,7 @@ pub fn run() {
                 });
             },
         )
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
@@ -2048,6 +2107,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_accounts,
             get_sync_status,
+            get_export_directory,
+            choose_export_directory,
             export_history,
             import_history,
             save_share_image,
@@ -2202,6 +2263,7 @@ mod tests {
             &path,
             &AppPreferences {
                 window_placement: Some(placement.clone()),
+                ..AppPreferences::default()
             },
         )
         .unwrap();
@@ -2210,6 +2272,32 @@ mod tests {
         assert!(!fs::read_to_string(&path)
             .unwrap()
             .contains("keep_dock_icon"));
+    }
+
+    #[test]
+    fn preferences_remember_the_chosen_export_directory() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("preferences.json");
+        // Preferences saved before the setting existed keep exporting to Downloads.
+        fs::write(&path, r#"{"window_placement":null}"#).unwrap();
+        assert!(load_app_preferences(&path)
+            .unwrap()
+            .export_directory
+            .is_none());
+
+        let chosen = directory.path().join("Backups");
+        store_app_preferences(
+            &path,
+            &AppPreferences {
+                export_directory: Some(chosen.clone()),
+                ..AppPreferences::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            load_app_preferences(&path).unwrap().export_directory,
+            Some(chosen)
+        );
     }
 
     #[test]

@@ -547,6 +547,9 @@ table.data tr.is-me td { background: var(--panel-raised); color: var(--ink); }
 .settings-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; min-height: 58px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .settings-row:last-child { border-bottom: 0; }
 .settings-label { color: var(--ink); font-size: 14px; }
+/* 标签下面一行是说明（如导出位置的路径）：占满按钮左边的空间，路径太长时换行。 */
+.settings-label:has(small) { flex: 1 1 0; min-width: 0; }
+.settings-label small { display: block; margin-top: 2px; color: var(--ink-3); font-size: 12px; overflow-wrap: anywhere; }
 .settings-message { margin: 0; color: var(--danger-text); font-size: 13px; }
 .settings-note { margin-left: 8px; color: var(--ink-3); font-size: 13px; }
 .nav button.has-update::after { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); }

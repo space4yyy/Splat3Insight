@@ -209,6 +209,29 @@
     }
   });
 
+  // 数据导出位置：默认是下载文件夹，「更改」打开系统的文件夹选择窗口。
+  const exportDirectory = $('#export-directory');
+  const exportDirectoryButton = $('#export-directory-button');
+  async function refreshExportDirectory() {
+    try {
+      exportDirectory.textContent = await invoke('get_export_directory');
+    } catch (error) {
+      setSettingsMessage(String(error));
+    }
+  }
+  exportDirectoryButton.addEventListener('click', async () => {
+    exportDirectoryButton.disabled = true;
+    setSettingsMessage('');
+    try {
+      const directory = await invoke('choose_export_directory');
+      if (directory) exportDirectory.textContent = directory;
+    } catch (error) {
+      setSettingsMessage(String(error));
+    } finally {
+      exportDirectoryButton.disabled = false;
+    }
+  });
+
   // 应用更新：后台发现新版本时提示，点按钮才下载安装并重启，不会自动安装。
   const updateButton = $('#update-button');
   const settingsNav = $('#nav button[data-view="settings"]');
@@ -287,6 +310,7 @@
       refreshOverlayStates();
     } else if (view === 'settings') {
       refreshAutostart();
+      refreshExportDirectory();
       refreshAccounts().catch((error) => setMessage(String(error), true));
     }
     if (previous !== view) window.scrollTo(0, scrollPositions[view] ?? 0);
