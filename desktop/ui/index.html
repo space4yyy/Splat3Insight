@@ -34,6 +34,14 @@
           <button type="button" data-view="obs">其他工具</button>
           <button type="button" data-view="settings">设置</button>
         </nav>
+        <div class="sidebar-theme">
+          <div class="nav-label" id="theme-label">外观</div>
+          <div class="segmented" id="theme-switch" role="group" aria-labelledby="theme-label">
+            <button type="button" data-theme-choice="system" aria-pressed="true">系统</button>
+            <button type="button" data-theme-choice="light" aria-pressed="false">浅色</button>
+            <button type="button" data-theme-choice="dark" aria-pressed="false">深色</button>
+          </div>
+        </div>
         <div class="sidebar-foot">
           <div class="sidebar-sync-row">
             <div id="sidebar-sync"></div>
@@ -460,14 +468,6 @@
             <article class="card settings-panel">
               <h2 class="card-title">通用</h2>
               <div class="settings-list">
-                <div class="settings-row">
-                  <span class="settings-label" id="theme-label">外观</span>
-                  <div class="segmented" id="theme-switch" role="group" aria-labelledby="theme-label">
-                    <button type="button" data-theme-choice="system" aria-pressed="true">跟随系统</button>
-                    <button type="button" data-theme-choice="light" aria-pressed="false">浅色</button>
-                    <button type="button" data-theme-choice="dark" aria-pressed="false">深色</button>
-                  </div>
-                </div>
                 <div class="settings-row">
                   <label class="settings-label" for="autostart">开机启动</label>
                   <input type="checkbox" class="switch" id="autostart" role="switch" disabled>

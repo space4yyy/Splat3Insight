@@ -36,7 +36,7 @@
     salmon: ['鲑鱼跑', '各期打工、评级、头目鲑鱼、特殊波次、个人贡献和击倒数量。'],
     log: ['对战记录', '所有对局，点一行查看详情。'],
     obs: ['其他工具', '直播用的 OBS 数据卡片等附加工具。'],
-    settings: ['设置', '账号、外观和开机启动。'],
+    settings: ['设置', '账号和开机启动。'],
   };
   const VIEW_KEY = 'splat3-view';
   const OBS_SELECTION_KEY = 'splat3-obs-card-selection';
