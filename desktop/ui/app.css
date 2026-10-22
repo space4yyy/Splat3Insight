@@ -541,6 +541,7 @@ table.data tr.is-me td { background: var(--panel-raised); color: var(--ink); }
 .paste-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .account-message { margin: 0; color: var(--ink-2); font-size: 13px; overflow-wrap: anywhere; }
 .account-message.is-error { color: var(--danger-text); }
+.account-message .ghost { margin-left: 8px; }
 .settings-stack { display: grid; gap: 16px; max-width: 880px; }
 .settings-panel { gap: 4px; }
 .settings-list { display: grid; }

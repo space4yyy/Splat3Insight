@@ -97,12 +97,26 @@
   const fmtClock = (ms) => { const d = new Date(ms); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
 
   const message = $('#message');
-  function setMessage(value, error = false) {
-    message.textContent = value;
+  const messageText = $('#message-text');
+  const messageReveal = $('#message-reveal');
+  let messagePath = null;
+  // 传入 path 时提示后面带「在访达中显示」，例如导出完成后打开导出文件所在的文件夹。
+  function setMessage(value, error = false, path = null) {
+    messageText.textContent = value;
     message.title = value;
     message.hidden = !value;
     message.classList.toggle('is-error', error);
+    messagePath = path;
+    messageReveal.hidden = !path;
   }
+  messageReveal.addEventListener('click', async () => {
+    if (!messagePath) return;
+    try {
+      await revealPath(messagePath);
+    } catch (error) {
+      setMessage(`无法打开所在位置：${String(error)}`, true);
+    }
+  });
 
   // 关闭窗口：第一次询问是否在后台运行，之后直接在后台运行。
   const closePrompt = $('#background-close-prompt');
@@ -653,7 +667,7 @@
     setMessage('正在导出…');
     try {
       const path = await invoke('export_history', { accountId });
-      setMessage(`历史数据已导出：${path}`);
+      setMessage(`历史数据已导出：${path}`, false, path);
     } catch (error) {
       setMessage(`导出历史数据失败：${String(error)}`, true);
     } finally {
