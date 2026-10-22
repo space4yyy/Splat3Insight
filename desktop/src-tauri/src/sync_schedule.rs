@@ -5,11 +5,15 @@
 //! polling, so the OBS process itself decides. Card pages polling
 //! `/api/overlay` count too, for cards shown outside OBS. Otherwise the history
 //! is synced every few minutes, which keeps the archive complete with far fewer
-//! SplatNet requests.
+//! SplatNet requests. Some events sync at once instead; the sync log says what
+//! started each sync.
 
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
+
+use serde::Deserialize;
+use tokio::sync::Notify;
 
 /// Sync interval while OBS is open or a card page reads the data.
 pub(crate) const LIVE_SYNC_INTERVAL: Duration = Duration::from_secs(15);
@@ -19,6 +23,77 @@ pub(crate) const IDLE_SYNC_INTERVAL: Duration = Duration::from_secs(300);
 pub(crate) const OBS_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 /// A card page counts as reading the data when it requested it this recently.
 const LIVE_WINDOW_MS: i64 = 30_000;
+
+/// Why a sync started, for the sync log. The window sends `manual` (立即同步)
+/// and `window_focus` through `request_sync`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SyncReason {
+    Startup,
+    Schedule,
+    WindowFocus,
+    Manual,
+    CardRequest,
+    AccountSwitched,
+    AccountAdded,
+    AccountRemoved,
+    Permission,
+}
+
+impl SyncReason {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Startup => "应用启动",
+            Self::Schedule => "定时",
+            Self::WindowFocus => "窗口回到前台",
+            Self::Manual => "立即同步",
+            Self::CardRequest => "OBS 卡片开始读取",
+            Self::AccountSwitched => "切换账号",
+            Self::AccountAdded => "添加账号",
+            Self::AccountRemoved => "删除账号",
+            Self::Permission => "获取权限",
+        }
+    }
+}
+
+/// Asks the background sync to run now rather than at the next interval, and
+/// remembers why. Requests made before the sync picks them up share one sync,
+/// logged with the first reason.
+#[derive(Default)]
+pub(crate) struct SyncTrigger {
+    pending: Mutex<Option<SyncReason>>,
+    notify: Notify,
+}
+
+impl SyncTrigger {
+    pub(crate) fn request(&self, reason: SyncReason) {
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert(reason);
+        self.notify.notify_one();
+    }
+
+    /// Waits up to `timeout` for a request and returns its reason.
+    pub(crate) async fn wait(&self, timeout: Duration) -> Option<SyncReason> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let pending = self
+                .pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            if pending.is_some() {
+                return pending;
+            }
+            // A wake-up outlives its request when an earlier wait already took the
+            // reason; look again and keep waiting.
+            tokio::time::timeout_at(deadline, self.notify.notified())
+                .await
+                .ok()?;
+        }
+    }
+}
 
 /// When a card page last requested data, shared between the OBS service and
 /// the background sync, plus how to tell whether OBS is running.
@@ -143,6 +218,58 @@ fn obs_is_running() -> bool {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use tauri::async_runtime::block_on;
+
+    const SHORT_WAIT: Duration = Duration::from_millis(20);
+
+    #[test]
+    fn a_request_starts_one_sync_with_its_reason() {
+        let trigger = SyncTrigger::default();
+        trigger.request(SyncReason::WindowFocus);
+        assert_eq!(
+            block_on(trigger.wait(SHORT_WAIT)),
+            Some(SyncReason::WindowFocus)
+        );
+        // The wake-up the request left behind does not start a second sync.
+        assert_eq!(block_on(trigger.wait(SHORT_WAIT)), None);
+    }
+
+    #[test]
+    fn requests_before_the_sync_picks_them_up_share_the_first_reason() {
+        let trigger = SyncTrigger::default();
+        trigger.request(SyncReason::CardRequest);
+        trigger.request(SyncReason::Manual);
+        assert_eq!(
+            block_on(trigger.wait(SHORT_WAIT)),
+            Some(SyncReason::CardRequest)
+        );
+        assert_eq!(block_on(trigger.wait(SHORT_WAIT)), None);
+    }
+
+    #[test]
+    fn a_request_wakes_the_waiting_sync() {
+        let trigger = Arc::new(SyncTrigger::default());
+        let requester = Arc::clone(&trigger);
+        let request = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            requester.request(SyncReason::Manual);
+        });
+        assert_eq!(
+            block_on(trigger.wait(Duration::from_secs(10))),
+            Some(SyncReason::Manual)
+        );
+        request.join().unwrap();
+    }
+
+    #[test]
+    fn reads_the_reasons_the_window_sends() {
+        for (name, reason) in [
+            ("\"manual\"", SyncReason::Manual),
+            ("\"window_focus\"", SyncReason::WindowFocus),
+        ] {
+            assert_eq!(serde_json::from_str::<SyncReason>(name).unwrap(), reason);
+        }
+    }
 
     fn counting(obs_open: Arc<AtomicBool>) -> (ObsActivity, Arc<AtomicUsize>) {
         let starts = Arc::new(AtomicUsize::new(0));

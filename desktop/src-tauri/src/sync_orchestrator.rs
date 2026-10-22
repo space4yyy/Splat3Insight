@@ -1,6 +1,7 @@
 use super::{
     account_auth_error, dashboard_store, history_store, load_history_summary, now_ms,
-    update_sync_status, write_account_log, Registry, SyncError, SyncRuntime, HISTORY_WINDOW_SIZE,
+    sync_schedule::SyncReason, update_sync_status, write_account_log, Registry, SyncError,
+    SyncRuntime, HISTORY_WINDOW_SIZE,
 };
 use splat3_widget_core::history::{
     HistoryFetchProgress, HistoryFetchedRecord, HistoryProgressCallback, HistoryRecordCallback,
@@ -25,6 +26,7 @@ pub(super) async fn sync_account_inner(
     history_dir: &Path,
     auth_log_path: &Path,
     sync_runtime: &Arc<SyncRuntime>,
+    reason: SyncReason,
 ) -> Result<HistorySyncSummary, SyncError> {
     let (metadata, secret_store) = {
         let registry = registry.lock().map_err(|_| "account registry is locked")?;
@@ -156,10 +158,16 @@ pub(super) async fn sync_account_inner(
         "history-sync",
         &metadata.display_name,
         account_id,
-        if initial_sync {
-            "开始首次完整同步：拉取当前账号可用的全部对战和打工记录"
+        &if initial_sync {
+            format!(
+                "开始首次完整同步（{}）：拉取当前账号可用的全部对战和打工记录",
+                reason.label()
+            )
         } else {
-            "开始增量同步：检查最近 50 条对战和 50 条打工记录"
+            format!(
+                "开始增量同步（{}）：检查最近 50 条对战和 50 条打工记录",
+                reason.label()
+            )
         },
     );
 

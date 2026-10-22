@@ -908,21 +908,22 @@
     const busy = ['preparing', 'syncing', 'refreshing'].includes(status?.state);
     $('#sync-now').hidden = !status?.account_id || busy || Boolean(status?.message?.includes('权限'));
   }
-  async function requestSync() {
+  // reason 写进同步日志：manual 是“立即同步”，window_focus 是窗口回到前台。
+  async function requestSync(reason) {
     try {
-      await invoke('request_sync');
+      await invoke('request_sync', { reason });
     } catch (error) {
       setMessage(String(error), true);
     }
     void refreshSyncStatus();
   }
   $('#sync-now').addEventListener('click', () => {
-    void requestSync();
+    void requestSync('manual');
   });
   // 窗口回到前台时，距上次同步超过 1 分钟就立即同步一次，打开就能看到最新数据。
   const FOCUS_SYNC_AFTER_MS = 60000;
   window.addEventListener('focus', () => {
-    if (app.lastCompletedSyncAt && Date.now() - app.lastCompletedSyncAt > FOCUS_SYNC_AFTER_MS) void requestSync();
+    if (app.lastCompletedSyncAt && Date.now() - app.lastCompletedSyncAt > FOCUS_SYNC_AFTER_MS) void requestSync('window_focus');
   });
   async function refreshSyncStatus() {
     try {

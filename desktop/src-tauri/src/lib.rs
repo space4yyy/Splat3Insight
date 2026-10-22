@@ -48,7 +48,7 @@ struct AppState {
     history_dir: PathBuf,
     preferences_path: PathBuf,
     sync_runtime: Arc<SyncRuntime>,
-    sync_trigger: Arc<tokio::sync::Notify>,
+    sync_trigger: Arc<sync_schedule::SyncTrigger>,
     overlay_service: overlay_server::OverlayServiceController,
 }
 
@@ -761,6 +761,7 @@ async fn sync_account(
     history_dir: PathBuf,
     auth_log_path: PathBuf,
     sync_runtime: Arc<SyncRuntime>,
+    reason: sync_schedule::SyncReason,
 ) -> Result<HistorySyncSummary, String> {
     let owner = match sync_runtime.claim_or_join(&account_id)? {
         SyncClaim::Owner(sender) => SyncOwnerGuard {
@@ -785,6 +786,7 @@ async fn sync_account(
         &history_dir,
         &auth_log_path,
         &sync_runtime,
+        reason,
     )
     .await;
 
@@ -829,6 +831,7 @@ async fn sync_account(
                         &history_dir,
                         &auth_log_path,
                         &sync_runtime,
+                        reason,
                     )
                     .await
                     .map_err(|error| error.to_string())
@@ -914,13 +917,14 @@ fn start_background_sync(
     history_dir: PathBuf,
     auth_log_path: PathBuf,
     sync_runtime: Arc<SyncRuntime>,
-    sync_trigger: Arc<tokio::sync::Notify>,
+    sync_trigger: Arc<sync_schedule::SyncTrigger>,
     obs_activity: sync_schedule::ObsActivity,
 ) {
     tauri::async_runtime::spawn(async move {
         // Let the main webview paint before the first Keychain lookup can
         // display a macOS authorization prompt.
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let mut reason = sync_schedule::SyncReason::Startup;
         loop {
             let started = tokio::time::Instant::now();
             match active_account_sync_state(&registry) {
@@ -931,6 +935,7 @@ fn start_background_sync(
                         history_dir.clone(),
                         auth_log_path.clone(),
                         Arc::clone(&sync_runtime),
+                        reason,
                     )
                     .await;
                 }
@@ -967,7 +972,7 @@ fn start_background_sync(
             // Sync often while OBS is open, every few minutes otherwise. OBS can open or close
             // while this waits, so look again every few seconds; a trigger (a card page starting
             // to poll, the window coming back, 立即同步) syncs at once.
-            loop {
+            reason = loop {
                 let activity = obs_activity.clone();
                 let interval =
                     tauri::async_runtime::spawn_blocking(move || activity.sync_interval(now_ms()))
@@ -976,16 +981,13 @@ fn start_background_sync(
                 let now = tokio::time::Instant::now();
                 let due = started + interval;
                 if now >= due {
-                    break;
+                    break sync_schedule::SyncReason::Schedule;
                 }
                 let wait = (due - now).min(sync_schedule::OBS_CHECK_INTERVAL);
-                if tokio::time::timeout(wait, sync_trigger.notified())
-                    .await
-                    .is_ok()
-                {
-                    break;
+                if let Some(reason) = sync_trigger.wait(wait).await {
+                    break reason;
                 }
-            }
+            };
         }
     });
 }
@@ -1289,7 +1291,9 @@ async fn remove_account(
             "账号已删除，本地历史数据已保留"
         },
     );
-    state.sync_trigger.notify_one();
+    state
+        .sync_trigger
+        .request(sync_schedule::SyncReason::AccountRemoved);
     Ok(())
 }
 
@@ -1521,7 +1525,9 @@ async fn complete_nintendo_login(
         &account_id,
         "新账号已设为当前账号",
     );
-    state.sync_trigger.notify_one();
+    state
+        .sync_trigger
+        .request(sync_schedule::SyncReason::AccountAdded);
     Ok(account_id)
 }
 
@@ -1630,16 +1636,19 @@ async fn refresh_splatnet_tokens(
     )
     .await
     .map_err(|error| format_token_refresh_error(&error))?;
-    state.sync_trigger.notify_one();
+    state
+        .sync_trigger
+        .request(sync_schedule::SyncReason::Permission);
     Ok(())
 }
 
 /// 立即同步一次：左下角的“立即同步”，以及窗口回到前台时。
 #[tauri::command]
-fn request_sync(state: State<'_, AppState>) {
-    state.sync_trigger.notify_one();
+fn request_sync(reason: sync_schedule::SyncReason, state: State<'_, AppState>) {
+    state.sync_trigger.request(reason);
 }
 
+/// 获取 SplatNet 权限后马上同步：「获取权限」和添加账号时调用。
 #[tauri::command]
 async fn sync_history(
     account_id: String,
@@ -1651,6 +1660,7 @@ async fn sync_history(
         state.history_dir.clone(),
         state.auth_log_path.clone(),
         Arc::clone(&state.sync_runtime),
+        sync_schedule::SyncReason::Permission,
     )
     .await
 }
@@ -1687,7 +1697,9 @@ fn set_active_account(account_id: String, state: State<'_, AppState>) -> Result<
             target.display_name, target.account_id
         ),
     );
-    state.sync_trigger.notify_one();
+    state
+        .sync_trigger
+        .request(sync_schedule::SyncReason::AccountSwitched);
     Ok(())
 }
 
@@ -1950,11 +1962,13 @@ pub fn run() {
                 .collect();
             let registry = Arc::new(Mutex::new(registry));
             let sync_runtime = Arc::new(SyncRuntime::new());
-            let sync_trigger = Arc::new(tokio::sync::Notify::new());
+            let sync_trigger = Arc::new(sync_schedule::SyncTrigger::default());
             // OBS 开始显示卡片时立即同步一次，之后按较短的间隔同步。
             let obs_activity = {
                 let sync_trigger = Arc::clone(&sync_trigger);
-                sync_schedule::ObsActivity::new(move || sync_trigger.notify_one())
+                sync_schedule::ObsActivity::new(move || {
+                    sync_trigger.request(sync_schedule::SyncReason::CardRequest)
+                })
             };
             warm_up_history(history_dir.clone(), fact_account_ids);
             let image_cache = match splat3_widget_core::images::ImageClient::new() {
