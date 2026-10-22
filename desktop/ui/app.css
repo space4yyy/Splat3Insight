@@ -325,8 +325,12 @@ table.data .num { text-align: right; }
 .empty-state strong { color: var(--ink-2); font-size: 14px; }
 .overview-status { display: grid; gap: 10px; justify-items: start; padding: 28px 24px; border: 1px dashed var(--line-strong); border-radius: var(--radius); background: var(--panel); color: var(--ink-2); }
 .overview-status strong { color: var(--ink); font-size: 17px; }
-.form-strip { display: grid; grid-template-columns: repeat(20, minmax(0, 1fr)); gap: 3px; }
-.form-cell { display: grid; place-items: center; max-width: 100%; aspect-ratio: 1; border-radius: 5px; font-size: 12px; cursor: default; transition: transform .14s cubic-bezier(.22, 1, .36, 1); }
+/* 近期状态的格子要放得下 12px 的字：宽屏下卡片只占 4、5 列，一行二十格时每格不到 19px，所以先排两行十格，卡片够宽再排一行。
+   行高取 1，字总比格子小；字放不下时，有的 WebView 把格子撑高，有的保持正方形让字溢出到格子外。 */
+[data-card="form"] { container-type: inline-size; }
+.form-strip { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 3px; }
+@container (min-width: 440px) { .form-strip { grid-template-columns: repeat(20, minmax(0, 1fr)); } }
+.form-cell { display: grid; place-items: center; width: 100%; aspect-ratio: 1; border-radius: 5px; font-size: 12px; line-height: 1; cursor: default; transition: transform .14s cubic-bezier(.22, 1, .36, 1); }
 .form-cell:not(.none):hover, .form-cell:not(.none):focus-visible { transform: translateY(-1px); }
 .form-cell.win { background: var(--win); color: var(--on-win); }
 .form-cell.lose { background: var(--lose); color: var(--on-lose); }
