@@ -107,7 +107,7 @@ test('battle details carry stage, weapon, nameplate, team color and my gear imag
       color: { r: 0.9, g: 0.8, b: 0.1, a: 1 },
       result: { paintRatio: 0.5 },
       players: [{
-        name: '我', isMyself: true,
+        name: '我', isMyself: true, byname: ' 溫泉花大峽谷的廣域標記槍操作者 ',
         weapon: { name: '斯普拉射擊槍', image: { url: image('weapon_illust/shot') }, subWeapon: { name: 'Curling Bomb', image: { url: image('sub_img/curling') } }, specialWeapon: { name: 'Ultra Stamp', image: { url: image('special_img/stamp') } } },
         nameplate: { background: { image: { url: image('npl_img/plate') }, textColor: { r: 1, g: 1, b: 1, a: 1 } }, badges: [{ image: { url: image('badge_img/one') } }, null] },
         result: { kill: 1, assist: 0, death: 0, special: 1 }, paint: 500,
@@ -125,7 +125,7 @@ test('battle details carry stage, weapon, nameplate, team color and my gear imag
   assert.equal(me.sub.name, '冰壶炸弹');
   assert.equal(me.special.name, '终极印章');
   assert.equal(me.special.image, image('special_img/stamp'));
-  assert.deepEqual(me.nameplate, { background: image('npl_img/plate'), textColor: 'rgba(255, 255, 255, 1)', badges: [image('badge_img/one')] });
+  assert.deepEqual(me.nameplate, { title: '温泉花大峡谷的广域标记枪操作者', background: image('npl_img/plate'), textColor: 'rgba(255, 255, 255, 1)', badges: [image('badge_img/one')] });
   assert.equal(battle.gear.length, 1);
   assert.equal(battle.gear[0].slot, '头部');
   assert.equal(battle.gear[0].image, image('gear_img/beret'));
@@ -136,7 +136,7 @@ test('battle details carry stage, weapon, nameplate, team color and my gear imag
 
 test('shift details list supplied weapons, crew, enemies and wave specials with images', () => {
   const member = (name, me) => ({
-    player: { name, nameplate: { background: { image: { url: image('npl_img/p') } }, badges: [] } },
+    player: { name, byname: me ? 'Splatlandian Youth' : '', nameplate: { background: { image: { url: image('npl_img/p') } }, badges: [] } },
     weapons: [{ name: 'Splattershot', image: { url: image('weapon_illust/shot') } }, { name: 'Grizzco Blaster', image: { url: image('weapon_illust/bear') } }],
     specialWeapon: { name: 'Booyah Bomb', image: { url: image('special_img/booyah') } },
     goldenDeliverCount: me ? 18 : 12, goldenAssistCount: 3, deliverCount: 900, rescueCount: 1, rescuedCount: 2, defeatEnemyCount: 7,
@@ -155,9 +155,29 @@ test('shift details list supplied weapons, crew, enemies and wave specials with 
   assert.equal(shift.supplied[0].name, '斯普拉射击枪');
   assert.equal(shift.members.length, 2);
   assert.equal(shift.members[0].me, true);
+  assert.equal(shift.members[0].nameplate.title, '蛮颓的年轻人');
+  assert.equal(shift.members[1].nameplate.title, null);
   assert.deepEqual(shift.members[0].weapons.map((weapon) => weapon.name), ['斯普拉射击枪', '熊先生印章爆破枪']);
   assert.equal(shift.members[1].special.image, image('special_img/booyah'));
   assert.deepEqual(shift.enemies, [{ name: '炸弹鱼', image: image('coop_enemy_img/steelhead'), defeated: 3, teamDefeated: 7, appeared: 8 }]);
   assert.equal(shift.waves[0].specials.length, 1);
   assert.deepEqual(shift.boss, { name: '辰龙', image: image('coop_enemy_img/king'), defeated: false });
+});
+
+test('titles split into official adjective and subject text and become Simplified Chinese', () => {
+  const { title } = context.window.Splat3GameNames;
+  assert.equal(title('Scorch Gorge Sploosh-o-matic User'), '温泉花大峡谷的广域标记枪操作者');
+  assert.equal(title('温泉花大峡谷的 广域标记枪操作者'), '温泉花大峡谷的广域标记枪操作者');
+  // 名词的另一种写法单独对照；中文数据里这个形容词自带空格。
+  assert.equal(title('Thank You for Princess'), 'Thank You For 公主');
+  assert.equal(title('Scorch Gorge'), null);
+  assert.equal(title('かけだしの イカ'), null);
+});
+
+test('nameplate titles come from byname; unknown titles stay as they are, a title alone makes a plain nameplate', () => {
+  const plateOf = (fields) => plain(detail.battleDetail({ myTeam: { players: [{ name: '我', ...fields }] } })).teams[0].players[0].nameplate;
+  assert.deepEqual(plateOf({ byname: 'かけだしの イカ' }), { title: 'かけだしの イカ', background: null, textColor: null, badges: [] });
+  assert.equal(plateOf({ nameplate: { badges: [] } }).title, null);
+  assert.equal(plateOf({ byname: '   ' }), null);
+  assert.equal(plateOf({ byname: 42 }), null);
 });

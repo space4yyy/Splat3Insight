@@ -310,14 +310,16 @@
     const caption = score.kind === 'paint' ? '涂地比例' : battle.knockout === 'WIN' ? '完胜' : battle.knockout === 'LOSE' ? '完败' : '计数';
     return el('div', {}, [bar, el('div', { class: 'score-labels' }, [el('span', { text: '我方' }), el('span', { text: caption }), el('span', { text: '对方' })])]);
   }
-  // 游戏里的名牌：背景图、玩家名字和徽章。
-  // 名字里有假名时标成日文，换用日文字体显示。
+  // 游戏里的名牌：背景图、称号、玩家名字和徽章。
+  // 名字或称号里有假名时标成日文，换用日文字体显示。
   const KANA = /[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]/;
+  const plateText = (className, text) => (KANA.test(text) ? { class: className, lang: 'ja', text } : { class: className, text });
   function nameplate(name, plate, me) {
     const label = `${name ?? '—'}${me ? '（我）' : ''}`;
     const background = plate ? imageSrc(plate.background) : null;
     const node = el('span', { class: `nameplate${background ? '' : ' is-plain'}`, title: label }, [
-      el('span', KANA.test(name ?? '') ? { class: 'nameplate-name', lang: 'ja', text: label } : { class: 'nameplate-name', text: label }),
+      plate?.title ? el('span', { ...plateText('nameplate-title', plate.title), title: plate.title }) : null,
+      el('span', plateText('nameplate-name', label)),
       plate?.badges?.length ? el('span', { class: 'nameplate-badges' }, plate.badges.map((badge) => img(badge, 'badge-icon', '徽章'))) : null,
     ]);
     if (background) node.style.backgroundImage = `url("${background}")`;

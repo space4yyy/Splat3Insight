@@ -37,13 +37,17 @@
     const alpha = num(color.a) ?? 1;
     return `rgba(${channels.map((value) => Math.round(value * 255)).join(', ')}, ${alpha})`;
   }
+  // 称号（byname）是 SplatNet 按账号语言拼好的一句，拆得开就换成简体，拆不开原样显示。
   function nameplateOf(player) {
     const plate = player?.nameplate;
-    if (!plate) return null;
+    const byname = typeof player?.byname === 'string' ? player.byname.trim() : '';
+    const title = byname ? window.Splat3GameNames?.title(byname) ?? byname : null;
+    if (!plate && !title) return null;
     return {
-      background: imageOf(plate.background),
-      textColor: colorOf(plate.background?.textColor),
-      badges: list(plate.badges).map((badge) => imageOf(badge)).filter(Boolean),
+      title,
+      background: imageOf(plate?.background),
+      textColor: colorOf(plate?.background?.textColor),
+      badges: list(plate?.badges).map((badge) => imageOf(badge)).filter(Boolean),
     };
   }
   const named = (kind, node) => (node ? { name: official(kind, node.name), image: imageOf(node) } : null);

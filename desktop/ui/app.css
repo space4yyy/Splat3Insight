@@ -508,15 +508,16 @@ table.data tr.is-me td { background: var(--panel-raised); color: var(--ink); }
 .kit-icon { flex: none; width: 18px; height: 18px; object-fit: contain; }
 .drawer-banner-slot:empty { display: none; }
 .drawer-banner { display: block; width: 100%; max-height: 150px; object-fit: cover; border-radius: 12px; animation: drawer-content-enter .16s cubic-bezier(.22, 1, .36, 1); }
-/* 名牌：和游戏里一样，名字居中（略偏上），徽章在右下角。
-   名字的英文用游戏字体 BlitzMain；含假名的日文名换成日文字体，其余沿用界面字体。 */
-.nameplate { position: relative; display: flex; align-items: center; justify-content: center; width: 128px; height: 36px; padding: 0 8px 6px; overflow: hidden; border-radius: 6px; background: var(--panel-raised) center / cover no-repeat; color: var(--ink); font-size: 13px; }
+/* 名牌：和游戏里一样，称号在左上角，名字居中，徽章在右下角；称号和名字都用名牌背景给的文字颜色。
+   名字的英文用游戏字体 BlitzMain；含假名的日文名字和称号换成日文字体，其余沿用界面字体。 */
+.nameplate { position: relative; display: flex; align-items: center; justify-content: center; width: 128px; height: 36px; padding: 0 8px; overflow: hidden; border-radius: 6px; background: var(--panel-raised) center / cover no-repeat; color: var(--ink); font-size: 13px; }
+.nameplate-title { position: absolute; top: 1px; left: 4px; max-width: calc(100% - 8px); overflow: hidden; font-size: .52em; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .nameplate-name { max-width: 100%; overflow: hidden; font-family: "BlitzMain", "DFP GBZY7", "PingFang SC", "Microsoft YaHei", sans-serif; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
-.nameplate-name:lang(ja) { font-family: "BlitzMain", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "Meiryo", "Noto Sans JP", sans-serif; }
+.nameplate-name:lang(ja), .nameplate-title:lang(ja) { font-family: "BlitzMain", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "Meiryo", "Noto Sans JP", sans-serif; }
 .nameplate-badges { position: absolute; right: 3px; bottom: 2px; display: flex; gap: 1px; }
 /* 首页账号和切换菜单复用详情名牌。 */
 .account-current.has-nameplate { grid-template-columns: minmax(0, 1fr) auto; gap: 5px; padding: 0; background: transparent; border-radius: 7px; }
-.account-current.has-nameplate .nameplate, .account-item .nameplate { width: 100%; height: auto; aspect-ratio: 32 / 9; min-width: 0; padding-bottom: 8px; font-size: 15px; }
+.account-current.has-nameplate .nameplate, .account-item .nameplate { width: 100%; height: auto; aspect-ratio: 32 / 9; min-width: 0; font-size: 15px; }
 .account-current.has-nameplate .badge-icon, .account-item .badge-icon { width: 17px; height: 17px; }
 .account-current.has-nameplate .nameplate-badges, .account-item .nameplate-badges { right: 4px; bottom: 3px; }
 .badge-icon { width: 13px; height: 13px; object-fit: contain; }
