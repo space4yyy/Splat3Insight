@@ -246,6 +246,36 @@
     }
   });
 
+  const logDirectory = $('#log-directory');
+  const openLogDirectoryButton = $('#open-log-directory-button');
+  let logDirectoryPath = null;
+  async function refreshLogDirectory() {
+    logDirectoryPath = null;
+    logDirectory.textContent = '读取中…';
+    openLogDirectoryButton.disabled = true;
+    try {
+      logDirectoryPath = await invoke('get_log_directory');
+      logDirectory.textContent = logDirectoryPath;
+    } catch (error) {
+      logDirectory.textContent = '读取失败';
+      setSettingsMessage(`读取日志目录失败：${String(error)}`);
+    } finally {
+      openLogDirectoryButton.disabled = !logDirectoryPath;
+    }
+  }
+  openLogDirectoryButton.addEventListener('click', async () => {
+    if (!logDirectoryPath) return;
+    openLogDirectoryButton.disabled = true;
+    setSettingsMessage('');
+    try {
+      await invoke('open_log_directory');
+    } catch (error) {
+      setSettingsMessage(`打开日志目录失败：${String(error)}`);
+    } finally {
+      openLogDirectoryButton.disabled = !logDirectoryPath;
+    }
+  });
+
   // 应用更新：后台发现新版本时提示，点按钮才下载安装并重启，不会自动安装。
   const updateButton = $('#update-button');
   const settingsNav = $('#nav button[data-view="settings"]');
@@ -325,6 +355,7 @@
     } else if (view === 'settings') {
       refreshAutostart();
       refreshExportDirectory();
+      refreshLogDirectory();
       refreshAccounts().catch((error) => setMessage(String(error), true));
     }
     if (previous !== view) window.scrollTo(0, scrollPositions[view] ?? 0);

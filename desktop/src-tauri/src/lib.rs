@@ -28,6 +28,7 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_opener::OpenerExt;
 use tokio::sync::watch;
 
 mod app_update;
@@ -1076,6 +1077,26 @@ fn get_export_directory(app: AppHandle, state: State<'_, AppState>) -> Result<St
     export_directory(&app, &state.preferences_path).map(|path| path.display().to_string())
 }
 
+#[tauri::command]
+fn get_log_directory(state: State<'_, AppState>) -> Result<String, String> {
+    state
+        .auth_log_path
+        .parent()
+        .map(|path| path.display().to_string())
+        .ok_or_else(|| "日志目录路径无效".to_owned())
+}
+
+#[tauri::command]
+fn open_log_directory(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let path = state
+        .auth_log_path
+        .parent()
+        .ok_or_else(|| "日志目录路径无效".to_owned())?;
+    app.opener()
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|error| format!("打开日志目录失败：{error}"))
+}
+
 /// 用系统的文件夹选择窗口换一个导出位置。取消时返回 `None`，设置保持不变。
 #[tauri::command]
 async fn choose_export_directory(
@@ -2108,6 +2129,8 @@ pub fn run() {
             list_accounts,
             get_sync_status,
             get_export_directory,
+            get_log_directory,
+            open_log_directory,
             choose_export_directory,
             export_history,
             import_history,
