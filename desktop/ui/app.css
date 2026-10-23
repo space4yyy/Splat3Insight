@@ -551,6 +551,8 @@ table.data tr.is-me td { background: var(--panel-raised); color: var(--ink); }
 /* 标签下面一行是说明（如导出位置的路径）：占满按钮左边的空间，路径太长时换行。 */
 .settings-label:has(small) { flex: 1 1 0; min-width: 0; }
 .settings-label small { display: block; margin-top: 2px; color: var(--ink-3); font-size: 12px; overflow-wrap: anywhere; }
+.settings-external-link { min-width: 0; color: var(--ink-2); font-size: 13px; overflow-wrap: anywhere; text-align: right; text-decoration: none; }
+.settings-external-link:hover { color: var(--accent-2-text); text-decoration: underline; }
 .settings-message { margin: 0; color: var(--danger-text); font-size: 13px; }
 .settings-note { margin-left: 8px; color: var(--ink-3); font-size: 13px; }
 .nav button.has-update::after { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); }

@@ -837,6 +837,12 @@
     event.preventDefault();
     void openUrl(event.currentTarget.href);
   });
+  document.querySelectorAll('.settings-external-link').forEach((link) => {
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      void openUrl(link.href).catch((error) => setSettingsMessage(`打开链接失败：${String(error)}`));
+    });
+  });
   $('#login-consent-cancel').addEventListener('click', () => loginConsent.close());
   $('#login-consent-accept').addEventListener('click', () => {
     loginConsent.close();
