@@ -174,6 +174,7 @@
       wins: field('wins'),
       losses: field('losses'),
       winRate: field('win-rate'),
+      powerArea: card.querySelector('.overlay-card__power'),
       power: field('power'),
       delta: field('delta'),
       kills: field('kills'),
@@ -230,12 +231,25 @@
     showNumber(refs.losses, `Lose ${displayNumber(summary.lose)}`);
     showNumber(refs.winRate, `${displayNumber(summary.win_rate)}%`);
 
-    showNumber(refs.power, displayNumber(battle.power, 1));
-    setPlaceholder(refs.power, battle.power);
-    showNumber(refs.delta, delta);
-    refs.delta.classList.toggle('positive', battle.power_delta > 0);
-    refs.delta.classList.toggle('negative', battle.power_delta < 0);
-    setPlaceholder(refs.delta, battle.power_delta);
+    // 蛮颓开放组队定分中：战力的位置写「定分中」，变化值的位置写打了几场定分。
+    const placement = battle.power_placement;
+    refs.powerArea.classList.toggle('is-placement', Boolean(placement));
+    if (placement) {
+      const progress = isNumber(placement.played) && isNumber(placement.required)
+        ? `${placement.played}/${placement.required}`
+        : '';
+      showNumber(refs.power, '定分中');
+      refs.power.classList.remove('is-placeholder');
+      showNumber(refs.delta, progress);
+      refs.delta.classList.remove('positive', 'negative', 'is-placeholder');
+    } else {
+      showNumber(refs.power, displayNumber(battle.power, 1));
+      setPlaceholder(refs.power, battle.power);
+      showNumber(refs.delta, delta);
+      refs.delta.classList.toggle('positive', battle.power_delta > 0);
+      refs.delta.classList.toggle('negative', battle.power_delta < 0);
+      setPlaceholder(refs.delta, battle.power_delta);
+    }
 
     showNumber(refs.killValue, displayNumber(battle.kills));
     showNumber(refs.assists, `(${displayNumber(battle.assists)})k`);

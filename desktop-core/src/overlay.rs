@@ -1,5 +1,7 @@
 //! Data adapter for the compact B-style overlay card.
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 use crate::history::{ArchivedBattle, BattleRecord, HistoryCache};
@@ -53,10 +55,21 @@ pub struct OverlayBattle {
     pub power: Option<f64>,
     pub power_kind: Option<String>,
     pub power_delta: Option<f64>,
+    /// Set while an Anarchy Open group places its power (see `open_power_placement`).
+    #[serde(default)]
+    pub power_placement: Option<PowerPlacement>,
     pub kills: Option<i64>,
     pub assists: Option<i64>,
     pub deaths: Option<i64>,
     pub specials: Option<i64>,
+}
+
+/// Placement progress: the games counted so far; the power arrives with game `required`.
+/// `played` is unknown when this placement's first game cannot be told apart.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PowerPlacement {
+    pub played: Option<u32>,
+    pub required: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -153,7 +166,13 @@ enum PowerTrack {
     },
     AnarchyOpen {
         power_kind: String,
-        player_ids: Vec<String>,
+        /// Stable player ids of the teammates, to tell whether consecutive games share a group.
+        #[serde(default)]
+        teammate_ids: Vec<String>,
+        /// A group placing its power: SplatNet reports `bankaraPower` without a power yet,
+        /// while solo play reports `bankaraPower: null`.
+        #[serde(default)]
+        measuring: bool,
     },
     EventMatch {
         power_kind: String,
@@ -215,33 +234,15 @@ fn power_track(item: &ArchivedBattle) -> Option<PowerTrack> {
                 weapon_id: weapon_id.to_owned(),
             })
         }
-        ("BANKARA", Some("OPEN")) => {
-            let players = item.raw.pointer("/myTeam/players")?.as_array()?;
-            if players.is_empty() {
-                return None;
-            }
-            let mut player_ids = players
-                .iter()
-                .map(|player| {
-                    player
-                        .get("id")
-                        .and_then(serde_json::Value::as_str)
-                        .filter(|id| !id.is_empty())
-                        .or_else(|| {
-                            player
-                                .get("nameId")
-                                .and_then(serde_json::Value::as_str)
-                                .filter(|id| !id.is_empty())
-                        })
-                        .map(str::to_owned)
-                })
-                .collect::<Option<Vec<_>>>()?;
-            player_ids.sort_unstable();
-            Some(PowerTrack::AnarchyOpen {
-                power_kind,
-                player_ids,
-            })
-        }
+        ("BANKARA", Some("OPEN")) => Some(PowerTrack::AnarchyOpen {
+            power_kind,
+            teammate_ids: open_teammate_ids(&item.raw),
+            measuring: record.power.is_none()
+                && item
+                    .raw
+                    .pointer("/bankaraMatch/bankaraPower")
+                    .is_some_and(serde_json::Value::is_object),
+        }),
         ("EVENT_MATCH", _) => {
             let event_id = event_session_id(&item.raw)?;
             // SplatNet's event battles usually carry no team id. Without one the track is
@@ -389,6 +390,38 @@ fn event_group_identity(raw: &serde_json::Value) -> Option<(String, String)> {
     Some((division.to_owned(), group_id))
 }
 
+fn open_teammate_ids(raw: &serde_json::Value) -> Vec<String> {
+    let mut ids: Vec<String> = raw
+        .pointer("/myTeam/players")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|player| player.get("isMyself").and_then(serde_json::Value::as_bool) != Some(true))
+        .filter_map(stable_player_id)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+/// SplatNet's battle player ids are base64 of `VsPlayer-u-…:RECENT:<battle>:u-…`, so they
+/// differ in every battle; the last segment is the player's stable id.
+fn stable_player_id(player: &serde_json::Value) -> Option<String> {
+    let id = player
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty())?;
+    let decoded = STANDARD
+        .decode(id)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok());
+    let player_id = decoded
+        .as_deref()
+        .and_then(|text| text.rsplit_once(':'))
+        .map_or(id, |(_, player_id)| player_id);
+    Some(player_id.to_owned())
+}
+
 fn group_roster_id(raw: &serde_json::Value) -> Option<String> {
     let paths: &[&[&str]] = &[
         &["eventMatch", "group", "members"],
@@ -475,6 +508,73 @@ fn event_power_is_placed(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> bo
         >= 5
 }
 
+/// Games it takes to place a power.
+const PLACEMENT_BATTLES: u32 = 5;
+
+/// Anarchy Open rates groups only, and every schedule rotation or roster change places the
+/// power again over five games. SplatNet does not flag group play, but a placing group's games
+/// carry `bankaraPower` without a power, while solo games carry `bankaraPower: null`.
+/// Placement games are counted back within the rotation until a solo or rated game, or until
+/// the teammates share nobody with the later games; exempted losses and void games do not
+/// count. A partly changed roster goes unnoticed, so a count that reaches the placement games
+/// without a power leaves the progress unknown.
+fn open_power_placement(
+    item: &ArchivedBattle,
+    older: &[&ArchivedBattle],
+) -> Option<PowerPlacement> {
+    let mut group = open_placement_teammates(item)?;
+    let rotation = schedule_rotation(item.record.played_time.as_deref());
+    let mut played = counts_toward_placement(&item.record);
+    for candidate in older
+        .iter()
+        .filter(|candidate| mode_level_delta_track(candidate).is_some())
+    {
+        if rotation.is_none()
+            || schedule_rotation(candidate.record.played_time.as_deref()) != rotation
+        {
+            break;
+        }
+        let Some(teammates) = open_placement_teammates(candidate) else {
+            break;
+        };
+        group.retain(|id| teammates.contains(id));
+        if group.is_empty() {
+            break;
+        }
+        played += counts_toward_placement(&candidate.record);
+    }
+    Some(PowerPlacement {
+        played: (played < PLACEMENT_BATTLES).then_some(played),
+        required: PLACEMENT_BATTLES,
+    })
+}
+
+fn open_placement_teammates(item: &ArchivedBattle) -> Option<Vec<String>> {
+    match power_track(item)? {
+        PowerTrack::AnarchyOpen {
+            teammate_ids,
+            measuring: true,
+            ..
+        } => Some(teammate_ids),
+        _ => None,
+    }
+}
+
+fn counts_toward_placement(record: &BattleRecord) -> u32 {
+    u32::from(!matches!(
+        record.judgement.as_deref(),
+        Some("EXEMPTED_LOSE") | Some("DRAW")
+    ))
+}
+
+/// Schedules rotate every two hours from even UTC hours; SplatNet's battle times are UTC (`…Z`).
+fn schedule_rotation(played_time: Option<&str>) -> Option<(&str, u32)> {
+    let played_time = played_time.filter(|time| time.ends_with('Z'))?;
+    let (date, time) = played_time.split_once('T')?;
+    let hour = time.get(..2)?.parse::<u32>().ok()?;
+    Some((date, hour / 2))
+}
+
 fn to_overlay_battle(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> OverlayBattle {
     let current_track = power_track(item);
     let power = if item.record.mode == "PRIVATE_BATTLE"
@@ -529,6 +629,7 @@ fn to_overlay_battle(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> Overla
             .then(|| item.record.power_kind.clone())
             .flatten(),
         power_delta,
+        power_placement: open_power_placement(item, older),
         kills: item.record.kills,
         assists: item.record.assists,
         deaths: item.record.deaths,
@@ -760,6 +861,129 @@ mod tests {
         let mut battles = vec![earlier, first_rated, next];
         battles.extend(measuring);
         assert_eq!(open_delta(battles), Some(12.5));
+    }
+
+    #[test]
+    fn open_group_placement_counts_games_of_the_current_rotation() {
+        let placing = serde_json::json!({ "power": null });
+        // 00:00–02:00 UTC is another rotation, so 02:00 starts the placement over.
+        let mut battles = vec![
+            splatnet_open_battle("last-rotation", "01:50", placing.clone(), &["friend", "a"]),
+            splatnet_open_battle("first", "02:05", placing.clone(), &["friend", "b"]),
+        ];
+        assert_eq!(
+            selected(battles.clone()).power_placement,
+            Some(PowerPlacement {
+                played: Some(1),
+                required: 5
+            })
+        );
+
+        battles.push(splatnet_open_battle(
+            "second",
+            "02:15",
+            placing,
+            &["friend", "c"],
+        ));
+        let card = selected(battles);
+        assert_eq!(card.power, None);
+        assert_eq!(card.power_delta, None);
+        assert_eq!(
+            card.power_placement,
+            Some(PowerPlacement {
+                played: Some(2),
+                required: 5
+            })
+        );
+    }
+
+    #[test]
+    fn solo_and_rated_open_battles_have_no_placement() {
+        let solo = splatnet_open_battle("solo", "02:05", serde_json::Value::Null, &["a", "b"]);
+        assert_eq!(selected(vec![solo]).power_placement, None);
+
+        let rated = splatnet_open_battle(
+            "rated",
+            "02:05",
+            serde_json::json!({ "power": 1876.5 }),
+            &["friend", "a"],
+        );
+        let card = selected(vec![rated]);
+        assert_eq!(card.power, Some(1876.5));
+        assert_eq!(card.power_placement, None);
+    }
+
+    #[test]
+    fn open_placement_restarts_for_another_group() {
+        let placing = serde_json::json!({ "power": null });
+        let played = |battles: Vec<ArchivedBattle>| selected(battles).power_placement?.played;
+
+        // A rated game ends a placement; placing again means the group changed.
+        let battles = vec![
+            splatnet_open_battle("placing", "02:05", placing.clone(), &["friend", "a"]),
+            splatnet_open_battle(
+                "rated",
+                "02:15",
+                serde_json::json!({ "power": 1876.5 }),
+                &["friend", "b"],
+            ),
+            splatnet_open_battle("joined", "02:25", placing.clone(), &["friend", "new"]),
+        ];
+        assert_eq!(played(battles), Some(1));
+
+        // A solo game in between.
+        let battles = vec![
+            splatnet_open_battle("placing", "02:05", placing.clone(), &["friend", "a"]),
+            splatnet_open_battle("solo", "02:15", serde_json::Value::Null, &["b", "c"]),
+            splatnet_open_battle("again", "02:25", placing.clone(), &["friend", "d"]),
+        ];
+        assert_eq!(played(battles), Some(1));
+
+        // Teammates that share nobody with the earlier games are another group.
+        let battles = vec![
+            splatnet_open_battle("old-group", "02:05", placing.clone(), &["old", "a"]),
+            splatnet_open_battle("new-group", "02:15", placing, &["new", "b"]),
+        ];
+        assert_eq!(played(battles), Some(1));
+    }
+
+    #[test]
+    fn exempted_and_void_games_do_not_count_toward_placement() {
+        let placing = serde_json::json!({ "power": null });
+        let mut exempted =
+            splatnet_open_battle("exempted", "02:15", placing.clone(), &["friend", "b"]);
+        exempted.record.judgement = Some("EXEMPTED_LOSE".to_owned());
+        let mut void = splatnet_open_battle("void", "02:25", placing.clone(), &["friend", "c"]);
+        void.record.judgement = Some("DRAW".to_owned());
+        let battles = vec![
+            splatnet_open_battle("first", "02:05", placing.clone(), &["friend", "a"]),
+            exempted,
+            void,
+            splatnet_open_battle("second", "02:35", placing, &["friend", "d"]),
+        ];
+        assert_eq!(selected(battles).power_placement.unwrap().played, Some(2));
+    }
+
+    #[test]
+    fn open_placement_progress_is_unknown_past_the_placement_games() {
+        // Five games without a power: someone in the group changed somewhere in between.
+        let battles = (0..5)
+            .map(|index| {
+                splatnet_open_battle(
+                    &format!("placing-{index}"),
+                    &format!("02:{index}5"),
+                    serde_json::json!({ "power": null }),
+                    &["friend", &format!("random-{index}")],
+                )
+            })
+            .collect();
+        assert_eq!(
+            selected(battles).power_placement,
+            Some(PowerPlacement {
+                played: None,
+                required: 5
+            })
+        );
     }
 
     #[test]
@@ -1078,6 +1302,44 @@ mod tests {
             "myTeam": { "players": player_ids.iter().map(|id| serde_json::json!({"id":id})).collect::<Vec<_>>() }
         });
         item
+    }
+
+    /// An Anarchy Open battle shaped like SplatNet's: `bankaraPower` is null in solo play and
+    /// `{ "power": null }` while a group places, and player ids carry the battle id.
+    fn splatnet_open_battle(
+        id: &str,
+        time: &str,
+        bankara_power: serde_json::Value,
+        teammates: &[&str],
+    ) -> ArchivedBattle {
+        let power = bankara_power
+            .get("power")
+            .and_then(serde_json::Value::as_f64);
+        let mut item = open_battle(id, time, 0.0, &[]);
+        item.record.power = power;
+        let player = |name: &str, is_myself: bool| {
+            let battle_time = time.replace(':', "");
+            let player_id = format!("VsPlayer-u-me:RECENT:20260922T{battle_time}00_{id}:u-{name}");
+            serde_json::json!({ "id": STANDARD.encode(player_id), "isMyself": is_myself })
+        };
+        let mut players = vec![player("me", true)];
+        players.extend(teammates.iter().map(|name| player(name, false)));
+        item.raw = serde_json::json!({
+            "bankaraMatch": { "mode": "OPEN", "bankaraPower": bankara_power },
+            "myTeam": { "players": players }
+        });
+        item
+    }
+
+    fn selected(battles: Vec<ArchivedBattle>) -> OverlayBattle {
+        OverlayState::from_history(&HistoryCache {
+            schema_version: 1,
+            fetched_at_ms: 1,
+            battles,
+            coop: Vec::new(),
+        })
+        .selected
+        .unwrap()
     }
 
     fn event_battle(

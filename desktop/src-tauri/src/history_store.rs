@@ -34,11 +34,14 @@ const CACHED_POWER_TRACK_KEY: &str = "__s3w_overlay_power_track_v1";
 const EVENT_POWER_MIGRATION: &str = "event-power-fields-v1";
 const MODE_DELTA_MIGRATION: &str = "mode-level-deltas-v1";
 const RATING_RUN_MIGRATION: &str = "rating-run-deltas-v1";
-/// 卡片数据的升级：缺任何一项时，重新解析活动比赛记录并重建卡片缓存，然后全部标记完成。
-const OVERLAY_MIGRATIONS: [&str; 3] = [
+const OPEN_PLACEMENT_MIGRATION: &str = "open-placement-v1";
+/// 卡片数据的升级：缺任何一项时，重新解析活动比赛记录、重建蛮颓开放的卡片索引并重建
+/// 卡片缓存，然后全部标记完成。
+const OVERLAY_MIGRATIONS: [&str; 4] = [
     EVENT_POWER_MIGRATION,
     MODE_DELTA_MIGRATION,
     RATING_RUN_MIGRATION,
+    OPEN_PLACEMENT_MIGRATION,
 ];
 /// 一般打工每期 40 小时。往前找同一期工时只看这个范围，既能覆盖整期，
 /// 又不会把隔了几周、恰好场地和武器都相同的另一期算进来。
@@ -907,6 +910,7 @@ fn load_card_state(
     if overlay_migration_pending(&connection, account_id)? {
         drop(connection);
         reparse_event_match_records(history_dir, account_id)?;
+        reset_open_battle_track_keys(history_dir, account_id)?;
         let snapshot = rebuild_overlay_snapshot(history_dir, account_id)?;
         let connection = open_database(history_dir)?;
         for migration in OVERLAY_MIGRATIONS {
@@ -1032,6 +1036,20 @@ fn reparse_event_match_records(history_dir: &Path, account_id: &str) -> Result<(
             )
             .map_err(|error| format!("更新活动赛卡片数据失败：{error}"))?;
     }
+    Ok(())
+}
+
+/// 蛮颓开放的卡片索引后来才记下组队定分和队友。清空旧索引，读卡片历史时按原始 JSON 重新算。
+fn reset_open_battle_track_keys(history_dir: &Path, account_id: &str) -> Result<(), String> {
+    let connection = open_database(history_dir)?;
+    connection
+        .execute(
+            "UPDATE history_records SET overlay_track_key = NULL
+             WHERE account_id = ?1 AND record_type = 'battle'
+               AND record_json LIKE '%\"bankara_mode\":\"OPEN\"%'",
+            [account_id],
+        )
+        .map_err(|error| format!("重建蛮颓开放卡片索引失败：{error}"))?;
     Ok(())
 }
 
@@ -2630,6 +2648,73 @@ mod tests {
             )
             .unwrap();
         assert_eq!(migrated, 1);
+    }
+
+    #[test]
+    fn open_placement_migration_reindexes_open_battles() {
+        let directory = tempdir().unwrap();
+        let mut cache = sample_cache();
+        let template = cache.battles.remove(0);
+        // SplatNet's shape while a group places its power: `bankaraPower` without a power yet.
+        cache.battles = (1..=2)
+            .map(|index| {
+                let mut battle = template.clone();
+                battle.record.id = format!("open-{index}");
+                battle.record.played_time = Some(format!("2026-09-22T02:0{index}:00Z"));
+                battle.record.mode = "BANKARA".to_owned();
+                battle.record.bankara_mode = Some("OPEN".to_owned());
+                battle.record.power = None;
+                battle.record.power_kind = Some("team".to_owned());
+                battle.raw = json!({
+                    "id": battle.record.id,
+                    "bankaraMatch": { "mode": "OPEN", "bankaraPower": { "power": null } },
+                    "myTeam": { "players": [
+                        { "id": "me", "isMyself": true },
+                        { "id": "friend", "isMyself": false },
+                        { "id": format!("random-{index}"), "isMyself": false }
+                    ] }
+                });
+                battle
+            })
+            .collect();
+        save_cache(directory.path(), "account", &cache).unwrap();
+
+        // Earlier versions indexed Open battles by their per-battle player ids only.
+        let connection = open_database(directory.path()).unwrap();
+        connection
+            .execute(
+                "UPDATE history_records SET overlay_track_key = ?2 WHERE account_id = ?1",
+                params![
+                    "account",
+                    r#"{"AnarchyOpen":{"power_kind":"team","player_ids":["friend","me"]}}"#
+                ],
+            )
+            .unwrap();
+        for migration in [
+            EVENT_POWER_MIGRATION,
+            MODE_DELTA_MIGRATION,
+            RATING_RUN_MIGRATION,
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO history_migrations(account_id, migration_key, version)
+                     VALUES (?1, ?2, 1)",
+                    params!["account", migration],
+                )
+                .unwrap();
+        }
+        drop(connection);
+        let old_cache = load_overlay_cache(directory.path(), "account")
+            .unwrap()
+            .unwrap();
+        let stale_state = OverlayState::from_history(&old_cache);
+        assert_eq!(stale_state.selected.as_ref().unwrap().power_placement, None);
+        save_overlay_state(directory.path(), "account", &stale_state).unwrap();
+
+        let refreshed = load_overlay_state(directory.path(), "account").unwrap();
+        let placement = refreshed.selected.unwrap().power_placement.unwrap();
+        assert_eq!(placement.played, Some(2));
+        assert_eq!(placement.required, 5);
     }
 
     #[test]
