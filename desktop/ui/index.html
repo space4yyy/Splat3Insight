@@ -485,6 +485,10 @@
                   <button type="button" class="ghost" id="export-directory-button" aria-label="更改数据导出位置">更改</button>
                 </div>
                 <div class="settings-row">
+                  <span class="settings-label">网络代理<small id="network-proxy-summary">读取中…</small></span>
+                  <button type="button" class="ghost" id="proxy-settings-button">配置</button>
+                </div>
+                <div class="settings-row">
                   <span class="settings-label">版本<span class="settings-note" id="app-version"></span></span>
                   <button type="button" class="ghost" id="update-button">检查更新</button>
                 </div>
@@ -523,6 +527,28 @@
 
       </div>
     </div>
+
+    <dialog id="proxy-dialog" class="close-prompt proxy-settings-dialog" aria-labelledby="proxy-dialog-title" tabindex="-1">
+      <h2 id="proxy-dialog-title">网络代理</h2>
+      <p>应用内的 Nintendo 账号认证、SplatNet 数据和资源图片请求会使用此代理。外部浏览器中的登录页面仍按浏览器自己的网络设置访问。</p>
+      <div class="proxy-settings-form">
+        <label class="proxy-enabled-row" for="proxy-enabled">
+          <input type="checkbox" class="switch" id="proxy-enabled" role="switch">
+          <span>使用自定义代理地址</span>
+        </label>
+        <label class="proxy-address-field" for="proxy-address">
+          <span>代理地址</span>
+          <input id="proxy-address" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:7890" disabled>
+        </label>
+        <p class="proxy-settings-help">支持 HTTP 或 HTTPS 代理，例如本机代理软件提供的 HTTP / 混合端口。SOCKS 暂不支持；地址中不要填写用户名或密码。测试只检查代理主机的 TCP 端口是否可连接，不会访问 Nintendo 服务。关闭自定义代理后，沿用应用原有网络环境设置。</p>
+        <p id="proxy-dialog-status" class="proxy-dialog-status" role="status" aria-live="polite" hidden></p>
+      </div>
+      <div class="close-prompt-actions proxy-dialog-actions">
+        <button id="proxy-dialog-cancel" type="button" class="ghost">取消</button>
+        <button id="proxy-test-button" type="button" class="ghost">测试端口</button>
+        <button id="proxy-save-button" type="button" class="button-primary">保存设置</button>
+      </div>
+    </dialog>
 
     <dialog id="share-dialog" class="close-prompt share-dialog" aria-labelledby="share-title" tabindex="-1">
       <h2 id="share-title">分享</h2>

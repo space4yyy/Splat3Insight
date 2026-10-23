@@ -38,6 +38,7 @@ pub(crate) enum SyncReason {
     AccountAdded,
     AccountRemoved,
     Permission,
+    ProxyChanged,
 }
 
 impl SyncReason {
@@ -52,6 +53,7 @@ impl SyncReason {
             Self::AccountAdded => "添加账号",
             Self::AccountRemoved => "删除账号",
             Self::Permission => "获取权限",
+            Self::ProxyChanged => "网络代理设置已更改",
         }
     }
 }
@@ -266,6 +268,7 @@ mod tests {
         for (name, reason) in [
             ("\"manual\"", SyncReason::Manual),
             ("\"window_focus\"", SyncReason::WindowFocus),
+            ("\"proxy_changed\"", SyncReason::ProxyChanged),
         ] {
             assert_eq!(serde_json::from_str::<SyncReason>(name).unwrap(), reason);
         }

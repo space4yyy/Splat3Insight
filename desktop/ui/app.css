@@ -555,7 +555,29 @@ table.data tr.is-me td { background: var(--panel-raised); color: var(--ink); }
 .settings-external-link { min-width: 0; color: var(--ink-2); font-size: 13px; overflow-wrap: anywhere; text-align: right; text-decoration: none; }
 .settings-external-link:hover { color: var(--accent-2-text); text-decoration: underline; }
 .settings-message { margin: 0; color: var(--danger-text); font-size: 13px; }
+.settings-message.is-success { color: var(--accent); }
 .settings-note { margin-left: 8px; color: var(--ink-3); font-size: 13px; }
+dialog.close-prompt.proxy-settings-dialog { width: min(520px, calc(100% - 32px)); max-width: none; max-height: calc(100vh - 32px); overflow: auto; transform: none; }
+dialog.close-prompt.proxy-settings-dialog[open] { transform: none; }
+dialog.close-prompt.proxy-settings-dialog:focus { outline: none; }
+.proxy-settings-dialog > p { margin: 6px 0 18px !important; color: var(--ink-2) !important; font-size: 13px !important; }
+.proxy-settings-form { display: grid; gap: 14px; }
+.proxy-enabled-row { display: flex; align-items: center; gap: 10px; color: var(--ink); font-size: 14px; cursor: pointer; }
+.proxy-address-field { display: grid; gap: 6px; color: var(--ink-2); font-size: 13px; }
+.proxy-address-field input { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-raised); color: var(--ink); font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.proxy-address-field input:disabled { opacity: .5; cursor: default; }
+.proxy-settings-help { margin: 0 !important; color: var(--ink-3) !important; font-size: 12px !important; line-height: 1.55; }
+.proxy-dialog-status { margin: 0 !important; padding: 9px 10px; border-radius: 9px; background: var(--panel-raised); color: var(--ink-2) !important; font-size: 12px !important; line-height: 1.5; overflow-wrap: anywhere; }
+.proxy-dialog-status.is-error { color: var(--danger-text) !important; }
+.proxy-dialog-status.is-success { color: var(--accent) !important; }
+.proxy-dialog-actions { margin-top: 18px; }
+.proxy-dialog-actions button:disabled { opacity: .45; cursor: default; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .settings-message.is-success { color: var(--accent-2-text); }
+  :root:not([data-theme="dark"]) .proxy-dialog-status.is-success { color: var(--accent-2-text) !important; }
+}
+:root[data-theme="light"] .settings-message.is-success { color: var(--accent-2-text); }
+:root[data-theme="light"] .proxy-dialog-status.is-success { color: var(--accent-2-text) !important; }
 .nav button.has-update::after { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); }
 .switch { position: relative; flex: none; width: 40px; height: 24px; margin: 0; border-radius: 999px; background: var(--line-strong); appearance: none; cursor: pointer; transition: background-color .15s; }
 .switch::before { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--ink-3); transition: transform .15s, background-color .15s; }

@@ -190,6 +190,7 @@ pub struct SplatNetDataConfig {
     pub country: String,
     pub web_view_version: Option<String>,
     pub app_user_agent: String,
+    pub proxy_address: Option<String>,
 }
 
 impl SplatNetDataConfig {
@@ -206,6 +207,7 @@ impl SplatNetDataConfig {
             country: country.into(),
             web_view_version: None,
             app_user_agent: APP_USER_AGENT.to_owned(),
+            proxy_address: None,
         }
     }
 }
@@ -363,11 +365,14 @@ impl SplatNetDataClient {
         if config.country.trim().is_empty() {
             config.country = "US".to_owned();
         }
-        let http = reqwest::Client::builder()
-            .user_agent(&config.app_user_agent)
-            .http1_only()
-            .build()
-            .map_err(|error| format!("创建 SplatNet 数据客户端失败：{error}"))?;
+        let http = crate::network::apply_proxy(
+            reqwest::Client::builder()
+                .user_agent(&config.app_user_agent)
+                .http1_only(),
+            config.proxy_address.as_deref(),
+        )?
+        .build()
+        .map_err(|error| format!("创建 SplatNet 数据客户端失败：{error}"))?;
         let known_version = match config.web_view_version.clone() {
             Some(value) if !value.trim().is_empty() => Some(value),
             _ => {

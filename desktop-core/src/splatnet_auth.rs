@@ -37,6 +37,7 @@ const NXAPI_TOKEN_DEFAULT_LIFETIME: Duration = Duration::from_secs(300);
 pub struct SplatNetAuthConfig {
     pub client_version: String,
     pub app_user_agent: String,
+    pub proxy_address: Option<String>,
 }
 
 impl SplatNetAuthConfig {
@@ -51,6 +52,7 @@ impl Default for SplatNetAuthConfig {
         Self {
             client_version: env!("CARGO_PKG_VERSION").to_owned(),
             app_user_agent: "Mozilla/5.0 (Linux; Android 14; Pixel 7a) AppleWebKit/537.36 Chrome/120.0.6099.230 Mobile Safari/537.36".to_owned(),
+            proxy_address: None,
         }
     }
 }
@@ -84,10 +86,12 @@ struct SplatNetClient<'a> {
 
 impl<'a> SplatNetClient<'a> {
     async fn new(config: &'a SplatNetAuthConfig, account_id: &'a str) -> Result<Self, String> {
-        let http = reqwest::Client::builder()
-            .user_agent(&config.app_user_agent)
-            .build()
-            .map_err(|error| format!("创建网络客户端失败: {error}"))?;
+        let http = crate::network::apply_proxy(
+            reqwest::Client::builder().user_agent(&config.app_user_agent),
+            config.proxy_address.as_deref(),
+        )?
+        .build()
+        .map_err(|error| format!("创建网络客户端失败: {error}"))?;
         let nso_app_version = fetch_nso_app_version(&http, config, account_id).await?;
         Ok(Self {
             http,

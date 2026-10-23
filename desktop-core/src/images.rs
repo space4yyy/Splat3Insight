@@ -260,11 +260,17 @@ pub struct ImageClient {
 
 impl ImageClient {
     pub fn new() -> Result<Self, String> {
-        Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map(|http| Self { http })
-            .map_err(|error| format!("创建图片下载客户端失败：{error}"))
+        Self::with_proxy(None)
+    }
+
+    pub fn with_proxy(proxy_address: Option<&str>) -> Result<Self, String> {
+        crate::network::apply_proxy(
+            Client::builder().timeout(Duration::from_secs(30)),
+            proxy_address,
+        )?
+        .build()
+        .map(|http| Self { http })
+        .map_err(|error| format!("创建图片下载客户端失败：{error}"))
     }
 
     /// 下载一张图片，只接受任天堂资源服务器上的图片链接。

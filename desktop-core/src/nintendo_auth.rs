@@ -168,7 +168,15 @@ impl LoginAttempt {
 /// exchange belongs to the SplatNet client and can refresh independently of
 /// the account-login layer.
 pub async fn exchange_session_token(callback: LoginCallback) -> Result<NintendoIdentity, String> {
-    let client = reqwest::Client::new();
+    exchange_session_token_with_proxy(callback, None).await
+}
+
+/// Like [`exchange_session_token`], with an optional app-level HTTP proxy.
+pub async fn exchange_session_token_with_proxy(
+    callback: LoginCallback,
+    proxy_address: Option<&str>,
+) -> Result<NintendoIdentity, String> {
+    let client = build_client(proxy_address)?;
     let session_response = client
         .post("https://accounts.nintendo.com/connect/1.0.0/api/session_token")
         .header("User-Agent", "OnlineLounge/1.0 NASDKAPI")
@@ -197,8 +205,22 @@ pub async fn exchange_session_token(callback: LoginCallback) -> Result<NintendoI
 pub async fn refresh_identity(
     session_token: &str,
 ) -> Result<NintendoIdentity, NintendoIdentityError> {
-    let client = reqwest::Client::new();
+    refresh_identity_with_proxy(session_token, None).await
+}
+
+/// Like [`refresh_identity`], with an optional app-level HTTP proxy.
+pub async fn refresh_identity_with_proxy(
+    session_token: &str,
+    proxy_address: Option<&str>,
+) -> Result<NintendoIdentity, NintendoIdentityError> {
+    let client = build_client(proxy_address).map_err(|_| NintendoIdentityError::Transport)?;
     identity_from_session_token(&client, session_token).await
+}
+
+fn build_client(proxy_address: Option<&str>) -> Result<reqwest::Client, String> {
+    crate::network::apply_proxy(reqwest::Client::builder(), proxy_address)?
+        .build()
+        .map_err(|error| format!("创建 Nintendo 网络客户端失败：{error}"))
 }
 
 async fn identity_from_session_token(

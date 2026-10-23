@@ -16,6 +16,7 @@ use splat3_widget_core::images::{
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const SCHEME: &str = "splat3img";
@@ -27,7 +28,7 @@ const DOWNLOAD_PAUSE: Duration = Duration::from_millis(80);
 /// 托管在 Tauri 里的缓存位置和下载客户端。
 pub(crate) struct ImageCache {
     pub(crate) dir: PathBuf,
-    pub(crate) client: ImageClient,
+    pub(crate) client: RwLock<ImageClient>,
 }
 
 fn cache_file(cache_dir: &Path, key: &str) -> PathBuf {
@@ -119,7 +120,8 @@ pub(crate) async fn load(cache: &ImageCache, source: &str) -> Option<(&'static s
     if let Some(bytes) = read_cached(&cache.dir, &key) {
         return Some((content_type(&key), bytes));
     }
-    let bytes = cache.client.download(source).await.ok()?;
+    let client = cache.client.read().ok()?.clone();
+    let bytes = client.download(source).await.ok()?;
     if let Err(error) = store(&cache.dir, &key, &bytes) {
         crate::log_console_error("image-cache", &error);
     }
@@ -234,7 +236,12 @@ async fn warm_up_once(history_dir: &Path, cache: &ImageCache) -> Result<(), Stri
             if cache_file(&cache.dir, &key).exists() {
                 continue;
             }
-            match cache.client.download(&url).await {
+            let client = cache
+                .client
+                .read()
+                .map_err(|_| "图片网络客户端被占用")?
+                .clone();
+            match client.download(&url).await {
                 Ok(bytes) => store(&cache.dir, &key, &bytes)?,
                 Err(error) if error.is_retryable() => return Ok(()),
                 // 签名过期或不是图片：跳过，以后浏览时能用新链接的话再存。
@@ -285,7 +292,7 @@ mod tests {
         let directory = tempdir().unwrap();
         let cache = ImageCache {
             dir: directory.path().to_path_buf(),
-            client: ImageClient::new().unwrap(),
+            client: RwLock::new(ImageClient::new().unwrap()),
         };
         store(directory.path(), "v3/stage_img/gorge.png", b"stage").unwrap();
         let (status, kind, body) =

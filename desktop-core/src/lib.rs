@@ -12,6 +12,7 @@ use std::sync::Arc;
 pub mod dashboard;
 pub mod history;
 pub mod images;
+pub mod network;
 pub mod nintendo_auth;
 pub mod overlay;
 pub mod splatnet_auth;

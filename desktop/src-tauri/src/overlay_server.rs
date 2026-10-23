@@ -1128,7 +1128,9 @@ mod tests {
             directory.path(),
             Some(Arc::new(crate::image_cache::ImageCache {
                 dir: cache_dir,
-                client: splat3_widget_core::images::ImageClient::new().unwrap(),
+                client: std::sync::RwLock::new(
+                    splat3_widget_core::images::ImageClient::new().unwrap(),
+                ),
             })),
         );
         assert_eq!(

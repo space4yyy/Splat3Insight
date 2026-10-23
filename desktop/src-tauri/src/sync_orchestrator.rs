@@ -26,6 +26,7 @@ pub(super) async fn sync_account_inner(
     history_dir: &Path,
     auth_log_path: &Path,
     sync_runtime: &Arc<SyncRuntime>,
+    proxy_address: Option<&str>,
     reason: SyncReason,
 ) -> Result<HistorySyncSummary, SyncError> {
     let (metadata, secret_store) = {
@@ -83,6 +84,7 @@ pub(super) async fn sync_account_inner(
         metadata.country.as_deref().unwrap_or("US"),
     );
     config.web_view_version = sync_runtime.web_view_version();
+    config.proxy_address = proxy_address.map(ToOwned::to_owned);
 
     update_sync_status(sync_runtime, account_id, |status| {
         status.state = "preparing".to_owned();

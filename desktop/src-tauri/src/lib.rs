@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use splat3_widget_core::{
     history::{HistoryError, HistoryErrorKind, HistorySyncSummary, XSettlementCheck},
     nintendo_auth::{
-        begin_login, exchange_session_token, refresh_identity, LoginAttempt, NintendoIdentityError,
+        begin_login, exchange_session_token_with_proxy, refresh_identity_with_proxy, LoginAttempt,
+        NintendoIdentityError,
     },
     overlay::{OverlayMatchCategory, OverlayState},
     splatnet_auth::{exchange_splatnet_tokens, SplatNetAuthConfig, NXAPI_F_GENERATION_URL},
@@ -49,6 +50,7 @@ struct AppState {
     auth_log_path: PathBuf,
     history_dir: PathBuf,
     preferences_path: PathBuf,
+    network_proxy: Arc<RwLock<NetworkProxySettings>>,
     sync_runtime: Arc<SyncRuntime>,
     sync_trigger: Arc<sync_schedule::SyncTrigger>,
     overlay_service: overlay_server::OverlayServiceController,
@@ -61,6 +63,41 @@ struct AppPreferences {
     window_placement: Option<SavedWindowPlacement>,
     /// 用户选的数据导出文件夹；没选过时导出到系统的下载文件夹。
     export_directory: Option<PathBuf>,
+    network_proxy: NetworkProxySettings,
+}
+
+/// 自定义网络代理。代理 URL 不允许包含用户名或密码，因此可以安全地保存在偏好设置文件里。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+struct NetworkProxySettings {
+    enabled: bool,
+    address: String,
+}
+
+impl NetworkProxySettings {
+    fn effective_address(&self) -> Option<&str> {
+        self.enabled.then_some(self.address.as_str())
+    }
+}
+
+fn normalize_network_proxy_settings(
+    mut settings: NetworkProxySettings,
+) -> Result<NetworkProxySettings, String> {
+    if settings.enabled || !settings.address.trim().is_empty() {
+        settings.address = splat3_widget_core::network::validate_proxy_address(&settings.address)?;
+    } else {
+        settings.address.clear();
+    }
+    Ok(settings)
+}
+
+fn current_proxy_address(
+    settings: &RwLock<NetworkProxySettings>,
+) -> Result<Option<String>, String> {
+    let settings = settings
+        .read()
+        .map_err(|_| "network proxy settings are locked")?;
+    Ok(settings.effective_address().map(ToOwned::to_owned))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -765,6 +802,7 @@ async fn sync_account(
     history_dir: PathBuf,
     auth_log_path: PathBuf,
     sync_runtime: Arc<SyncRuntime>,
+    network_proxy: Arc<RwLock<NetworkProxySettings>>,
     reason: sync_schedule::SyncReason,
 ) -> Result<HistorySyncSummary, String> {
     let owner = match sync_runtime.claim_or_join(&account_id)? {
@@ -783,6 +821,7 @@ async fn sync_account(
         },
     };
     let display_name = account_display_name(&registry, &account_id);
+    let proxy_address = current_proxy_address(&network_proxy)?;
 
     let initial_result = sync_orchestrator::sync_account_inner(
         &account_id,
@@ -790,6 +829,7 @@ async fn sync_account(
         &history_dir,
         &auth_log_path,
         &sync_runtime,
+        proxy_address.as_deref(),
         reason,
     )
     .await;
@@ -818,6 +858,7 @@ async fn sync_account(
                 &registry,
                 &auth_log_path,
                 &sync_runtime,
+                proxy_address.as_deref(),
             )
             .await
             {
@@ -835,6 +876,7 @@ async fn sync_account(
                         &history_dir,
                         &auth_log_path,
                         &sync_runtime,
+                        proxy_address.as_deref(),
                         reason,
                     )
                     .await
@@ -922,6 +964,7 @@ fn start_background_sync(
     auth_log_path: PathBuf,
     sync_runtime: Arc<SyncRuntime>,
     sync_trigger: Arc<sync_schedule::SyncTrigger>,
+    network_proxy: Arc<RwLock<NetworkProxySettings>>,
     obs_activity: sync_schedule::ObsActivity,
 ) {
     tauri::async_runtime::spawn(async move {
@@ -939,6 +982,7 @@ fn start_background_sync(
                         history_dir.clone(),
                         auth_log_path.clone(),
                         Arc::clone(&sync_runtime),
+                        Arc::clone(&network_proxy),
                         reason,
                     )
                     .await;
@@ -1095,6 +1139,65 @@ fn open_log_directory(app: AppHandle, state: State<'_, AppState>) -> Result<(), 
     app.opener()
         .open_path(path.to_string_lossy(), None::<&str>)
         .map_err(|error| format!("打开日志目录失败：{error}"))
+}
+
+#[tauri::command]
+fn get_network_proxy_settings(state: State<'_, AppState>) -> Result<NetworkProxySettings, String> {
+    state
+        .network_proxy
+        .read()
+        .map(|settings| settings.clone())
+        .map_err(|_| "network proxy settings are locked".to_owned())
+}
+
+#[tauri::command]
+fn save_network_proxy_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    settings: NetworkProxySettings,
+) -> Result<NetworkProxySettings, String> {
+    let settings = normalize_network_proxy_settings(settings)?;
+    let image_client =
+        splat3_widget_core::images::ImageClient::with_proxy(settings.effective_address())?;
+
+    let mut runtime_settings = state
+        .network_proxy
+        .write()
+        .map_err(|_| "network proxy settings are locked".to_owned())?;
+    let image_cache = app.try_state::<Arc<image_cache::ImageCache>>();
+    let mut image_cache_client = image_cache
+        .as_ref()
+        .map(|cache| cache.client.write())
+        .transpose()
+        .map_err(|_| "图片网络客户端被占用".to_owned())?;
+
+    let mut preferences = load_app_preferences(&state.preferences_path)?;
+    preferences.network_proxy = settings.clone();
+    store_app_preferences(&state.preferences_path, &preferences)?;
+
+    let settings_changed = *runtime_settings != settings;
+    *runtime_settings = settings.clone();
+    if let Some(client) = image_cache_client.as_mut() {
+        **client = image_client;
+    }
+    drop(image_cache_client);
+    drop(runtime_settings);
+    if settings_changed {
+        state
+            .sync_trigger
+            .request(sync_schedule::SyncReason::ProxyChanged);
+    }
+    Ok(settings)
+}
+
+#[tauri::command]
+async fn test_network_proxy(settings: NetworkProxySettings) -> Result<String, String> {
+    let settings = normalize_network_proxy_settings(settings)?;
+    let Some(address) = settings.effective_address() else {
+        return Err("请先启用自定义代理".to_owned());
+    };
+    let port = splat3_widget_core::network::test_proxy_connection(address).await?;
+    Ok(format!("代理端口可连接（TCP {port}）"))
 }
 
 /// 用系统的文件夹选择窗口换一个导出位置。取消时返回 `None`，设置保持不变。
@@ -1554,7 +1657,8 @@ async fn complete_nintendo_login(
         .finish(&callback_url)
         .map_err(|error| auth_error(&auth_log_path, "nintendo-link", error))?;
     write_auth_log(&auth_log_path, "nintendo-link", "已解析选择此人链接");
-    let identity = exchange_session_token(callback)
+    let proxy_address = current_proxy_address(&state.network_proxy)?;
+    let identity = exchange_session_token_with_proxy(callback, proxy_address.as_deref())
         .await
         .map_err(|error| auth_error(&auth_log_path, "nintendo-session", error))?;
     let account_id = identity.account_id.clone();
@@ -1615,6 +1719,7 @@ async fn refresh_splatnet_tokens_for_account(
     registry: &Arc<Mutex<Registry>>,
     auth_log_path: &Path,
     sync_runtime: &SyncRuntime,
+    proxy_address: Option<&str>,
 ) -> Result<(), TokenRefreshFailure> {
     let (metadata, secret_store) = {
         let registry = registry.lock().map_err(|_| "account registry is locked")?;
@@ -1640,22 +1745,25 @@ async fn refresh_splatnet_tokens_for_account(
         account_id,
         "使用已保存的 Nintendo session token 刷新 SplatNet token",
     );
-    let identity = refresh_identity(&session_token).await.map_err(|error| {
-        let details = account_auth_error(
-            auth_log_path,
-            "nintendo-session-refresh",
-            &metadata.display_name,
-            account_id,
-            error.to_string(),
-        );
-        match error {
-            NintendoIdentityError::SessionTokenRejected => {
-                TokenRefreshFailure::NintendoSessionExpired
+    let identity = refresh_identity_with_proxy(&session_token, proxy_address)
+        .await
+        .map_err(|error| {
+            let details = account_auth_error(
+                auth_log_path,
+                "nintendo-session-refresh",
+                &metadata.display_name,
+                account_id,
+                error.to_string(),
+            );
+            match error {
+                NintendoIdentityError::SessionTokenRejected => {
+                    TokenRefreshFailure::NintendoSessionExpired
+                }
+                _ => TokenRefreshFailure::Failed(details),
             }
-            _ => TokenRefreshFailure::Failed(details),
-        }
-    })?;
-    let auth_config = SplatNetAuthConfig::default();
+        })?;
+    let mut auth_config = SplatNetAuthConfig::default();
+    auth_config.proxy_address = proxy_address.map(ToOwned::to_owned);
     write_account_log(
         auth_log_path,
         "f-config",
@@ -1707,11 +1815,13 @@ async fn refresh_splatnet_tokens(
     account_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let proxy_address = current_proxy_address(&state.network_proxy)?;
     refresh_splatnet_tokens_for_account(
         &account_id,
         &state.registry,
         &state.auth_log_path,
         &state.sync_runtime,
+        proxy_address.as_deref(),
     )
     .await
     .map_err(|error| format_token_refresh_error(&error))?;
@@ -1739,6 +1849,7 @@ async fn sync_history(
         state.history_dir.clone(),
         state.auth_log_path.clone(),
         Arc::clone(&state.sync_runtime),
+        Arc::clone(&state.network_proxy),
         sync_schedule::SyncReason::Permission,
     )
     .await
@@ -2001,6 +2112,18 @@ pub fn run() {
                     AppPreferences::default()
                 }
             };
+            let saved_network_proxy =
+                match normalize_network_proxy_settings(preferences.network_proxy.clone()) {
+                    Ok(settings) => settings,
+                    Err(error) => {
+                        log_console_error(
+                            "network-proxy",
+                            &format!("已忽略无效的代理设置：{error}"),
+                        );
+                        NetworkProxySettings::default()
+                    }
+                };
+            let network_proxy = Arc::new(RwLock::new(saved_network_proxy));
 
             let main_window = app
                 .get_webview_window("main")
@@ -2051,11 +2174,17 @@ pub fn run() {
                 })
             };
             warm_up_history(history_dir.clone(), fact_account_ids);
-            let image_cache = match splat3_widget_core::images::ImageClient::new() {
+            let initial_proxy_address = network_proxy
+                .read()
+                .ok()
+                .and_then(|settings| settings.effective_address().map(ToOwned::to_owned));
+            let image_cache = match splat3_widget_core::images::ImageClient::with_proxy(
+                initial_proxy_address.as_deref(),
+            ) {
                 Ok(client) => {
                     let image_cache = Arc::new(image_cache::ImageCache {
                         dir: config_dir.join("image-cache"),
-                        client,
+                        client: RwLock::new(client),
                     });
                     tauri::async_runtime::spawn(image_cache::run_warm_up(
                         history_dir.clone(),
@@ -2083,6 +2212,7 @@ pub fn run() {
                 auth_log_path: config_dir.join("auth.log"),
                 history_dir: history_dir.clone(),
                 preferences_path: preferences_path.clone(),
+                network_proxy: Arc::clone(&network_proxy),
                 sync_runtime: Arc::clone(&sync_runtime),
                 sync_trigger: Arc::clone(&sync_trigger),
                 overlay_service: overlay_service.clone(),
@@ -2107,6 +2237,7 @@ pub fn run() {
                 config_dir.join("auth.log"),
                 sync_runtime,
                 sync_trigger,
+                network_proxy,
                 obs_activity,
             );
             app_update::start_background_checks(app.handle().clone());
@@ -2131,6 +2262,9 @@ pub fn run() {
             get_export_directory,
             get_log_directory,
             open_log_directory,
+            get_network_proxy_settings,
+            save_network_proxy_settings,
+            test_network_proxy,
             choose_export_directory,
             export_history,
             import_history,

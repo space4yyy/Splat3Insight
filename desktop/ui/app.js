@@ -36,7 +36,7 @@
     salmon: ['鲑鱼跑', '各期打工、评级、头目鲑鱼、特殊波次、个人贡献和击倒数量。'],
     log: ['对战记录', '所有对局，点一行查看详情。'],
     obs: ['其他工具', '直播用的 OBS 数据卡片等附加工具。'],
-    settings: ['设置', '账号和开机启动。'],
+    settings: ['设置', '账号、网络代理、日志目录和开机启动。'],
   };
   const VIEW_KEY = 'splat3-view';
   const OBS_SELECTION_KEY = 'splat3-obs-card-selection';
@@ -197,9 +197,11 @@
   // 开机启动：开关的状态以系统登录项为准，每次打开设置页时重新读取。
   const autostartToggle = $('#autostart');
   const settingsMessage = $('#settings-message');
-  function setSettingsMessage(text) {
+  function setSettingsMessage(text, error = Boolean(text)) {
     settingsMessage.textContent = text;
     settingsMessage.hidden = !text;
+    settingsMessage.classList.toggle('is-error', Boolean(text) && error);
+    settingsMessage.classList.toggle('is-success', Boolean(text) && !error);
   }
   async function refreshAutostart() {
     try {
@@ -273,6 +275,114 @@
       setSettingsMessage(`打开日志目录失败：${String(error)}`);
     } finally {
       openLogDirectoryButton.disabled = !logDirectoryPath;
+    }
+  });
+
+  // 网络代理：弹窗编辑，保存后更新 Rust 网络客户端和本地设置。
+  const proxyDialog = $('#proxy-dialog');
+  const proxyEnabled = $('#proxy-enabled');
+  const proxyAddress = $('#proxy-address');
+  const proxySummary = $('#network-proxy-summary');
+  const proxySettingsButton = $('#proxy-settings-button');
+  const proxyTestButton = $('#proxy-test-button');
+  const proxySaveButton = $('#proxy-save-button');
+  const proxyDialogStatus = $('#proxy-dialog-status');
+  let proxyBusy = false;
+
+  function renderProxySummary(settings) {
+    proxySummary.textContent = settings.enabled
+      ? `已启用 · ${settings.address}`
+      : '未启用自定义代理';
+  }
+
+  function setProxyDialogStatus(text, kind = '') {
+    proxyDialogStatus.textContent = text;
+    proxyDialogStatus.hidden = !text;
+    proxyDialogStatus.classList.toggle('is-error', kind === 'error');
+    proxyDialogStatus.classList.toggle('is-success', kind === 'success');
+  }
+
+  function updateProxyFormState() {
+    proxyAddress.disabled = proxyBusy || !proxyEnabled.checked;
+    proxyAddress.required = proxyEnabled.checked;
+    proxyEnabled.disabled = proxyBusy;
+    proxyTestButton.disabled = proxyBusy || !proxyEnabled.checked || !proxyAddress.value.trim();
+    proxySaveButton.disabled = proxyBusy;
+    $('#proxy-dialog-cancel').disabled = proxyBusy;
+  }
+
+  async function refreshNetworkProxySettings() {
+    proxySettingsButton.disabled = true;
+    try {
+      renderProxySummary(await invoke('get_network_proxy_settings'));
+    } catch (error) {
+      proxySummary.textContent = '读取失败';
+      setSettingsMessage(`读取网络代理设置失败：${String(error)}`);
+    } finally {
+      proxySettingsButton.disabled = false;
+    }
+  }
+
+  proxySettingsButton.addEventListener('click', async () => {
+    proxySettingsButton.disabled = true;
+    setSettingsMessage('');
+    setProxyDialogStatus('');
+    try {
+      const settings = await invoke('get_network_proxy_settings');
+      proxyEnabled.checked = settings.enabled;
+      proxyAddress.value = settings.address;
+      updateProxyFormState();
+      proxyDialog.showModal();
+      proxyDialog.focus({ preventScroll: true });
+    } catch (error) {
+      setSettingsMessage(`读取网络代理设置失败：${String(error)}`);
+    } finally {
+      proxySettingsButton.disabled = false;
+    }
+  });
+
+  proxyEnabled.addEventListener('change', updateProxyFormState);
+  proxyAddress.addEventListener('input', updateProxyFormState);
+  $('#proxy-dialog-cancel').addEventListener('click', () => proxyDialog.close());
+  proxyDialog.addEventListener('click', (event) => {
+    if (event.target === proxyDialog && !proxyBusy) proxyDialog.close();
+  });
+
+  proxyTestButton.addEventListener('click', async () => {
+    if (!proxyAddress.reportValidity()) return;
+    proxyBusy = true;
+    updateProxyFormState();
+    setProxyDialogStatus('正在检测代理端口…');
+    try {
+      const result = await invoke('test_network_proxy', {
+        settings: { enabled: true, address: proxyAddress.value },
+      });
+      setProxyDialogStatus(result, 'success');
+    } catch (error) {
+      setProxyDialogStatus(String(error), 'error');
+    } finally {
+      proxyBusy = false;
+      updateProxyFormState();
+    }
+  });
+
+  proxySaveButton.addEventListener('click', async () => {
+    if (proxyEnabled.checked && !proxyAddress.reportValidity()) return;
+    proxyBusy = true;
+    updateProxyFormState();
+    setProxyDialogStatus('正在保存…');
+    try {
+      const settings = await invoke('save_network_proxy_settings', {
+        settings: { enabled: proxyEnabled.checked, address: proxyAddress.value },
+      });
+      renderProxySummary(settings);
+      proxyDialog.close();
+      setSettingsMessage('网络代理设置已保存。', false);
+    } catch (error) {
+      setProxyDialogStatus(String(error), 'error');
+    } finally {
+      proxyBusy = false;
+      updateProxyFormState();
     }
   });
 
@@ -356,6 +466,7 @@
       refreshAutostart();
       refreshExportDirectory();
       refreshLogDirectory();
+      refreshNetworkProxySettings();
       refreshAccounts().catch((error) => setMessage(String(error), true));
     }
     if (previous !== view) window.scrollTo(0, scrollPositions[view] ?? 0);
