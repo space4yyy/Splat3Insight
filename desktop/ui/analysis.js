@@ -9,7 +9,7 @@
   const { WATER } = window.Splat3DashboardData;
   const {
     el, fmtDateTime, fmtDate, fmtShortDate, fmtSince, count, pct, fixed, signed,
-    MODE, RULE_LABEL, COOP_RULE_LABEL, modeColor, emptyState, clickableRow,
+    MODE, RULE_LABEL, COOP_RULE_LABEL, modeColor, emptyState, clickableRow, shiftResult,
     svgEl, svgText, niceScale, columnPath, renderTable, textOn, divergingColor, showTip, hideTip, bindTip,
   } = dashboard.ui;
   let COLOR = dashboard.ui.colors();
@@ -825,7 +825,6 @@
   }
 
   // ---------- 鲑鱼跑 ----------
-  const shiftResult = (shift) => (shift.cleared ? '通关' : `第 ${shift.failedWave ?? '?'} 波失败`);
   const gradeText = (name, point) => `${name} ${point ?? ''}`.trim();
   function renderGradeChart(list, start, end) {
     const box = $('grade-chart');
@@ -1014,7 +1013,7 @@
         ]),
         suppliedCell(group.supplied),
         String(group.n),
-        pct(group.cleared / group.n, 0),
+        pct(group.clear, 0),
         group.grade ? gradeText(group.grade.name, group.grade.point) : '—',
         group.king ? el('span', { class: 'icon-name', title: `${group.king.name ?? '头目鲑鱼'} · 击倒 ${group.king.defeated} / 出现 ${group.king.appeared}` }, [
           group.king.image

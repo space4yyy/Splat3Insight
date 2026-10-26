@@ -301,6 +301,21 @@ test('the tide × event matrix keeps plain waves first and orders events by freq
   assert.equal(fog.rate, 0.5);
 });
 
+test('disconnected shifts count as played but stay out of clear rates and wave totals', () => {
+  const wave = (water, cleared) => ({ water, event: null, cleared });
+  const list = [
+    shift({ t: 1 * HOUR, waves: [wave('普通', true)] }),
+    shift({ t: 2 * HOUR, cleared: false, waves: [wave('普通', false)] }),
+    shift({ t: 3 * HOUR, cleared: false, disconnected: true, waves: [wave('满潮', false)] }),
+  ];
+  const matrix = analysis.tideEventMatrix(list);
+  assert.equal(matrix.total, 2);
+  assert.equal(matrix.average, 1 / 2);
+  const [group] = analysis.rotationGroups(list, 4 * HOUR);
+  assert.equal(group.n, 3);
+  assert.equal(group.clear, 1 / 2);
+});
+
 test('rotations group by their window, fall back to stage and weapons, and list the newest first', () => {
   const supplied = [{ name: '斯普拉射击枪' }];
   const groups = analysis.rotationGroups([
@@ -316,7 +331,7 @@ test('rotations group by their window, fall back to stage and weapons, and list 
   deepEqual(groups.map((group) => group.n), [1, 2, 2, 1]);
   const regular = groups[2];
   assert.equal(regular.start, 0);
-  assert.equal(regular.cleared, 1);
+  assert.equal(regular.clear, 1 / 2);
   assert.equal(regular.ongoing, true);
   deepEqual(regular.king, { name: '横纲', image: 'images/boss1_color.png', appeared: 1, defeated: 1 });
   deepEqual(regular.scales, { gold: 1, silver: 0, bronze: 2 });

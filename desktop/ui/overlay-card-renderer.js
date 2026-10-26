@@ -303,9 +303,10 @@
   }
 
   function fillSalmonTotals(scope, fields, data) {
-    showNumber(fields['gold-scale'], `x${displayNumber(data.gold_scale)}`);
-    showNumber(fields['silver-scale'], `x${displayNumber(data.silver_scale)}`);
-    showNumber(fields['bronze-scale'], `x${displayNumber(data.bronze_scale)}`);
+    // 这一期工还没拿到鳞片时记作 0。
+    showNumber(fields['gold-scale'], `x${displayNumber(data.gold_scale ?? 0)}`);
+    showNumber(fields['silver-scale'], `x${displayNumber(data.silver_scale ?? 0)}`);
+    showNumber(fields['bronze-scale'], `x${displayNumber(data.bronze_scale ?? 0)}`);
     showNumber(fields['total-count'], isNumber(data.clear_count) && isNumber(data.failure_count)
       ? `x${displayNumber(Number(data.clear_count) + Number(data.failure_count))}`
       : '—');

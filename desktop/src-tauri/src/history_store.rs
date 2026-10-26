@@ -563,8 +563,10 @@ fn load_salmon_run_card(
     let mut boss_undefeated_count = 0;
 
     let mut accumulate_record = |record: &Value, raw: &Value| {
+        // 掉线（resultWave 为 -1）没有结果，和无效对战一样不算进场次。
+        let disconnected = record.get("result_wave").and_then(Value::as_i64) == Some(-1);
         let clear_waves = record.get("clear_waves").and_then(Value::as_i64);
-        if let Some(clear_waves) = clear_waves {
+        if let Some(clear_waves) = clear_waves.filter(|_| !disconnected) {
             if clear_waves >= 3 {
                 clear_count += 1;
             } else {
@@ -3103,6 +3105,13 @@ mod tests {
         earlier_failure.record.clear_waves = Some(2);
         earlier_failure.raw = json!({ "scale": { "gold": 0, "silver": 4, "bronze": 7 } });
 
+        // 掉线的场次 resultWave 为 -1，解析后 clear_waves 是 -2，不算通关也不算失败。
+        let mut disconnected = sample_coop("coop-disconnected", "2026-09-21T23:00:00Z".to_owned());
+        disconnected.record.stage = Some("Gone Fission Hydroplant".to_owned());
+        disconnected.record.result_wave = Some(-1);
+        disconnected.record.clear_waves = Some(-2);
+        disconnected.raw = json!({ "resultWave": -1, "waveResults": [], "scale": null });
+
         let mut rotation_boundary =
             sample_coop("coop-next-stage", "2026-09-21T00:00:00Z".to_owned());
         rotation_boundary.record.stage = Some("Sockeye Station".to_owned());
@@ -3117,6 +3126,7 @@ mod tests {
             latest,
             earlier_clear,
             earlier_failure,
+            disconnected,
             rotation_boundary,
             outside_rotation,
         ];

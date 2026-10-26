@@ -4,7 +4,7 @@
   // 分析页（对战、武器、场地、鲑鱼跑）的纯函数：把整理好的记录汇总成图表用的数据，不碰页面。
   // 输入是 Splat3DashboardData 整理后的对战和打工记录，按时间从早到晚排列。
   const data = window.Splat3DashboardData;
-  const { summarize, average, isNum, WATER } = data;
+  const { summarize, clearRate, average, isNum, WATER } = data;
   const RANKED_RULES = ['AREA', 'LOFT', 'GOAL', 'CLAM'];
   const RULE_ORDER = [...RANKED_RULES, 'TURF_WAR', 'TRI_COLOR'];
   const MODE_ORDER = ['x', 'anarchy', 'event', 'regular', 'private', 'other'];
@@ -335,8 +335,9 @@
   }
 
   // 潮位 × 特殊波次（不含头目鲑鱼那一波）：每格的波次数和通关率；average 是全部波次的通关率。
+  // 掉线的场次没有结果，波次不算进去。
   function tideEventMatrix(shifts) {
-    const waves = shifts.flatMap((shift) => shift.waves).filter((wave) => WATER.includes(wave.water));
+    const waves = shifts.filter((shift) => !shift.disconnected).flatMap((shift) => shift.waves).filter((wave) => WATER.includes(wave.water));
     const counts = new Map();
     for (const wave of waves) if (wave.event) counts.set(wave.event, (counts.get(wave.event) || 0) + 1);
     const events = [null, ...[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([event]) => event)];
@@ -391,7 +392,7 @@
           rule: lastShift.rule,
           supplied: lastShift.supplied || [],
           n: list.length,
-          cleared: list.filter((shift) => shift.cleared).length,
+          clear: clearRate(list),
           avgGoldenEggs: average(list, (shift) => shift.goldenEggs),
           king: appeared.length ? { name: lastWith(appeared, 'kingName'), image: KING_IMAGES[lastWith(appeared, 'kingId')] ?? null, appeared: appeared.length, defeated: appeared.filter((shift) => shift.kingDefeated).length } : null,
           scales: scaleTotals(list),

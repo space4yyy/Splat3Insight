@@ -6,7 +6,7 @@
   const dashboard = window.Splat3Dashboard;
   const data = window.Splat3DashboardData;
   const detail = window.Splat3RecordDetail;
-  const { el, fmtDateTime, count, pct, fixed, RULE_LABEL, ruleLabel, modeLabelOf, modeColor, powerNode, emptyState, clickableRow } = dashboard.ui;
+  const { el, fmtDateTime, count, pct, fixed, RULE_LABEL, ruleLabel, modeLabelOf, modeColor, powerNode, emptyState, clickableRow, salmonChip, shiftChip } = dashboard.ui;
   const invoke = (...args) => window.__TAURI__.core.invoke(...args);
 
   const pad2 = (value) => String(value).padStart(2, '0');
@@ -18,7 +18,6 @@
   const dangerPercent = (rate) => (rate == null ? null : Math.round(rate < 10 ? rate * 100 : rate));
   const chip = (ok, text) => el('span', { class: `chip ${ok ? 'win' : 'lose'}`, text });
   const battleChip = (battle) => (battle.win ? chip(true, '胜') : battle.lose ? chip(false, '负') : el('span', { class: 'chip other', text: '—' }));
-  const shiftChip = (shift) => chip(shift.cleared, shift.cleared ? '通关' : `第 ${shift.failedWave ?? '?'} 波`);
   const swatch = (color) => el('span', { class: 'swatch', style: `background:${color}` });
 
   // 图片走桌面端的本地缓存：splat3img://localhost/<路径>?src=<原链接>（Windows 上是 http://splat3img.localhost/）。
@@ -120,10 +119,9 @@
     const stat = (value, label) => el('span', {}, [el('strong', { class: 'font-number', text: value }), document.createTextNode(` ${label}`)]);
     const box = document.getElementById('log-summary');
     if (state.salmon) {
-      const cleared = state.rows.filter((shift) => shift.cleared).length;
       box.replaceChildren(
         stat(`${state.rows.length} 场`, '打工'),
-        stat(pct(state.rows.length ? cleared / state.rows.length : null, 0), '通关率'),
+        stat(pct(data.clearRate(state.rows), 0), '通关率'),
         stat(fixed(data.average(state.rows, (shift) => shift.goldenEggs)), '场均金鲑鱼卵'),
       );
       return;
@@ -399,10 +397,10 @@
       wave.specials.length ? el('span', { class: 'weapon-icons' }, wave.specials.map((special) => img(special.image, 'kit-icon', special.name))) : '—',
       count(wave.quota),
       count(wave.delivered),
-      chip(wave.cleared, wave.cleared ? '通过' : '失败'),
+      salmonChip(wave.cleared, wave.cleared ? '通过' : '失败'),
     ]);
     if (shift.boss) {
-      waveRows.push(['EX', '—', iconWithName(shift.boss.image, shift.boss.name ?? '头目鲑鱼', 'enemy-icon'), '—', '—', '—', chip(shift.boss.defeated, shift.boss.defeated ? '击倒' : '未击倒')]);
+      waveRows.push(['EX', '—', iconWithName(shift.boss.image, shift.boss.name ?? '头目鲑鱼', 'enemy-icon'), '—', '—', '—', salmonChip(shift.boss.defeated, shift.boss.defeated ? '击倒' : '未击倒')]);
     }
     const golden = (member) => (member.goldenEggs == null ? '—' : member.goldenAssists ? `${member.goldenEggs} (+${member.goldenAssists})` : String(member.goldenEggs));
     return [

@@ -28,7 +28,7 @@ function setup(savedSize = null) {
 }
 const groups = (n) => Array.from({ length: n }, (_, i) => ({
   start: 1000 - i, end: 1001 - i, rule: 'REGULAR', stage: `场地 ${i}`, ongoing: i === 0,
-  supplied: [], n: 1, cleared: 1, scales: {}, avgGoldenEggs: 25, grade: { name: '传说', point: 200 },
+  supplied: [], n: 1, clear: 1, scales: {}, avgGoldenEggs: 25, grade: { name: '传说', point: 200 },
 }));
 
 test('rotations page through all groups, reset scroll and reset when the source changes', () => {

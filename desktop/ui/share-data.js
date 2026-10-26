@@ -223,8 +223,9 @@
       .filter((row) => row[2] >= 3)
       .sort((a, b) => b[2] - a[2])
       .slice(0, 4);
+    // 最拿手的场地只看有结果的打工，掉线的场次和无效对战一样不算。
     const stages = new Map();
-    for (const row of list) {
+    for (const row of list.filter((shift) => !shift.disconnected)) {
       const stage = stages.get(row.stage) || { stage: row.stage, n: 0, cleared: 0 };
       stage.n += 1;
       stage.cleared += Number(row.cleared);
@@ -238,7 +239,7 @@
       n: list.length,
       hero: {
         shifts: list.length,
-        clearRate: list.length ? 100 * list.filter((row) => row.cleared).length / list.length : null,
+        clearRate: percent(dashboard.clearRate(list)),
         golden: total(list, 'goldenEggs'),
         bosses: total(list, 'defeated'),
       },

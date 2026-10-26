@@ -121,6 +121,13 @@ test('stage highlights require three decided battles or three shifts, even with 
   assert.equal(ranked([battle(start), battle(start + 1), battle(start + 2)]).highlights[2][1], '鳗鲶区');
   assert.equal(salmon([shift(start), shift(start + 1)]).highlights[2][1], '—');
   assert.equal(salmon([shift(start), shift(start + 1), shift(start + 2)]).highlights[2][1], '鲑坝');
+  assert.equal(salmon([shift(start), shift(start + 1), shift(start + 2, { cleared: false, disconnected: true })]).highlights[2][1], '—');
+});
+
+test('disconnected shifts count as played but not in the clear rate', () => {
+  const summary = salmon([shift(start), shift(start + 1, { cleared: false }), shift(start + 2, { cleared: false, disconnected: true })]);
+  assert.equal(summary.hero.shifts, 3);
+  assert.equal(summary.hero.clearRate, 50);
 });
 
 test('grade baseline is the latest graded record before the period, danger converts per record', () => {

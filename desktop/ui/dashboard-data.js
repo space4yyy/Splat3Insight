@@ -87,11 +87,13 @@
   }
 
   // 打工时长没有原始数据，按波次估算：开场 60 秒，每波 100 秒，头目鲑鱼再加 100 秒。
+  // resultWave 为 -1 是掉线：没有失败的波次，没有波次记录时只算开场。
   function normalizeShift(row, names, link = ownLinks) {
     const waves = (row.waves || [])
       .filter((wave) => !wave.boss_wave)
       .map((wave) => ({ water: WATER[wave.water_level] ?? '未知潮位', cleared: wave.cleared === true, event: gameName('events', wave.event_wave) }));
-    const playedWaves = waves.length || (row.cleared ? 3 : isNum(row.result_wave) ? row.result_wave : 1);
+    const disconnected = row.result_wave === -1;
+    const playedWaves = waves.length || (row.cleared ? 3 : disconnected ? 0 : isNum(row.result_wave) ? row.result_wave : 1);
     const kingAppeared = row.boss_appeared === true;
     return {
       id: row.id,
@@ -99,7 +101,8 @@
       rule: row.rule || null,
       stage: nameOf(names?.coopStages, row.stage_id, row.stage_name, 'coopStages') || '未知场地',
       cleared: row.cleared === true,
-      failedWave: row.cleared === false && isNum(row.result_wave) ? row.result_wave : null,
+      disconnected,
+      failedWave: row.cleared === false && !disconnected && isNum(row.result_wave) ? row.result_wave : null,
       waves,
       kingAppeared,
       kingDefeated: row.boss_defeated === true,
@@ -233,6 +236,12 @@
     };
   }
 
+  // 通关率只算有结果的打工：掉线的场次和无效对战一样不算进去。
+  function clearRate(shifts) {
+    const decided = shifts.filter((shift) => !shift.disconnected);
+    return decided.length ? decided.filter((shift) => shift.cleared).length / decided.length : null;
+  }
+
   // 对战记录页：页面内筛选（"all" 表示不限），按列排序（空值排在最后），每页 20 条。
   const LOG_PAGE_SIZE = 20;
   function filterRecords(rows, filters, salmon) {
@@ -240,7 +249,7 @@
     return rows.filter((item) => {
       if (!pass('stage', item.stage)) return false;
       if (filters?.result === 'win' && !(salmon ? item.cleared : item.win)) return false;
-      if (filters?.result === 'lose' && !(salmon ? !item.cleared : item.lose)) return false;
+      if (filters?.result === 'lose' && !(salmon ? !item.cleared && !item.disconnected : item.lose)) return false;
       if (salmon) return true;
       return pass('rule', item.rule) && pass('weapon', item.weapon);
     });
@@ -279,6 +288,7 @@
     gameName,
     seasonStart,
     summarize,
+    clearRate,
     average,
     LOG_PAGE_SIZE,
     filterRecords,

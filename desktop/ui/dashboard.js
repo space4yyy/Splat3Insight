@@ -31,7 +31,7 @@
   const MODE = Object.fromEntries(MODES.map((mode) => [mode.key, mode]));
   const modeColor = (key) => COLOR.modes[key] || COLOR.context;
   const data = window.Splat3DashboardData;
-  const { WATER, isNum, round1, seasonStart, summarize, average } = data;
+  const { WATER, isNum, round1, seasonStart, summarize, clearRate, average } = data;
   const RANKED_RULES = ['AREA', 'LOFT', 'GOAL', 'CLAM'];
   const RULE_LABEL = { AREA: '真格区域', LOFT: '真格塔楼', GOAL: '真格鱼虎', CLAM: '真格蛤蜊', TURF_WAR: '占地对战' };
   const RULE_SHORT = { AREA: '区域', LOFT: '塔楼', GOAL: '鱼虎', CLAM: '蛤蜊' };
@@ -318,7 +318,7 @@
           n: list.length,
           cleared,
           seconds: list.reduce((sum, shift) => sum + shift.duration, 0),
-          clear: list.length ? cleared / list.length : null,
+          clear: clearRate(list),
           eggs: average(list, (shift) => shift.goldenEggs),
         };
       };
@@ -463,7 +463,7 @@
     const word = salmon ? { rate: '通关率', win: '通关', lose: '失败' } : { rate: '胜率', win: '胜', lose: '负' };
     document.getElementById('form-sub').textContent = salmon ? '最近 20 场打工结果与 20 场滚动通关率' : '最近 20 场结果与 20 场滚动胜率';
     const list = salmon
-      ? shiftsIn(start, end).map((shift) => ({ t: shift.t, win: shift.cleared, shift }))
+      ? shiftsIn(start, end).filter((shift) => !shift.disconnected).map((shift) => ({ t: shift.t, win: shift.cleared, shift }))
       : battlesIn(start, end).filter((battle) => battle.win || battle.lose);
     const lastTwenty = list.slice(-20);
     strip.textContent = '';
@@ -471,9 +471,9 @@
       const item = lastTwenty[index - (20 - lastTwenty.length)];
       if (!item) { strip.append(el('div', { class: 'form-cell none', 'aria-hidden': 'true' })); continue; }
       const label = salmon ? (item.win ? '通' : `W${item.shift.failedWave ?? '?'}`) : (item.win ? '胜' : '负');
-      const cell = el('div', { class: `form-cell ${item.win ? 'win' : 'lose'}`, tabindex: '0', 'aria-label': `${fmtDateTime(item.t)} ${item.win ? word.win : word.lose}`, text: label });
+      const cell = el('div', { class: `form-cell ${item.win ? 'win' : 'lose'}`, tabindex: '0', 'aria-label': `${fmtDateTime(item.t)} ${salmon ? shiftResult(item.shift) : item.win ? word.win : word.lose}`, text: label });
       bindTip(cell, () => [fmtDateTime(item.t), salmon ? [
-        { value: item.win ? '通关' : `第 ${item.shift.failedWave ?? '?'} 波失败`, label: item.shift.stage, color: COLOR.salmon, box: true },
+        { value: shiftResult(item.shift), label: item.shift.stage, color: COLOR.salmon, box: true },
         { value: `${count(item.shift.goldenEggs)} 个`, label: '金鲑鱼卵' },
         { value: `${count(item.shift.rescues)} / ${count(item.shift.rescued)}`, label: '救援 / 被救' },
       ] : [
@@ -733,7 +733,7 @@
     const rateWord = salmon ? '通关率' : '胜率';
     document.querySelector('#heat-metric [data-metric="winrate"]').textContent = rateWord;
     const list = salmon
-      ? shiftsIn(start, end).map((shift) => ({ t: shift.t, win: shift.cleared, decided: true }))
+      ? shiftsIn(start, end).map((shift) => ({ t: shift.t, win: shift.cleared, decided: !shift.disconnected }))
       : battlesIn(start, end).map((battle) => ({ t: battle.t, win: battle.win, decided: battle.win || battle.lose }));
     const cells = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => ({ n: 0, decided: 0, wins: 0 })));
     for (const item of list) {
@@ -879,7 +879,6 @@
     const list = shiftsIn(start, end);
     const graded = shifts.filter((shift) => shift.gradeName);
     const lastGraded = graded[graded.length - 1];
-    const clearedCount = list.filter((shift) => shift.cleared).length;
     const kingAppeared = list.filter((shift) => shift.kingAppeared).length;
     const kingDefeated = list.filter((shift) => shift.kingDefeated).length;
     const rescues = average(list, (shift) => shift.rescues);
@@ -888,7 +887,7 @@
     const items = [
       ['评级', lastGraded ? `${lastGraded.gradeName} ${lastGraded.gradePoint ?? ''}`.trim() : '—'],
       ['打工场次', [String(list.length), el('small', { text: ' 场' })]],
-      ['通关率', list.length ? pct(clearedCount / list.length, 0) : '—'],
+      ['通关率', pct(clearRate(list), 0)],
       ['场均金鲑鱼卵', fixed(average(list, (shift) => shift.goldenEggs))],
       ['场均救援 / 被救', rescues == null && rescued == null ? '—' : `${fixed(rescues)} / ${fixed(rescued)}`],
       ['头目鲑鱼击倒', kingAppeared ? `${kingDefeated} / ${kingAppeared}` : '—'],
@@ -896,7 +895,7 @@
     for (const [label, value] of items) stats.append(el('div', { class: 'mini-stat' }, [el('span', { text: label }), el('strong', { class: value === '—' ? 'placeholder' : '' }, value)]));
 
     const waves = WATER.map((water) => {
-      const attempted = list.flatMap((shift) => shift.waves).filter((wave) => wave.water === water);
+      const attempted = list.filter((shift) => !shift.disconnected).flatMap((shift) => shift.waves).filter((wave) => wave.water === water);
       const cleared = attempted.filter((wave) => wave.cleared).length;
       return { water, attempted: attempted.length, cleared, rate: attempted.length ? cleared / attempted.length : null };
     });
@@ -961,6 +960,12 @@
     if (battle.lose) return el('span', { class: 'chip lose', text: '负' });
     return el('span', { class: 'chip other', text: '—' });
   }
+  // 打工的结果：通关，或者失败的那一波；掉线没有结果，和无效对战一样用灰色。
+  const salmonChip = (ok, text) => el('span', { class: `chip ${ok ? 'clear' : 'fail'}`, text });
+  const shiftResult = (shift) => (shift.cleared ? '通关' : shift.disconnected ? '掉线' : `第 ${shift.failedWave ?? '?'} 波失败`);
+  const shiftChip = (shift) => (shift.disconnected
+    ? el('span', { class: 'chip other', text: '掉线' })
+    : salmonChip(shift.cleared, shift.cleared ? '通关' : `第 ${shift.failedWave ?? '?'} 波`));
 
   function renderRecent() {
     const box = document.getElementById('recent-table');
@@ -978,7 +983,7 @@
       renderTable(box, [{ label: '时间', number: true }, { label: '场地' }, { label: '结果' }, { label: '金鲑鱼卵', num: true }, { label: '救援 / 被救', num: true }, { label: '头目鲑鱼' }, { label: '评级', num: true }], recentShifts.map((shift) => [
         fmtDateTime(shift.t),
         shift.stage,
-        el('span', { class: `chip ${shift.cleared ? 'win' : 'lose'}`, text: shift.cleared ? '通关' : `第 ${shift.failedWave ?? '?'} 波` }),
+        shiftChip(shift),
         count(shift.goldenEggs),
         `${count(shift.rescues)} / ${count(shift.rescued)}`,
         shift.kingAppeared ? (shift.kingDefeated ? '已击倒' : '未击倒') : '—',
@@ -1171,6 +1176,7 @@
     ui: Object.freeze({
       el, fmtDateTime, fmtDate, fmtShortDate, fmtSince, count, pct, fixed, signed, deltaNode,
       MODE, MODES, RULE_LABEL, RANKED_RULES, COOP_RULE_LABEL, ruleLabel, modeLabelOf, modeColor, powerNode, emptyState, clickableRow,
+      salmonChip, shiftChip, shiftResult,
       svgEl, svgText, niceScale, columnPath, renderTable, textOn, divergingColor, showTip, hideTip, bindTip,
       colors: () => COLOR,
     }),

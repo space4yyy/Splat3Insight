@@ -107,6 +107,18 @@ test('shift playtime is estimated from the waves played and the king wave', () =
   assert.equal(shift.kingDefeated, false);
 });
 
+test('a disconnected shift (resultWave -1) has no failed wave and only counts the opening', () => {
+  const shift = data.normalizeShift({ id: 's2', played_at_ms: 1, cleared: false, result_wave: -1, waves: [] });
+  assert.equal(shift.cleared, false);
+  assert.equal(shift.disconnected, true);
+  assert.equal(shift.failedWave, null);
+  assert.equal(shift.duration, 60);
+  const failed = data.normalizeShift({ id: 's3', played_at_ms: 1, cleared: false, result_wave: 2, waves: [] });
+  assert.equal(failed.disconnected, false);
+  assert.equal(failed.failedWave, 2);
+  assert.equal(failed.duration, 60 + 2 * 100);
+});
+
 test('names follow the game text and unknown names stay unchanged', () => {
   assert.equal(data.gameName('stages', '魚露遺跡'), '鱼露遗迹');
   assert.equal(data.gameName('stages', "Um'ami Ruins"), '鱼露遗迹');
@@ -249,8 +261,11 @@ test('record log filters, sorts with blanks last, and pages by 20', () => {
   assert.deepEqual(ids(data.filterRecords(rows, { rule: 'AREA', stage: 'all', weapon: 'all', result: 'all' }, false)), ['a', 'c']);
   assert.deepEqual(ids(data.filterRecords(rows, { result: 'lose' }, false)), ['b']);
   assert.deepEqual(ids(data.filterRecords(rows, { result: 'win', stage: '鲑坝' }, false)), ['a']);
-  const shifts = [{ id: 's1', t: 1, stage: '鲑坝', cleared: true }, { id: 's2', t: 2, stage: '鲑坝', cleared: false }];
+  const shifts = [{ id: 's1', t: 1, stage: '鲑坝', cleared: true }, { id: 's2', t: 2, stage: '鲑坝', cleared: false }, { id: 's3', t: 3, stage: '鲑坝', cleared: false, disconnected: true }];
   assert.deepEqual(ids(data.filterRecords(shifts, { result: 'lose', rule: 'AREA' }, true)), ['s2']);
+  assert.deepEqual(ids(data.filterRecords(shifts, { result: 'all' }, true)), ['s1', 's2', 's3']);
+  assert.equal(data.clearRate(shifts), 1 / 2);
+  assert.equal(data.clearRate([shifts[2]]), null);
 
   assert.deepEqual(ids(data.sortRecords(rows, { key: 't', dir: 'desc' })), ['c', 'b', 'a']);
   assert.deepEqual(ids(data.sortRecords(rows, { key: 'kills', dir: 'desc' })), ['c', 'a', 'b']);

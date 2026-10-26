@@ -34,6 +34,7 @@
   --mode-private: #a51ee1;
   --mode-salmon: #ff5033;
   --salmon-green: #00f82d;
+  --on-salmon: #171716;
   --good: #0ca30c;
   --danger-text: #ff668a;
   --danger-solid: #c8254a;
@@ -331,6 +332,9 @@ table.data .num { text-align: right; }
 .chip.win { background: var(--win); color: var(--on-win); }
 .chip.lose { background: var(--lose); color: var(--on-lose); }
 .chip.other { background: var(--seq-0); color: var(--ink-2); }
+/* 打工的结果用打工色：通关绿、未通关橙。 */
+.chip.clear { background: var(--salmon-green); color: var(--on-salmon); }
+.chip.fail { background: var(--mode-salmon); color: var(--on-salmon); }
 .rule-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
 .rule-tab { display: inline-flex; align-items: baseline; gap: 8px; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: transparent; color: var(--ink-2); cursor: pointer; transition: border-color .14s ease, background-color .14s ease, color .14s ease, transform .1s ease; }
 .rule-tab:active { transform: scale(.98); }
