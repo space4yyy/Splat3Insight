@@ -26,7 +26,7 @@ impl std::fmt::Display for NintendoIdentityError {
             Self::SessionTokenRejected => {
                 write!(
                     formatter,
-                    "已保存的 Nintendo session token 已失效，请重新添加账号"
+                    "已保存的 Nintendo session token 已失效，请重新登录"
                 )
             }
             Self::HttpStatus(status) => write!(

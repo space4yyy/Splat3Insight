@@ -27,6 +27,12 @@ pub struct AccountMetadata {
     pub country: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub splatnet_ready: Option<bool>,
+    /// The saved Nintendo login no longer works (Nintendo rejected the session
+    /// token, or it is gone from the credential store), so retrying with it
+    /// cannot succeed. Signing in to the same Nintendo account again replaces
+    /// the credential in place and clears this.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub login_expired: bool,
     pub created_at_ms: i64,
     pub last_used_at_ms: i64,
 }
@@ -237,6 +243,26 @@ impl<S: SecretStore> AccountRegistry<S> {
     }
 
     pub fn set_splatnet_ready(&mut self, account_id: &str, ready: bool) -> Result<(), String> {
+        self.update_account(account_id, |account| account.splatnet_ready = Some(ready))
+    }
+
+    /// Records that the saved Nintendo login no longer works. The account and
+    /// its history stay; it needs a new Nintendo login before SplatNet can be
+    /// authorized again.
+    pub fn mark_login_expired(&mut self, account_id: &str) -> Result<(), String> {
+        self.update_account(account_id, |account| {
+            account.login_expired = true;
+            account.splatnet_ready = Some(false);
+        })
+    }
+
+    /// Changes one account's metadata and persists it. Nothing is written when
+    /// the change is a no-op, and the change is undone if writing fails.
+    fn update_account(
+        &mut self,
+        account_id: &str,
+        update: impl FnOnce(&mut AccountMetadata),
+    ) -> Result<(), String> {
         let Some(account) = self
             .file
             .accounts
@@ -245,11 +271,11 @@ impl<S: SecretStore> AccountRegistry<S> {
         else {
             return Err(format!("unknown account: {account_id}"));
         };
-        let previous = account.splatnet_ready;
-        if previous == Some(ready) {
+        let previous = account.clone();
+        update(account);
+        if *account == previous {
             return Ok(());
         }
-        account.splatnet_ready = Some(ready);
         if let Err(error) = self.persist() {
             if let Some(account) = self
                 .file
@@ -257,7 +283,7 @@ impl<S: SecretStore> AccountRegistry<S> {
                 .iter_mut()
                 .find(|account| account.account_id == account_id)
             {
-                account.splatnet_ready = previous;
+                *account = previous;
             }
             return Err(error);
         }
@@ -421,6 +447,7 @@ mod tests {
             language: Some("zh-CN".to_owned()),
             country: Some("JP".to_owned()),
             splatnet_ready: None,
+            login_expired: false,
             created_at_ms: 1,
             last_used_at_ms: 1,
         }
@@ -524,6 +551,32 @@ mod tests {
         let account: AccountMetadata = serde_json::from_str(encoded).unwrap();
 
         assert_eq!(account.splatnet_ready, None);
+        assert!(!account.login_expired);
+    }
+
+    #[test]
+    fn expired_login_is_kept_until_the_same_account_signs_in_again() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("accounts.json");
+        let mut registry = AccountRegistry::load(&path, MemorySecretStore::default()).unwrap();
+        registry
+            .upsert(metadata("a", "Alice"), secret("old"))
+            .unwrap();
+        assert!(!fs::read_to_string(&path).unwrap().contains("login_expired"));
+
+        registry.mark_login_expired("a").unwrap();
+        let reopened = AccountRegistry::load(&path, MemorySecretStore::default()).unwrap();
+        assert!(reopened.accounts()[0].login_expired);
+        assert_eq!(reopened.accounts()[0].splatnet_ready, Some(false));
+        assert!(registry.mark_login_expired("missing").is_err());
+
+        // Signing in again replaces the credential of the same account.
+        registry
+            .upsert(metadata("a", "Alice"), secret("new"))
+            .unwrap();
+        assert_eq!(registry.accounts().len(), 1);
+        assert!(!registry.accounts()[0].login_expired);
+        assert_eq!(registry.get_secret("a").unwrap(), Some(secret("new")));
     }
 
     #[test]

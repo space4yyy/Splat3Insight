@@ -68,6 +68,10 @@ repeatable operation: `splatnet_auth` follows the token chain of Coral
 `/api/bullet_tokens`. The resulting `game_web_token` and `bullet_token` are
 kept with the account secret in the native credential store. A failed
 f-generation request therefore does not require another Nintendo login.
+If Nintendo rejects the saved session token, the account is marked
+`login_expired` and keeps its history; signing in to the same Nintendo account
+again replaces its credential in place, so the account never has to be removed
+and added back.
 The desktop app uses nxapi for f generation. Its public OAuth client id is
 embedded in the application configuration, so users do not need to configure
 an f-generation provider or client id manually.

@@ -754,7 +754,9 @@
       const actions = el('div', { class: 'account-row-actions' });
       if (account.active) actions.append(el('span', { class: 'account-badge', text: '当前' }));
       else actions.append(accountActionButton('使用', () => switchAccount(id)));
-      if (account.splatnet_ready === false || (account.active && account.splatnet_ready === null)) {
+      if (account.login_expired) {
+        actions.append(accountActionButton('重新登录', () => startRelogin(id)));
+      } else if (account.splatnet_ready === false || (account.active && account.splatnet_ready === null)) {
         actions.append(accountActionButton('获取权限', (button) => refreshPermission(id, button)));
       }
       const exportButton = accountActionButton('导出', (button) => exportAccount(id, button));
@@ -770,20 +772,22 @@
     }));
   }
 
-  // 获取 SplatNet 权限：设置页账号列表里的「获取权限」和侧栏的「等待授权」共用。
-  async function refreshPermission(accountId, button) {
+  // 获取 SplatNet 权限：设置页账号列表里的「获取权限」、侧栏的「等待授权」和重新登录之后共用。
+  async function refreshPermission(accountId, button = null, message = '正在使用已保存的 Nintendo 登录信息获取 SplatNet 权限…') {
     if (app.authorizing) return;
     app.authorizing = true;
     app.authError = null;
-    button.disabled = true;
+    if (button) button.disabled = true;
     renderSyncStatus(app.syncStatus);
-    setMessage('正在使用已保存的 Nintendo 登录信息获取 SplatNet 权限…');
+    setMessage(message);
     try {
       await invoke('refresh_splatnet_tokens', { accountId });
     } catch (error) {
       app.authError = String(error);
       setMessage(String(error), true);
-      button.disabled = false;
+      if (button) button.disabled = false;
+      // Nintendo 登录状态失效时，账号会被标成需要重新登录；重新读取账号列表，「重新登录」才会出现。
+      try { await refreshAccounts(); } catch { /* 下次刷新状态时再读 */ }
       return;
     } finally {
       app.authorizing = false;
@@ -798,7 +802,7 @@
       await loadFacts({ force: true });
     } catch (error) {
       setMessage(String(error), true);
-      button.disabled = false;
+      if (button) button.disabled = false;
     }
   }
 
@@ -964,17 +968,33 @@
     renderDataView();
   }
 
-  // 添加账号
+  // 添加账号；Nintendo 登录状态失效后的重新登录也走这里。
   const loginButton = $('#login');
   const pastePanel = $('#paste-panel');
+  const pasteHint = $('#paste-hint');
   const loginLink = $('#login-link');
   const authenticateButton = $('#authenticate');
+  // 重新登录的账号 { id, name }，添加账号时为 null。consentTarget 是确认框里这次要登录的，
+  // loginTarget 是已经打开登录页、等着粘贴链接的那次。
+  let consentTarget = null;
+  let loginTarget = null;
   function startLogin() {
     goTo('settings');
     if (!loginButton.disabled) loginButton.click();
   }
+  // 重新登录：登录同一个 Nintendo 账号，原地换上新的登录信息，不用删除账号，本地数据不动。
+  function startRelogin(accountId) {
+    const account = app.accounts.find((item) => item.account_id === accountId);
+    if (!account) return;
+    goTo('settings');
+    if (!loginButton.disabled) openLoginConsent({ id: accountId, name: account.display_name });
+  }
   // nxapi 的使用要求：登录前说明哪些数据会发给第三方服务，用户确认后才开始。
   const loginConsent = $('#login-consent');
+  function openLoginConsent(target) {
+    consentTarget = target;
+    loginConsent.showModal();
+  }
   $('#login-consent-link').addEventListener('click', (event) => {
     event.preventDefault();
     void openUrl(event.currentTarget.href);
@@ -988,32 +1008,40 @@
   $('#login-consent-cancel').addEventListener('click', () => loginConsent.close());
   $('#login-consent-accept').addEventListener('click', () => {
     loginConsent.close();
-    void beginLogin();
+    void beginLogin(consentTarget);
   });
-  loginButton.addEventListener('click', () => loginConsent.showModal());
-  async function beginLogin() {
+  loginButton.addEventListener('click', () => openLoginConsent(null));
+  async function beginLogin(target) {
     loginButton.disabled = true;
     setMessage('正在打开 Nintendo 登录页面…');
     try {
-      const url = await invoke('begin_nintendo_login');
+      const url = await invoke('begin_nintendo_login', { accountId: target?.id ?? null });
+      loginTarget = target;
       await openUrl(url);
+      const who = target ? `“${target.name}”` : '';
+      pasteHint.textContent = `在浏览器登录${who}后，右键“选择此人”按钮，复制链接地址并粘贴到这里。`;
       pastePanel.hidden = false;
       loginLink.focus();
-      setMessage('请在浏览器登录，然后复制“选择此人”按钮的链接。');
+      setMessage(`请在浏览器登录${who}，然后复制“选择此人”按钮的链接。`);
     } catch (error) {
       setMessage(String(error), true);
     } finally {
       loginButton.disabled = false;
     }
   }
-  $('#cancel-login').addEventListener('click', async () => {
+  function closePastePanel() {
     pastePanel.hidden = true;
     loginLink.value = '';
+    loginTarget = null;
+  }
+  $('#cancel-login').addEventListener('click', async () => {
+    const action = loginTarget ? '重新登录' : '添加账号';
+    closePastePanel();
     try {
       await invoke('cancel_nintendo_login');
-      setMessage('已取消添加账号。');
+      setMessage(`已取消${action}。`);
     } catch (error) {
-      setMessage(`取消添加账号失败：${String(error)}`, true);
+      setMessage(`取消${action}失败：${String(error)}`, true);
     }
   });
   async function authenticateNintendoAccount() {
@@ -1023,12 +1051,19 @@
       setMessage('请先粘贴 Nintendo“选择此人”按钮的链接。', true);
       return;
     }
+    const target = loginTarget;
     authenticateButton.disabled = true;
     setMessage('正在认证 Nintendo Account 并生成 SplatNet 凭据…');
     try {
       const accountId = await invoke('complete_nintendo_login', { callbackUrl });
-      pastePanel.hidden = true;
-      loginLink.value = '';
+      closePastePanel();
+      if (target) {
+        // 还是原来的账号：先读一次账号和同步状态换下「重新登录」，再接着获取 SplatNet 权限并同步。
+        await refreshAccounts();
+        await refreshSyncStatus();
+        await refreshPermission(accountId, null, `已重新登录“${target.name}”，正在获取 SplatNet 权限…`);
+        return;
+      }
       setMessage('Nintendo Account 登录成功，正在获取 SplatNet 权限并开始首次历史同步…');
       try {
         await invoke('refresh_splatnet_tokens', { accountId });
@@ -1041,6 +1076,8 @@
         setMessage(`Nintendo Account 已登录，但 SplatNet 首次同步失败：${String(error)}。可在账号列表中重试。`, true);
       }
     } catch (error) {
+      // 认证一次就用掉了这次登录，同一个链接不能再试：收起粘贴框，重新点「添加账号」或「重新登录」。
+      closePastePanel();
       setMessage(String(error), true);
     } finally {
       authenticateButton.disabled = false;
@@ -1062,6 +1099,10 @@
     if (['preparing', 'syncing', 'refreshing'].includes(status.state)) {
       return { text: status.progress_total > 0 ? `同步中 ${status.progress_completed}/${status.progress_total}` : '同步中…', tone: 'is-busy' };
     }
+    // Nintendo 登录状态失效：这段文字本身就是按钮，点一下重新登录这个账号。
+    if (app.accounts.some((account) => account.account_id === status.account_id && account.login_expired)) {
+      return { text: '需要重新登录', tone: 'is-error', relogin: true };
+    }
     if (status.state === 'completed') return { text: status.completed_at_ms ? `已同步 · ${fmtClock(status.completed_at_ms)}` : '已同步', tone: '' };
     if (status.state === 'error') return { text: '同步失败', tone: 'is-error' };
     if (!status.message?.includes('权限')) return { text: '等待同步', tone: 'is-idle' };
@@ -1076,23 +1117,28 @@
     if (!summary.authorize && !app.authorizing) app.authError = null;
     const foot = $('#sidebar-sync');
     // 每秒都会刷新状态；内容没变时不重画，免得按钮在点击时被换掉。
-    const signature = [summary.text, summary.tone, summary.authorize ? status.account_id : ''].join('|');
+    const signature = [summary.text, summary.tone, summary.authorize || summary.relogin ? status.account_id : ''].join('|');
     if (foot.dataset.signature !== signature) {
       foot.dataset.signature = signature;
       const dot = el('span', { class: `status-dot ${summary.tone}`.trim(), 'aria-hidden': 'true' });
-      if (summary.authorize) {
+      if (summary.authorize || summary.relogin) {
         const button = el('button', { type: 'button', class: 'sync-auth', text: summary.text });
-        button.addEventListener('click', () => void refreshPermission(status.account_id, button));
+        button.addEventListener('click', () => {
+          if (summary.relogin) startRelogin(status.account_id);
+          else void refreshPermission(status.account_id, button);
+        });
         foot.replaceChildren(dot, button);
       } else {
         foot.replaceChildren(dot, document.createTextNode(summary.text));
       }
     }
-    foot.title = (summary.authorize && app.authError) || status?.error || status?.message || '';
+    foot.title = summary.relogin
+      ? 'Nintendo 登录状态已失效，点一下重新登录'
+      : (summary.authorize && app.authError) || status?.error || status?.message || '';
     foot.classList.toggle('is-error', summary.tone === 'is-error');
     // 有账号、已获取权限、当前没在同步时，可以立即同步一次。
     const busy = ['preparing', 'syncing', 'refreshing'].includes(status?.state);
-    $('#sync-now').hidden = !status?.account_id || busy || Boolean(status?.message?.includes('权限'));
+    $('#sync-now').hidden = !status?.account_id || busy || Boolean(summary.relogin) || Boolean(status?.message?.includes('权限'));
   }
   // reason 写进同步日志：manual 是“立即同步”，window_focus 是窗口回到前台。
   async function requestSync(reason) {

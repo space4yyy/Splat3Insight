@@ -11,7 +11,7 @@ use splat3_widget_core::{
     history::{HistoryError, HistoryErrorKind, HistorySyncSummary, XSettlementCheck},
     nintendo_auth::{
         begin_login, exchange_session_token_with_proxy, refresh_identity_with_proxy, LoginAttempt,
-        NintendoIdentityError,
+        NintendoIdentity, NintendoIdentityError,
     },
     overlay::{OverlayMatchCategory, OverlayState},
     splatnet_auth::{exchange_splatnet_tokens, SplatNetAuthConfig, NXAPI_F_GENERATION_URL},
@@ -46,7 +46,7 @@ const AUTOSTART_APP_NAME: &str = "Splat3Insight";
 
 struct AppState {
     registry: Arc<Mutex<Registry>>,
-    login_attempt: Mutex<Option<LoginAttempt>>,
+    login_attempt: Mutex<Option<PendingLogin>>,
     auth_log_path: PathBuf,
     history_dir: PathBuf,
     preferences_path: PathBuf,
@@ -54,6 +54,13 @@ struct AppState {
     sync_runtime: Arc<SyncRuntime>,
     sync_trigger: Arc<sync_schedule::SyncTrigger>,
     overlay_service: overlay_server::OverlayServiceController,
+}
+
+/// 已经打开登录页、等待粘贴“选择此人”链接的 Nintendo 登录。
+struct PendingLogin {
+    attempt: LoginAttempt,
+    /// 重新登录的账号；添加账号时为 None。
+    relogin_account_id: Option<String>,
 }
 
 /// 窗口位置、数据导出位置等应用设置。旧版本存过的其他字段（如已去掉的“保留程序坞图标”）读取时忽略。
@@ -611,6 +618,7 @@ struct AccountView {
     country: Option<String>,
     active: bool,
     splatnet_ready: Option<bool>,
+    login_expired: bool,
     history_battle_count: usize,
     history_coop_count: usize,
     history_fetched_at_ms: Option<i64>,
@@ -748,6 +756,20 @@ fn update_sync_status(
     update: impl FnOnce(&mut SyncStatus),
 ) {
     runtime.update(account_id, update);
+}
+
+/// 账号还没有 SplatNet 权限：后台同步停在这里，等用户点「等待授权」或「获取权限」。
+fn set_waiting_for_permission(runtime: &SyncRuntime, account_id: &str) {
+    update_sync_status(runtime, account_id, |status| {
+        status.state = "idle".to_owned();
+        status.account_id = Some(account_id.to_owned());
+        status.message = "等待获取 SplatNet 权限".to_owned();
+        status.phase = "idle".to_owned();
+        status.progress_completed = 0;
+        status.progress_total = 0;
+        status.retry_attempt = 0;
+        status.error = None;
+    });
 }
 
 fn active_account_sync_state<S: SecretStore>(
@@ -950,7 +972,7 @@ impl From<&str> for TokenRefreshFailure {
 fn format_token_refresh_error(error: &TokenRefreshFailure) -> String {
     match error {
         TokenRefreshFailure::NintendoSessionExpired => {
-            "Nintendo 登录状态已失效，请重新添加账号。".to_owned()
+            "Nintendo 登录状态已失效，请重新登录。".to_owned()
         }
         TokenRefreshFailure::Failed(details) => {
             format!("SplatNet token 自动刷新失败，请检查网络或稍后重试：{details}")
@@ -988,17 +1010,7 @@ fn start_background_sync(
                     .await;
                 }
                 Ok(Some((account_id, false))) => {
-                    let status_account_id = account_id.clone();
-                    update_sync_status(&sync_runtime, &account_id, |status| {
-                        status.state = "idle".to_owned();
-                        status.account_id = Some(status_account_id);
-                        status.message = "等待获取 SplatNet 权限".to_owned();
-                        status.phase = "idle".to_owned();
-                        status.progress_completed = 0;
-                        status.progress_total = 0;
-                        status.retry_attempt = 0;
-                        status.error = None;
-                    });
+                    set_waiting_for_permission(&sync_runtime, &account_id);
                 }
                 Ok(None) => {}
                 Err(error) => {
@@ -1057,6 +1069,7 @@ fn build_account_views<S: SecretStore>(
                 country: account.country.clone(),
                 active: active_id == Some(account.account_id.as_str()),
                 splatnet_ready: account.splatnet_ready,
+                login_expired: account.login_expired,
                 history_battle_count: history.as_ref().map_or(0, |value| value.battle_count),
                 history_coop_count: history.as_ref().map_or(0, |value| value.coop_count),
                 history_fetched_at_ms: history.map(|value| value.fetched_at_ms),
@@ -1604,34 +1617,129 @@ fn warm_up_history(history_dir: PathBuf, account_ids: Vec<String>) {
     }
 }
 
+/// 打开 Nintendo 登录页。`account_id` 是要重新登录的账号：Nintendo 登录状态失效后，
+/// 登录同一个 Nintendo 账号就能换上新的登录信息，不用删除账号，本地历史不动。
 #[tauri::command]
-fn begin_nintendo_login(state: State<'_, AppState>) -> Result<String, String> {
+fn begin_nintendo_login(
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let relogin_name = match &account_id {
+        Some(account_id) => Some(
+            state
+                .registry
+                .lock()
+                .map_err(|_| "account registry is locked")?
+                .accounts()
+                .iter()
+                .find(|account| &account.account_id == account_id)
+                .map(|account| account.display_name.clone())
+                .ok_or_else(|| format!("unknown account: {account_id}"))?,
+        ),
+        None => None,
+    };
     let attempt = begin_login()?;
     let authorize_url = attempt.authorize_url.clone();
+    match account_id.as_deref().zip(relogin_name.as_deref()) {
+        Some((account_id, display_name)) => write_account_log(
+            &state.auth_log_path,
+            "nintendo-login",
+            display_name,
+            account_id,
+            "开始重新登录 Nintendo Account，已生成授权链接",
+        ),
+        None => write_auth_log(
+            &state.auth_log_path,
+            "nintendo-login",
+            "开始添加 Nintendo Account，已生成授权链接",
+        ),
+    }
     *state
         .login_attempt
         .lock()
-        .map_err(|_| "login state is locked")? = Some(attempt);
-    write_auth_log(
-        &state.auth_log_path,
-        "nintendo-login",
-        "开始添加 Nintendo Account，已生成授权链接",
-    );
+        .map_err(|_| "login state is locked")? = Some(PendingLogin {
+        attempt,
+        relogin_account_id: account_id,
+    });
     Ok(authorize_url)
 }
 
 #[tauri::command]
 fn cancel_nintendo_login(state: State<'_, AppState>) -> Result<(), String> {
-    *state
+    let pending = state
         .login_attempt
         .lock()
-        .map_err(|_| "login state is locked")? = None;
+        .map_err(|_| "login state is locked")?
+        .take();
     write_auth_log(
         &state.auth_log_path,
         "nintendo-login",
-        "已取消 Nintendo Account 添加流程",
+        if pending.is_some_and(|pending| pending.relogin_account_id.is_some()) {
+            "已取消 Nintendo Account 重新登录"
+        } else {
+            "已取消 Nintendo Account 添加流程"
+        },
     );
     Ok(())
+}
+
+/// 把 Nintendo 登录的结果存进账号列表，返回是不是重新登录了列表里的账号。
+/// 重新登录（`relogin_account_id`）只接受同一个 Nintendo 账号：原地换上新的登录信息，
+/// 不切换当前账号。添加的账号设为当前账号。已在列表里的账号沿用原来的添加时间。
+fn save_nintendo_login<S: SecretStore>(
+    registry: &mut AccountRegistry<S>,
+    identity: NintendoIdentity,
+    relogin_account_id: Option<&str>,
+    timestamp: i64,
+) -> Result<bool, String> {
+    let find = |registry: &AccountRegistry<S>, account_id: &str| {
+        registry
+            .accounts()
+            .iter()
+            .find(|account| account.account_id == account_id)
+            .cloned()
+    };
+    if let Some(expected_id) =
+        relogin_account_id.filter(|expected_id| *expected_id != identity.account_id)
+    {
+        // 浏览器里选了别的 Nintendo 账号：不保存，免得多出一个账号，要重新登录的账号也没好。
+        let expected = find(registry, expected_id).map_or_else(
+            || "要重新登录的账号".to_owned(),
+            |account| format!("“{}”", account.display_name),
+        );
+        return Err(format!(
+            "登录的是另一个 Nintendo 账号“{}”，没有保存。请在浏览器里换成{expected}后重新登录。",
+            identity.display_name
+        ));
+    }
+    let existing = find(registry, &identity.account_id);
+    let relogin = relogin_account_id.is_some() && existing.is_some();
+    let account_id = identity.account_id.clone();
+    registry.upsert(
+        AccountMetadata {
+            account_id: identity.account_id,
+            display_name: identity.display_name,
+            language: identity.language,
+            country: identity.country,
+            splatnet_ready: Some(false),
+            login_expired: false,
+            created_at_ms: existing
+                .as_ref()
+                .map_or(timestamp, |account| account.created_at_ms),
+            last_used_at_ms: existing
+                .as_ref()
+                .map_or(timestamp, |account| account.last_used_at_ms),
+        },
+        AccountSecret {
+            session_token: identity.session_token,
+            game_web_token: None,
+            bullet_token: None,
+        },
+    )?;
+    if !relogin {
+        registry.set_active(&account_id, timestamp)?;
+    }
+    Ok(relogin)
 }
 
 #[tauri::command]
@@ -1641,7 +1749,10 @@ async fn complete_nintendo_login(
 ) -> Result<String, String> {
     let auth_log_path = state.auth_log_path.clone();
     write_auth_log(&auth_log_path, "start", "开始 Nintendo Account 认证");
-    let attempt = state
+    let PendingLogin {
+        attempt,
+        relogin_account_id,
+    } = state
         .login_attempt
         .lock()
         .map_err(|_| "login state is locked")?
@@ -1670,28 +1781,40 @@ async fn complete_nintendo_login(
         &account_id,
         "Nintendo session token 交换成功",
     );
-    let timestamp = now_ms();
-
-    let metadata = AccountMetadata {
-        account_id: account_id.clone(),
-        display_name: display_name.clone(),
-        language: identity.language,
-        country: identity.country,
-        splatnet_ready: Some(false),
-        created_at_ms: timestamp,
-        last_used_at_ms: timestamp,
-    };
-    let secret = AccountSecret {
-        session_token: identity.session_token,
-        game_web_token: None,
-        bullet_token: None,
-    };
 
     let mut registry = state
         .registry
         .lock()
         .map_err(|_| "account registry is locked")?;
-    registry.upsert(metadata, secret)?;
+    let relogin = save_nintendo_login(
+        &mut registry,
+        identity,
+        relogin_account_id.as_deref(),
+        now_ms(),
+    )
+    .map_err(|error| {
+        write_account_log(
+            &auth_log_path,
+            "nintendo-session",
+            &display_name,
+            &account_id,
+            &error,
+        );
+        error
+    })?;
+    drop(registry);
+    if relogin {
+        write_account_log(
+            &auth_log_path,
+            "nintendo-session",
+            &display_name,
+            &account_id,
+            "Nintendo Account 已重新登录，应用将继续获取 SplatNet token",
+        );
+        // 换下登录失效时的同步状态，接着获取 SplatNet 权限。
+        set_waiting_for_permission(&state.sync_runtime, &account_id);
+        return Ok(account_id);
+    }
     write_account_log(
         &auth_log_path,
         "nintendo-session",
@@ -1699,8 +1822,6 @@ async fn complete_nintendo_login(
         &account_id,
         "Nintendo Account 已保存，应用将继续获取 SplatNet token",
     );
-    registry.set_active(&account_id, timestamp)?;
-    drop(registry);
     write_account_log(
         &auth_log_path,
         "account-switch",
@@ -1712,6 +1833,17 @@ async fn complete_nintendo_login(
         .sync_trigger
         .request(sync_schedule::SyncReason::AccountAdded);
     Ok(account_id)
+}
+
+/// 保存的 Nintendo 登录信息用不了了，再试也不会成功：记下来，账号列表和侧栏改成「重新登录」。
+fn mark_login_expired(registry: &Arc<Mutex<Registry>>, account_id: &str) {
+    let marked = registry
+        .lock()
+        .map_err(|_| "account registry is locked".to_owned())
+        .and_then(|mut registry| registry.mark_login_expired(account_id));
+    if let Err(error) = marked {
+        log_console_error("token-refresh", &error);
+    }
 }
 
 async fn refresh_splatnet_tokens_for_account(
@@ -1733,10 +1865,18 @@ async fn refresh_splatnet_tokens_for_account(
     };
     // Read the Keychain outside the registry lock: it may wait on a macOS
     // authorization prompt.
-    let session_token = secret_store
-        .get(account_id)?
-        .ok_or_else(|| "该账号没有保存 Nintendo session token".to_owned())?
-        .session_token;
+    let Some(secret) = secret_store.get(account_id)? else {
+        write_account_log(
+            auth_log_path,
+            "credentials",
+            &metadata.display_name,
+            account_id,
+            "系统凭据库里没有这个账号的 Nintendo 登录信息，需要重新登录",
+        );
+        mark_login_expired(registry, account_id);
+        return Err(TokenRefreshFailure::NintendoSessionExpired);
+    };
+    let session_token = secret.session_token;
 
     write_account_log(
         auth_log_path,
@@ -1745,9 +1885,9 @@ async fn refresh_splatnet_tokens_for_account(
         account_id,
         "使用已保存的 Nintendo session token 刷新 SplatNet token",
     );
-    let identity = refresh_identity_with_proxy(&session_token, proxy_address)
-        .await
-        .map_err(|error| {
+    let identity = match refresh_identity_with_proxy(&session_token, proxy_address).await {
+        Ok(identity) => identity,
+        Err(error) => {
             let details = account_auth_error(
                 auth_log_path,
                 "nintendo-session-refresh",
@@ -1755,13 +1895,13 @@ async fn refresh_splatnet_tokens_for_account(
                 account_id,
                 error.to_string(),
             );
-            match error {
-                NintendoIdentityError::SessionTokenRejected => {
-                    TokenRefreshFailure::NintendoSessionExpired
-                }
-                _ => TokenRefreshFailure::Failed(details),
+            if error != NintendoIdentityError::SessionTokenRejected {
+                return Err(TokenRefreshFailure::Failed(details));
             }
-        })?;
+            mark_login_expired(registry, account_id);
+            return Err(TokenRefreshFailure::NintendoSessionExpired);
+        }
+    };
     let mut auth_config = SplatNetAuthConfig::default();
     auth_config.proxy_address = proxy_address.map(ToOwned::to_owned);
     write_account_log(
@@ -1796,6 +1936,7 @@ async fn refresh_splatnet_tokens_for_account(
     metadata.language = identity.language;
     metadata.country = identity.country;
     metadata.splatnet_ready = Some(true);
+    metadata.login_expired = false;
     let display_name = metadata.display_name.clone();
 
     let mut registry = registry.lock().map_err(|_| "account registry is locked")?;
@@ -2311,14 +2452,15 @@ mod tests {
     use super::{
         active_account_sync_state, append_timestamped_log, build_account_views,
         choose_saved_display, format_token_refresh_error, history_store, load_app_preferences,
-        local_log_timestamp, remove_account_entry, restored_window_size,
+        local_log_timestamp, remove_account_entry, restored_window_size, save_nintendo_login,
         should_show_main_window_on_reopen, store_app_preferences, AppPreferences, HistoryErrorKind,
         HistorySyncSummary, SavedDisplay, SavedWindowPlacement, SyncClaim, SyncError, SyncRuntime,
         TokenRefreshFailure, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, LOG_BACKUP_COUNT,
         MAX_LOG_BYTES,
     };
     use splat3_widget_core::{
-        AccountMetadata, AccountRegistry, AccountSecret, CachedSecretStore, SecretStore,
+        nintendo_auth::NintendoIdentity, AccountMetadata, AccountRegistry, AccountSecret,
+        CachedSecretStore, MemorySecretStore, SecretStore,
     };
     use std::fs;
     #[cfg(target_os = "macos")]
@@ -2547,6 +2689,7 @@ mod tests {
                         language: None,
                         country: None,
                         splatnet_ready: Some(true),
+                        login_expired: false,
                         created_at_ms: 1,
                         last_used_at_ms: 1,
                     },
@@ -2589,6 +2732,7 @@ mod tests {
                         language: None,
                         country: None,
                         splatnet_ready: Some(true),
+                        login_expired: false,
                         created_at_ms: 1,
                         last_used_at_ms: 1,
                     },
@@ -2902,7 +3046,81 @@ mod tests {
     #[test]
     fn rejected_nintendo_session_token_requests_a_new_login() {
         let message = format_token_refresh_error(&TokenRefreshFailure::NintendoSessionExpired);
-        assert!(message.contains("请重新添加账号"));
+        assert!(message.contains("请重新登录"));
+    }
+
+    fn nintendo_identity(account_id: &str, name: &str, session_token: &str) -> NintendoIdentity {
+        NintendoIdentity {
+            account_id: account_id.to_owned(),
+            display_name: name.to_owned(),
+            language: None,
+            country: None,
+            birthday: "2000-01-01".to_owned(),
+            id_token: "test-id-token".to_owned(),
+            session_token: session_token.to_owned(),
+        }
+    }
+
+    #[test]
+    fn signing_in_again_updates_the_expired_account_in_place() {
+        let directory = tempdir().unwrap();
+        let mut registry = AccountRegistry::load(
+            directory.path().join("accounts.json"),
+            MemorySecretStore::default(),
+        )
+        .unwrap();
+        let login = |id, name, token| nintendo_identity(id, name, token);
+        assert!(
+            !save_nintendo_login(&mut registry, login("a", "Alice", "a-old"), None, 1).unwrap()
+        );
+        assert!(!save_nintendo_login(&mut registry, login("b", "Bob", "b-old"), None, 2).unwrap());
+        assert_eq!(registry.active_account_id(), Some("b"));
+        registry.mark_login_expired("a").unwrap();
+        let alice = |registry: &AccountRegistry<MemorySecretStore>| {
+            registry
+                .accounts()
+                .iter()
+                .find(|account| account.account_id == "a")
+                .cloned()
+                .unwrap()
+        };
+        let views = build_account_views(&mut registry, directory.path()).unwrap();
+        assert_eq!(
+            views
+                .iter()
+                .map(|account| (account.account_id.as_str(), account.login_expired))
+                .collect::<Vec<_>>(),
+            [("a", true), ("b", false)]
+        );
+
+        // 浏览器里登录的是别的账号：不保存，要重新登录的账号保持原样。
+        let error =
+            save_nintendo_login(&mut registry, login("c", "Carol", "c"), Some("a"), 3).unwrap_err();
+        assert!(error.contains("“Carol”") && error.contains("“Alice”"));
+        assert_eq!(registry.accounts().len(), 2);
+        assert_eq!(registry.get_secret("c").unwrap(), None);
+        assert!(alice(&registry).login_expired);
+
+        // 同一个账号：换上新的登录信息，不切换当前账号，沿用原来的添加时间。
+        assert!(
+            save_nintendo_login(&mut registry, login("a", "Alice", "a-new"), Some("a"), 4).unwrap()
+        );
+        assert_eq!(registry.active_account_id(), Some("b"));
+        assert!(!alice(&registry).login_expired);
+        assert_eq!(alice(&registry).splatnet_ready, Some(false));
+        assert_eq!(alice(&registry).created_at_ms, 1);
+        assert_eq!(
+            registry.get_secret("a").unwrap().unwrap().session_token,
+            "a-new"
+        );
+
+        // 用「添加账号」登录已在列表里的账号：同样原地更新，并设为当前账号。
+        assert!(
+            !save_nintendo_login(&mut registry, login("a", "Alice", "a-again"), None, 5).unwrap()
+        );
+        assert_eq!(registry.active_account_id(), Some("a"));
+        assert_eq!(registry.accounts().len(), 2);
+        assert_eq!(alice(&registry).created_at_ms, 1);
     }
 
     #[test]
