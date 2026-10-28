@@ -994,6 +994,7 @@
   function openLoginConsent(target) {
     consentTarget = target;
     loginConsent.showModal();
+    loginConsent.focus({ preventScroll: true });
   }
   $('#login-consent-link').addEventListener('click', (event) => {
     event.preventDefault();

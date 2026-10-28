@@ -611,11 +611,11 @@
         <button type="button" class="button-danger" id="delete-account-confirm">删除账号</button>
       </div>
     </dialog>
-    <dialog id="login-consent" class="close-prompt" aria-labelledby="login-consent-title">
+    <dialog id="login-consent" class="close-prompt" aria-labelledby="login-consent-title" tabindex="-1">
       <h2 id="login-consent-title">登录前请确认</h2>
       <p>登录 SplatNet 3 需要第三方服务 nxapi 生成登录参数。继续后，你的 Nintendo 账号 id_token、Nintendo Switch Online 应用接口（Coral）的令牌，以及和 Coral 收发的全部数据都会发送给 nxapi。<a href="https://github.com/samuelthomas2774/nxapi-znca-api" id="login-consent-link">了解 nxapi</a></p>
       <div class="close-prompt-actions">
-        <button type="button" class="ghost" id="login-consent-cancel" autofocus>取消</button>
+        <button type="button" class="ghost" id="login-consent-cancel">取消</button>
         <button type="button" class="button-primary" id="login-consent-accept">同意并登录</button>
       </div>
     </dialog>

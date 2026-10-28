@@ -593,6 +593,7 @@ dialog.close-prompt.proxy-settings-dialog:focus { outline: none; }
 
 /* 后台运行提示 */
 dialog.close-prompt { width: min(420px, calc(100% - 32px)); padding: 22px; border: 1px solid var(--line-strong); border-radius: 18px; background: var(--panel); color: var(--ink); box-shadow: 0 24px 80px var(--shadow); opacity: 0; transform: scale(.96) translateY(4px); transition: opacity .18s ease-out, transform .18s cubic-bezier(.22, 1, .36, 1), display .18s, overlay .18s; transition-behavior: allow-discrete; }
+#login-consent:focus { outline: none; }
 dialog.close-prompt[open] { opacity: 1; transform: scale(1) translateY(0); }
 @starting-style { dialog.close-prompt[open] { opacity: 0; transform: scale(.96) translateY(4px); } }
 dialog.close-prompt::backdrop { background: transparent; transition: background-color .18s ease-out, display .18s, overlay .18s; transition-behavior: allow-discrete; }
