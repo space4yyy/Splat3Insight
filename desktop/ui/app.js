@@ -1246,6 +1246,45 @@
   // 地址带参数的数据卡片能合进同一个地址；自动、时钟这类地址独立的卡片只能单选。
   const obsStandalone = (id) => !obsCardOf(id)?.route.includes('?');
 
+  // 击倒数量卡片显示哪些鲑鱼（item.key 的列表，null 表示全部）存在应用设置里，OBS 页面轮询数据时一起取：
+  // 在预览里点鲑鱼切换后，OBS 里同一个地址几秒内就更新，不用重新复制地址。
+  let obsDefeatSelection = null;
+  let obsDefeatVersion = 0;
+  const obsDefeatItems = () => cards?.defeatCountItems(dashboard.coopRecord(), records.imageSrc) || { enemies: [], bosses: [] };
+  const obsSelectedDefeats = () => cards?.selectedDefeatItems(obsDefeatItems(), obsDefeatSelection) || { enemies: [], bosses: [] };
+  const defeatKeys = (items) => [...items.enemies, ...items.bosses].map((item) => item.key);
+  async function loadObsDefeatSelection() {
+    const version = obsDefeatVersion;
+    try {
+      const saved = await invoke('get_obs_defeat_selection');
+      // 读取期间又点了鲑鱼时，以新的选择为准。
+      if (version !== obsDefeatVersion) return;
+      obsDefeatSelection = Array.isArray(saved) ? saved : null;
+    } catch (error) {
+      setMessage(`读取击倒数量卡片设置失败：${String(error)}`, true);
+    }
+    renderObsUrl();
+    renderObsPreview();
+  }
+  function setObsDefeatSelection(keys) {
+    obsDefeatVersion += 1;
+    obsDefeatSelection = keys;
+    renderObsUrl();
+    renderObsPreview();
+    invoke('save_obs_defeat_selection', { selection: keys }).catch((error) => {
+      setMessage(`保存击倒数量卡片设置失败：${String(error)}`, true);
+      // 换回实际存着的选择，和 OBS 里显示的一致。
+      loadObsDefeatSelection();
+    });
+  }
+  // 至少留一种鲑鱼；全部选上时存成 null，以后记录里多了新鲑鱼也会显示。
+  function toggleObsDefeat(key) {
+    const shown = defeatKeys(obsSelectedDefeats());
+    const next = shown.includes(key) ? shown.filter((value) => value !== key) : [...shown, key];
+    if (!next.length) return;
+    setObsDefeatSelection(defeatKeys(obsDefeatItems()).every((value) => next.includes(value)) ? null : next);
+  }
+
   function normalizeSelection(ids) {
     const known = obsOrdered(ids || []);
     if (!known.length || known.includes('overlay')) return ['overlay'];
@@ -1318,8 +1357,14 @@
       .flatMap((id) => Array.from(new URL(obsCardOf(id).route, 'http://localhost').searchParams.keys()));
     return `/overlay?${keys.join('&')}`;
   }
-  // 建议尺寸与卡片目录中的实际尺寸一致。
-  const obsSourceSize = (card) => [card.width, card.height];
+  // 建议尺寸是卡片目录里的高分辨率尺寸。击倒数量的宽度按全部鲑鱼都显示时算（和卡片逻辑尺寸高 64 同样放大），
+  // OBS 页面也按这个宽度缩放：在预览里隐藏或显示鲑鱼时，来源尺寸不用改，卡片高度也不变。
+  const DEFEAT_CARD_HEIGHT = 64;
+  function obsSourceSize(card) {
+    const all = card.id === 'defeat-counts' && cards ? obsDefeatItems() : null;
+    if (!all || !(all.enemies.length || all.bosses.length)) return [card.width, card.height];
+    return [cards.defeatCountWidth(all) * card.height / DEFEAT_CARD_HEIGHT, card.height];
+  }
   function renderObsUrl() {
     const box = $('#obs-url');
     const card = obsCardOf(app.obs.active) || app.obs.catalog[0];
@@ -1336,7 +1381,8 @@
     });
     box.replaceChildren(el('code', { text: url }), copy);
     const [width, height] = obsSourceSize(card);
-    $('#obs-size-hint').textContent = `在浏览器来源属性里把宽高设为 ${width} × ${height}，与卡片实际尺寸一致。`;
+    $('#obs-size-hint').textContent = `在浏览器来源属性里把宽高设为 ${width} × ${height}，使用高分辨率渲染，再在 OBS 画布中等比缩小。`
+      + (card.id === 'defeat-counts' ? '在预览里点鲑鱼切换显示后，OBS 里的卡片几秒内自动更新，地址和尺寸都不用改；卡片高度不变，隐藏的鲑鱼不占位置。' : '');
   }
   async function copyText(text, button, failure) {
     try {
@@ -1447,7 +1493,7 @@
       box.replaceChildren();
       return;
     }
-    $('#obs-preview-title').textContent = `预览：${card.optionLabel}`;
+    $('#obs-preview-title').textContent = card.id === 'defeat-counts' ? '预览：击倒数量（点鲑鱼显示或隐藏）' : `预览：${card.optionLabel}`;
     const [width, height] = obsSourceSize(card);
     $('#obs-preview-size').textContent = `建议 ${width} × ${height}`;
     let preview = box.querySelector('.overlay-preview');
@@ -1489,6 +1535,30 @@
     }
     empty?.remove();
     preview.hidden = false;
+    if (card.id === 'defeat-counts') {
+      // 预览显示全部鲑鱼，OBS 里不显示的调暗；点一下（或按回车、空格）切换。
+      const keys = new Set(defeatKeys(obsSelectedDefeats()));
+      for (const cell of scale.querySelectorAll('[data-defeat-key]')) {
+        const shown = keys.has(cell.dataset.defeatKey);
+        const name = cell.querySelector('img')?.alt || cell.title;
+        const last = shown && keys.size === 1;
+        cell.classList.toggle('is-unselected', !shown);
+        cell.setAttribute('role', 'button');
+        cell.setAttribute('tabindex', '0');
+        cell.setAttribute('aria-pressed', String(shown));
+        cell.setAttribute('aria-label', name);
+        // 只剩一种时不能再隐藏，卡片不会变空。
+        cell.setAttribute('aria-disabled', String(last));
+        cell.title = last ? `${name}（至少显示一种）` : `${name}（点击${shown ? '隐藏' : '显示'}）`;
+        cell.onclick = () => toggleObsDefeat(cell.dataset.defeatKey);
+        cell.onkeydown = (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          toggleObsDefeat(cell.dataset.defeatKey);
+        };
+      }
+      renderObsUrl();
+    }
     fitObsPreview();
     if (card.id === 'clock') scheduleObsClock();
   }
@@ -1546,6 +1616,7 @@
     renderDataView();
   });
   loadObsCatalog().catch((error) => setMessage(String(error), true));
+  loadObsDefeatSelection();
   refreshAccounts().catch((error) => {
     app.accountsLoaded = true;
     setMessage(String(error), true);

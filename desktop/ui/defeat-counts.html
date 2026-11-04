@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/overlay-card.css" />
     <style>
       :root { --obs-card-width: __OBS_CARD_WIDTH__px; --obs-card-height: __OBS_CARD_HEIGHT__px; }
+      #root > .defeat-count-card { --obs-card-width: 768px; --obs-card-height: 64px; }
       html, body { margin: 0; background: transparent; overflow: hidden; }
       #root { width: var(--obs-card-width); height: var(--obs-card-height); }
     </style>
@@ -22,7 +23,9 @@
         const card = root.querySelector('.defeat-count-card');
         if (!card) return;
         // 按浏览器来源的宽高等比放大或缩小：来源设大，卡片就按那个分辨率绘制，不会糊。
-        const scale = Math.min(window.innerWidth / card.offsetWidth, window.innerHeight / card.offsetHeight);
+        // 宽度按全部鲑鱼都显示时算，应用里隐藏或显示鲑鱼不会改变缩放：高度不变，卡片靠左变短或变长。
+        const layoutWidth = Math.max(Number(card.dataset.fullWidth) || 0, card.offsetWidth);
+        const scale = Math.min(window.innerWidth / layoutWidth, window.innerHeight / card.offsetHeight);
         const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
         card.style.transformOrigin = 'top left';
         card.style.transform = `scale(${safeScale})`;
@@ -30,13 +33,14 @@
         root.style.height = `${card.offsetHeight * safeScale}px`;
       }
       // 累计数只在同步到新的打工后变化；轮询同时告诉后台 OBS 正在显示卡片，同步会更勤。
+      // 显示哪些鲑鱼（show）跟着数据一起取：应用里点预览换了选择，下一轮就换，地址不用变。
       async function update() {
         try {
           const response = await fetch('/api/defeat-counts', { cache: 'no-store' });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const record = await response.json();
           if (record?.error) throw new Error(record.error);
-          window.Splat3OverlayCard.updateDefeatCounts(root, record);
+          window.Splat3OverlayCard.updateDefeatCounts(root, record, undefined, record?.show);
           fitOverlay();
         } catch (_) {
           // 保留上一次有效卡片，等待下一轮轮询恢复。

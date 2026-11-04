@@ -758,3 +758,13 @@ dialog.share-dialog #share-status { margin: 12px 0; overflow-wrap: anywhere; }
 .share-fields .share-enemy-option { display: flex; align-items: center; gap: 5px; font-size: 12px; }
 .share-enemy-option img { width: 24px; height: 24px; object-fit: contain; }
 .share-enemy-option input { margin: 0; accent-color: var(--accent); }
+
+/* 击倒数量预览里的鲑鱼可以点：OBS 里不显示的调暗；只剩一种时不能再隐藏，不给点的样子。 */
+.overlay-preview [data-defeat-key] { cursor: pointer; border-radius: 4px; transition: opacity .15s ease; }
+.overlay-preview [data-defeat-key]:hover { opacity: .7; }
+.overlay-preview [data-defeat-key].is-unselected { opacity: .25; }
+.overlay-preview [data-defeat-key].is-unselected:hover { opacity: .5; }
+.overlay-preview [data-defeat-key][aria-disabled="true"] { cursor: default; opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .overlay-preview [data-defeat-key] { transition: none; }
+}

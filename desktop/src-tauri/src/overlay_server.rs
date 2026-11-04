@@ -3,7 +3,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -118,6 +118,29 @@ const APP_ICON: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ico
 const MAX_CONCURRENT_CONNECTIONS: usize = 16;
 const MAX_REQUEST_HEADER_BYTES: usize = 8 * 1024;
 
+/// 击倒数量卡片显示哪些鲑鱼：`enemies:4`、`bosses:23` 这样的键（分组加 coopEnemyId），
+/// None 表示全部显示。应用里点预览换了选择就改这里，OBS 页面下一次轮询时按新选择显示，地址不变。
+pub(crate) type DefeatSelection = Arc<RwLock<Option<Vec<String>>>>;
+
+const DEFEAT_SELECTION_GROUPS: [&str; 2] = ["enemies:", "bosses:"];
+const MAX_DEFEAT_SELECTION_KEYS: usize = 64;
+const MAX_DEFEAT_SELECTION_KEY_BYTES: usize = 128;
+
+/// 只留下击倒数量卡片认得的键，去掉重复；一个都不剩时为 None，全部显示。
+pub(crate) fn normalize_defeat_selection(selection: Option<Vec<String>>) -> Option<Vec<String>> {
+    let mut keys: Vec<String> = Vec::new();
+    for key in selection? {
+        let known = key.len() <= MAX_DEFEAT_SELECTION_KEY_BYTES
+            && DEFEAT_SELECTION_GROUPS
+                .iter()
+                .any(|group| key.len() > group.len() && key.starts_with(group));
+        if known && !keys.contains(&key) && keys.len() < MAX_DEFEAT_SELECTION_KEYS {
+            keys.push(key);
+        }
+    }
+    (!keys.is_empty()).then_some(keys)
+}
+
 #[derive(Debug, Deserialize)]
 struct ObsCardDefinition {
     id: String,
@@ -199,6 +222,8 @@ pub struct OverlayServerConfig {
     pub(crate) activity: crate::sync_schedule::ObsActivity,
     /// The app's SplatNet image cache, for the Salmonid icons on the defeat count card.
     pub(crate) image_cache: Option<Arc<crate::image_cache::ImageCache>>,
+    /// Which Salmonids the defeat count card shows, picked in the app's OBS preview.
+    pub(crate) defeat_selection: DefeatSelection,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -841,6 +866,8 @@ fn active_account(config: &OverlayServerConfig) -> Result<Option<String>, String
 struct DefeatCountCard {
     enemies: Vec<DefeatCountItem>,
     bosses: Vec<DefeatCountItem>,
+    /// 应用里选的要显示的鲑鱼，跟着数据一起给，卡片地址不用带参数；None 表示全部显示。
+    show: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -873,9 +900,15 @@ fn load_defeat_counts(config: &OverlayServerConfig) -> Result<Option<DefeatCount
             })
             .collect()
     };
+    let show = config
+        .defeat_selection
+        .read()
+        .map_err(|_| "击倒数量卡片的显示设置被占用".to_owned())?
+        .clone();
     Ok(Some(DefeatCountCard {
         enemies: items(facts.enemies),
         bosses: items(facts.bosses),
+        show,
     }))
 }
 
@@ -1006,6 +1039,7 @@ mod tests {
                 history_dir,
                 activity: Default::default(),
                 image_cache: None,
+                defeat_selection: Default::default(),
             },
         )
         .unwrap();
@@ -1035,6 +1069,7 @@ mod tests {
                 history_dir,
                 activity: Default::default(),
                 image_cache: None,
+                defeat_selection: Default::default(),
             },
         )
         .unwrap();
@@ -1075,6 +1110,7 @@ mod tests {
             history_dir: directory.join("history"),
             activity: Default::default(),
             image_cache,
+            defeat_selection: Default::default(),
         }
     }
 
@@ -1100,9 +1136,19 @@ mod tests {
                 "bosses": [
                     { "id": 23, "name": "Cohozuna", "image": "/images/coop-enemy/23", "count": 171 },
                     { "id": 30, "name": "Triumvirate", "image": null, "count": 0 }
-                ]
+                ],
+                "show": null
             })
         );
+
+        // 应用里换了显示哪些鲑鱼：同一个地址的下一次轮询就带上新选择，数据不变。
+        *config.defeat_selection.write().unwrap() =
+            Some(vec!["enemies:4".to_owned(), "bosses:23".to_owned()]);
+        let response = route_request("GET", "/api/defeat-counts", &config).unwrap();
+        let next: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(next["show"], json!(["enemies:4", "bosses:23"]));
+        assert_eq!(next["enemies"], body["enemies"]);
+        assert_eq!(next["bosses"], body["bosses"]);
 
         // 账号正在删除时不再显示。
         std::fs::write(
@@ -1112,6 +1158,26 @@ mod tests {
         .unwrap();
         let response = route_request("GET", "/api/defeat-counts", &config).unwrap();
         assert_eq!(response.body, b"null");
+    }
+
+    #[test]
+    fn defeat_selection_keeps_known_keys_once_and_falls_back_to_all() {
+        assert_eq!(normalize_defeat_selection(None), None);
+        assert_eq!(normalize_defeat_selection(Some(Vec::new())), None);
+        let keys = |list: &[&str]| Some(list.iter().map(|key| (*key).to_owned()).collect());
+        assert_eq!(
+            normalize_defeat_selection(keys(&[
+                "bosses:23",
+                "enemies:4",
+                "bosses:23",
+                "enemies:",
+                "weapons:1",
+                &format!("enemies:{}", "x".repeat(MAX_DEFEAT_SELECTION_KEY_BYTES)),
+            ])),
+            keys(&["bosses:23", "enemies:4"])
+        );
+        // 一个都认不出时全部显示，卡片不会变空。
+        assert_eq!(normalize_defeat_selection(keys(&["unknown"])), None);
     }
 
     #[test]
@@ -1185,6 +1251,7 @@ mod tests {
                     counter.fetch_add(1, Ordering::Relaxed);
                 }),
                 image_cache: None,
+                defeat_selection: Default::default(),
             };
 
             // Loading a card page is not enough; the card has to poll its data.
@@ -1211,6 +1278,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                defeat_selection: Default::default(),
             },
         )
         .unwrap();
@@ -1233,6 +1301,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                defeat_selection: Default::default(),
             },
         )
         .unwrap();
@@ -1253,6 +1322,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                defeat_selection: Default::default(),
             },
         )
         .unwrap();
@@ -1272,6 +1342,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                defeat_selection: Default::default(),
             },
         )
         .unwrap();
@@ -1292,6 +1363,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                defeat_selection: Default::default(),
             },
         )
         .unwrap();
@@ -1312,6 +1384,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                defeat_selection: Default::default(),
             },
         )
         .unwrap();
@@ -1333,6 +1406,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                defeat_selection: Default::default(),
             },
         )
         .unwrap();
@@ -1353,6 +1427,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                defeat_selection: Default::default(),
             },
         )
         .unwrap();
@@ -1374,6 +1449,7 @@ mod tests {
             history_dir: directory.path().join("history"),
             activity: Default::default(),
             image_cache: None,
+            defeat_selection: Default::default(),
         };
 
         for card in obs_card_catalog() {
@@ -1403,6 +1479,7 @@ mod tests {
             history_dir: directory.path().join("history"),
             activity: Default::default(),
             image_cache: None,
+            defeat_selection: Default::default(),
         };
 
         let response = route_request("GET", "/clock", &config).unwrap();
@@ -1423,6 +1500,7 @@ mod tests {
             history_dir: directory.path().join("history"),
             activity: Default::default(),
             image_cache: None,
+            defeat_selection: Default::default(),
         };
 
         for path in [
@@ -1455,6 +1533,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                defeat_selection: Default::default(),
             },
         )
         .unwrap();

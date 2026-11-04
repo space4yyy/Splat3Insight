@@ -28,6 +28,10 @@ function setup() {
       append(...nodes) { this.children.push(...nodes); },
       replaceChildren(...nodes) { this.children = nodes; },
       addEventListener(type, listener) { this.listeners[type] = listener; },
+      // OBS 页面用到的：按类名找直接子节点；卡片的宽度取内联样式，高度是样式表里的 64。
+      querySelector(selector) { return this.children.find((child) => `.${child.className}` === selector) ?? null; },
+      get offsetWidth() { return this.hidden ? 0 : parseFloat(this.style.width) || 0; },
+      get offsetHeight() { return this.hidden || this.className !== 'defeat-count-card' ? 0 : 64; },
       classList: {
         add: (name) => classes.add(name),
         remove: (name) => classes.delete(name),
@@ -53,7 +57,18 @@ function setup() {
     frames.clear();
     due.forEach((step) => step(time));
   };
-  return { cards: window.Splat3OverlayCard, root: node('main'), runFrame };
+  return { cards: window.Splat3OverlayCard, root: node('main'), runFrame, context };
+}
+
+// OBS 页面自己的脚本（没有 src 的那段），放进同一个上下文，按给定的窗口大小和接口数据跑。
+const pageScript = pageHtml.match(/<script>([\s\S]*?)<\/script>/)[1];
+function openPage({ width, height, data }) {
+  const { context, root } = setup();
+  Object.assign(context.window, { innerWidth: width, innerHeight: height, addEventListener: () => {}, setInterval: () => 0 });
+  Object.assign(context.document, { querySelector: (selector) => (selector === '#root' ? root : null), fonts: { load: () => Promise.resolve() } });
+  context.fetch = async () => ({ ok: true, json: async () => data() });
+  vm.runInContext(pageScript, context);
+  return { root, update: () => context.update() };
 }
 
 const record = (steelhead = 4812) => ({
@@ -151,10 +166,82 @@ test('new defeat counts roll in place and keep their thousands separators', () =
 
 test('the defeat count page polls its own data and the app previews the dashboard record', () => {
   assert.match(pageHtml, /fetch\('\/api\/defeat-counts'/);
-  assert.match(pageHtml, /Splat3OverlayCard\.updateDefeatCounts\(root, record\)/);
+  // 显示哪些鲑鱼跟着数据一起轮询，不从地址里读。
+  assert.match(pageHtml, /Splat3OverlayCard\.updateDefeatCounts\(root, record, undefined, record\?\.show\)/);
+  assert.doesNotMatch(pageHtml, /location\.search/);
   assert.ok(pageHtml.indexOf('/game-names.js') < pageHtml.indexOf('/overlay-card-renderer.js'));
   assert.match(appJs, /cards\?\.updateDefeatCounts\(scale, dashboard\.coopRecord\(\), records\.imageSrc\)/);
-  // 应用里的预览按目录里的尺寸排版。
+  // 应用预览保留逻辑尺寸，OBS 使用高分辨率。
   const { width, height } = catalog.find((card) => card.id === 'defeat-counts');
-  assert.ok(previewCss.includes(`.overlay-preview__scale > .defeat-count-card { --obs-card-width: ${width}px; --obs-card-height: ${height}px; }`));
+  assert.equal(width, 3072);
+  assert.equal(height, 256);
+  assert.ok(previewCss.includes(`.overlay-preview__scale > .defeat-count-card { --obs-card-width: 768px; --obs-card-height: 64px; }`));
+});
+
+
+test('defeat selections keep the SplatNet order and unknown selections retain all entries', () => {
+  const { cards } = setup();
+  const all = cards.defeatCountItems(record());
+  const selected = cards.selectedDefeatItems(all, ['bosses:23', 'enemies:4']);
+  assert.deepEqual(Array.from(selected.enemies, (item) => item.key), ['enemies:4']);
+  assert.deepEqual(Array.from(selected.bosses, (item) => item.key), ['bosses:23']);
+  assert.equal(cards.defeatCountWidth(selected), 121);
+  assert.equal(cards.defeatCountWidth(cards.selectedDefeatItems(all, ['enemies:4'])), 58);
+  // 没选过或一个都对不上（比如记录里没有这些鲑鱼）时全部显示。
+  assert.equal(cards.selectedDefeatItems(all, null), all);
+  assert.equal(cards.selectedDefeatItems(all, undefined), all);
+  assert.equal(cards.selectedDefeatItems(all, ['unknown']), all);
+});
+
+test('picking Salmonids in the preview saves the choice instead of changing the OBS address', () => {
+  // 地址固定是目录里的 /defeat-counts，选择存进应用设置，OBS 页面轮询时一起取。
+  assert.equal(catalog.find((card) => card.id === 'defeat-counts').route, '/defeat-counts');
+  assert.doesNotMatch(appJs, /defeat-counts\?|URLSearchParams\(\{ show/);
+  assert.doesNotMatch(appJs, /splat3-obs-defeat-selection/);
+  assert.match(appJs, /invoke\('get_obs_defeat_selection'\)/);
+  assert.match(appJs, /invoke\('save_obs_defeat_selection', \{ selection: keys \}\)/);
+  // 切换鲑鱼不会让已经复制的地址失效。
+  const setter = appJs.slice(appJs.indexOf('function setObsDefeatSelection'), appJs.indexOf('function toggleObsDefeat'));
+  assert.doesNotMatch(setter, /copiedUrl/);
+});
+
+test('filtered OBS cards compact their width and omit the divider for a single group', () => {
+  const { cards, root } = setup();
+  cards.updateDefeatCounts(root, record(), undefined, ['enemies:4']);
+  assert.equal(root.children[0].children.length, 1);
+  assert.equal(root.children[0].children[0].title, '炸弹鱼');
+  assert.equal(root.children[0].style.width, '58px');
+  cards.updateDefeatCounts(root, record(), undefined, ['enemies:4', 'bosses:23']);
+  assert.equal(root.children[0].children.length, 3);
+  assert.equal(root.children[0].style.width, '121px');
+  // 不管显示哪些，都记下全部显示时的宽度（两种巨大鲑鱼加三种头目鲑鱼）。
+  assert.equal(root.children[0].dataset.fullWidth, '259');
+});
+
+test('the OBS page keeps the same height while Salmonids are hidden or shown in the app', async () => {
+  // 在普通浏览器窗口里打开：卡片受宽度限制，以前隐藏鲑鱼后会被放大、变高。
+  for (const [width, height] of [[1024, 768], [2876, 256], [1280, 720]]) {
+    let show = null;
+    const page = openPage({ width, height, data: () => ({ ...record(), show }) });
+    await page.update();
+    const full = { scale: page.root.children[0].style.transform, height: page.root.style.height };
+    for (const keys of [['enemies:4'], ['bosses:23', 'enemies:4'], ['enemies:17', 'bosses:30', 'bosses:99'], null]) {
+      show = keys;
+      await page.update();
+      const card = page.root.children[0];
+      assert.deepEqual({ scale: card.style.transform, height: page.root.style.height }, full, `${width}×${height} ${keys}`);
+      // 只有宽度跟着显示的鲑鱼变：卡片靠左，右边空出来。
+      const scale = Number(/scale\(([\d.]+)\)/.exec(card.style.transform)[1]);
+      assert.equal(page.root.style.width, `${parseFloat(card.style.width) * scale}px`);
+      assert.ok(parseFloat(card.style.width) * scale <= width + 1e-6);
+    }
+  }
+});
+
+test('the app recommends one OBS source size for every Salmonid selection', () => {
+  // 按全部鲑鱼算建议宽度，在预览里隐藏或显示鲑鱼时不用改 OBS 来源的尺寸。
+  const sizeFn = appJs.slice(appJs.indexOf('function obsSourceSize'), appJs.indexOf('function renderObsUrl'));
+  assert.match(sizeFn, /obsDefeatItems\(\)/);
+  assert.doesNotMatch(sizeFn, /obsSelectedDefeats/);
+  assert.match(pageHtml, /card\.dataset\.fullWidth/);
 });

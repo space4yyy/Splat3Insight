@@ -172,3 +172,29 @@ test('OBS page templates receive dimensions from the card catalog', () => {
     assert.match(page, /__OBS_CARD_HEIGHT__/);
   }
 });
+
+test('data cards recommend 1280 × 320 while both renderers keep the same logical layout', () => {
+  for (const card of cards.filter((card) => card.page === 'overlay')) {
+    assert.equal(card.width, 1280);
+    assert.equal(card.height, 320);
+  }
+  assert.match(overlayHtml, /#root > \.overlay-card, #root > \.salmon-run-card \{ --obs-card-width: 320px; --obs-card-height: 80px; \}/);
+  assert.match(overlayHtml, /Math\.min\(viewportWidth \/ cardWidth, viewportHeight \/ cardHeight\)/);
+});
+
+test('rescue icons alone get a thin outline for bright backgrounds', () => {
+  const style = overlayCss.match(/\.salmon-run-card__stats-icon\[data-salmon-stat-icon="rescue"\],\s*\.salmon-run-card__stats-icon\[data-salmon-stat-icon="rescued"\] \{([^}]+)\}/)?.[1];
+  assert.ok(style);
+  assert.match(style, /filter: drop-shadow/);
+  assert.doesNotMatch(style, /background:/);
+});
+
+
+test('clock and defeat count sources recommend four times their logical layout sizes', () => {
+  const clock = cards.find((card) => card.id === 'clock');
+  const defeats = cards.find((card) => card.id === 'defeat-counts');
+  assert.deepEqual([clock.width, clock.height], [640, 240]);
+  assert.deepEqual([defeats.width, defeats.height], [3072, 256]);
+  assert.match(clockHtml, /#root > \.clock-card \{ --obs-card-width: 160px; --obs-card-height: 60px; \}/);
+  assert.match(defeatCountsHtml, /#root > \.defeat-count-card \{ --obs-card-width: 768px; --obs-card-height: 64px; \}/);
+});

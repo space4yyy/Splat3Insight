@@ -472,6 +472,20 @@ ${SALMON_TOTALS_HTML}
     return { enemies: items('enemies'), bosses: items('bosses') };
   }
 
+  // 应用里选的要显示的鲑鱼（item.key 的列表，null 表示全部），顺序仍按 SplatNet。
+  function selectedDefeatItems(items, keys) {
+    if (!Array.isArray(keys)) return items;
+    const selected = new Set(keys);
+    const filtered = Object.fromEntries(['enemies', 'bosses'].map((group) => [group, items[group].filter((item) => selected.has(item.key))]));
+    // 选择里一个都对不上（记录里没有这些鲑鱼）时回退到全部，卡片不会变空。
+    return filtered.enemies.length || filtered.bosses.length ? filtered : items;
+  }
+  // 卡片宽度：左右内边距 20，每格 38 加间距 8，两组都有时再加竖线 9 和一个间距。
+  function defeatCountWidth(items) {
+    const n = items.enemies.length + items.bosses.length;
+    return Math.max(58, 46 * n + 12 + (items.enemies.length && items.bosses.length ? 17 : 0));
+  }
+
   function createDefeatCountCard(root, items) {
     const card = document.createElement('section');
     card.className = 'defeat-count-card';
@@ -479,6 +493,7 @@ ${SALMON_TOTALS_HTML}
     const addItem = (item) => {
       const cell = document.createElement('span');
       cell.className = 'defeat-count-card__item';
+      cell.dataset.defeatKey = item.key;
       cell.title = item.name;
       const icon = document.createElement('img');
       icon.className = 'defeat-count-card__icon';
@@ -507,10 +522,12 @@ ${SALMON_TOTALS_HTML}
     return { card, counts };
   }
 
-  // 每次刷新只改数字（变化时滚动并发亮）；种类或图片变了才重建。
-  function updateDefeatCounts(root, record, imageSrc) {
+  // 每次刷新只改数字（变化时滚动并发亮）；显示的种类或图片变了才重建。
+  // selectedKeys 是要显示的鲑鱼，OBS 页面用接口里的 show；不给时全部显示（应用预览）。
+  function updateDefeatCounts(root, record, imageSrc, selectedKeys) {
     prepareCardType(root, 'defeat-counts');
-    const items = defeatCountItems(record, imageSrc);
+    const all = defeatCountItems(record, imageSrc);
+    const items = selectedDefeatItems(all, selectedKeys);
     const list = [...items.enemies, ...items.bosses];
     let refs = mountedDefeatCards.get(root);
     if (!list.length) {
@@ -523,6 +540,9 @@ ${SALMON_TOTALS_HTML}
       mountedDefeatCards.set(root, refs);
     }
     refs.card.hidden = false;
+    refs.card.style.width = `${defeatCountWidth(items)}px`;
+    // 全部显示时的宽度。OBS 页面按它缩放，隐藏或显示鲑鱼时卡片只是变短或变长，高度不变。
+    refs.card.dataset.fullWidth = String(defeatCountWidth(all));
     list.forEach((item, index) => {
       showNumber(refs.counts[index], groupDigits(item.count));
       refs.counts[index].classList.toggle('is-zero', item.count === 0);
@@ -571,6 +591,8 @@ ${SALMON_TOTALS_HTML}
     newestCardType,
     updateDefeatCounts,
     defeatCountItems,
+    selectedDefeatItems,
+    defeatCountWidth,
     updateClock,
     clockText,
     labels: Object.freeze({ rule: localizeRule, coopStage: localizeCoopStage, grade: localizeGrade }),

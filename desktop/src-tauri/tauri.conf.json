@@ -4,7 +4,8 @@
   "version": "0.3.11",
   "identifier": "ink.space4.Splat3Insight",
   "build": {
-    "frontendDist": "../ui"
+    "frontendDist": "../ui",
+    "additionalWatchFolders": ["../ui"]
   },
   "app": {
     "withGlobalTauri": true,

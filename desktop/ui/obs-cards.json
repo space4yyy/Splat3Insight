@@ -7,8 +7,8 @@
     "optionLabel": "自动",
     "description": "自动显示最近更新的对战或鲑鱼跑数据。",
     "sizeLabel": "OBS 尺寸推荐",
-    "width": 320,
-    "height": 80
+    "width": 1280,
+    "height": 320
   },
   {
     "id": "bankara-match",
@@ -18,8 +18,8 @@
     "optionLabel": "蛮颓比赛",
     "description": "固定显示最近的蛮颓开放或挑战比赛及近期胜率。",
     "sizeLabel": "OBS 尺寸推荐",
-    "width": 320,
-    "height": 80
+    "width": 1280,
+    "height": 320
   },
   {
     "id": "x-match",
@@ -29,8 +29,8 @@
     "optionLabel": "X比赛",
     "description": "固定显示最近一场 X 赛及 X 赛近期胜率。",
     "sizeLabel": "OBS 尺寸推荐",
-    "width": 320,
-    "height": 80
+    "width": 1280,
+    "height": 320
   },
   {
     "id": "salmon-run",
@@ -40,8 +40,8 @@
     "optionLabel": "鲑鱼跑",
     "description": "固定显示鲑鱼跑数据，不随最近活动切换。",
     "sizeLabel": "OBS 尺寸推荐",
-    "width": 320,
-    "height": 80
+    "width": 1280,
+    "height": 320
   },
   {
     "id": "defeat-counts",
@@ -51,8 +51,8 @@
     "optionLabel": "击倒数量",
     "description": "一行显示鲑鱼跑记录里巨大鲑鱼和头目鲑鱼的累计击倒数量。",
     "sizeLabel": "OBS 尺寸推荐",
-    "width": 768,
-    "height": 64
+    "width": 3072,
+    "height": 256
   },
   {
     "id": "clock",
@@ -62,7 +62,7 @@
     "optionLabel": "时钟",
     "description": "显示本机时区的当前时间。",
     "sizeLabel": "OBS 尺寸推荐",
-    "width": 160,
-    "height": 60
+    "width": 640,
+    "height": 240
   }
 ]

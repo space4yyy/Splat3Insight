@@ -54,6 +54,8 @@ struct AppState {
     sync_runtime: Arc<SyncRuntime>,
     sync_trigger: Arc<sync_schedule::SyncTrigger>,
     overlay_service: overlay_server::OverlayServiceController,
+    /// OBS 击倒数量卡片显示的鲑鱼，和 OBS 服务共用同一份。
+    obs_defeat_selection: overlay_server::DefeatSelection,
 }
 
 /// 已经打开登录页、等待粘贴“选择此人”链接的 Nintendo 登录。
@@ -71,6 +73,8 @@ struct AppPreferences {
     /// 用户选的数据导出文件夹；没选过时导出到系统的下载文件夹。
     export_directory: Option<PathBuf>,
     network_proxy: NetworkProxySettings,
+    /// OBS 击倒数量卡片显示哪些鲑鱼（`enemies:4`、`bosses:23` 这样的键）；没选过时为 None，全部显示。
+    obs_defeat_counts_show: Option<Vec<String>>,
 }
 
 /// 自定义网络代理。代理 URL 不允许包含用户名或密码，因此可以安全地保存在偏好设置文件里。
@@ -1521,6 +1525,33 @@ fn stop_overlay_service(
 }
 
 #[tauri::command]
+fn get_obs_defeat_selection(state: State<'_, AppState>) -> Result<Option<Vec<String>>, String> {
+    state
+        .obs_defeat_selection
+        .read()
+        .map(|selection| selection.clone())
+        .map_err(|_| "击倒数量卡片的显示设置被占用".to_owned())
+}
+
+/// 保存击倒数量卡片显示哪些鲑鱼。OBS 里的卡片地址不变，下一次轮询数据时就按新选择显示。
+#[tauri::command]
+fn save_obs_defeat_selection(
+    state: State<'_, AppState>,
+    selection: Option<Vec<String>>,
+) -> Result<Option<Vec<String>>, String> {
+    let selection = overlay_server::normalize_defeat_selection(selection);
+    let mut current = state
+        .obs_defeat_selection
+        .write()
+        .map_err(|_| "击倒数量卡片的显示设置被占用".to_owned())?;
+    let mut preferences = load_app_preferences(&state.preferences_path)?;
+    preferences.obs_defeat_counts_show = selection.clone();
+    store_app_preferences(&state.preferences_path, &preferences)?;
+    *current = selection.clone();
+    Ok(selection)
+}
+
+#[tauri::command]
 async fn get_overlay_state(
     account_id: Option<String>,
     match_type: Option<String>,
@@ -2267,6 +2298,10 @@ pub fn run() {
                     }
                 };
             let network_proxy = Arc::new(RwLock::new(saved_network_proxy));
+            let obs_defeat_selection: overlay_server::DefeatSelection =
+                Arc::new(RwLock::new(overlay_server::normalize_defeat_selection(
+                    preferences.obs_defeat_counts_show.clone(),
+                )));
 
             let main_window = app
                 .get_webview_window("main")
@@ -2347,6 +2382,7 @@ pub fn run() {
                     history_dir: history_dir.clone(),
                     activity: obs_activity.clone(),
                     image_cache,
+                    defeat_selection: Arc::clone(&obs_defeat_selection),
                 },
             );
             app.manage(AppState {
@@ -2359,6 +2395,7 @@ pub fn run() {
                 sync_runtime: Arc::clone(&sync_runtime),
                 sync_trigger: Arc::clone(&sync_trigger),
                 overlay_service: overlay_service.clone(),
+                obs_defeat_selection,
             });
             app.manage(app_update::PendingUpdate::default());
             if let Err(error) =
@@ -2418,6 +2455,8 @@ pub fn run() {
             get_overlay_service_status,
             start_overlay_service,
             stop_overlay_service,
+            get_obs_defeat_selection,
+            save_obs_defeat_selection,
             get_overlay_state,
             get_dashboard_facts,
             get_history_record,
@@ -2598,6 +2637,32 @@ mod tests {
         assert_eq!(
             load_app_preferences(&path).unwrap().export_directory,
             Some(chosen)
+        );
+    }
+
+    #[test]
+    fn preferences_remember_which_salmonids_the_obs_defeat_card_shows() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("preferences.json");
+        // 以前存的设置里没有这一项：全部显示。
+        fs::write(&path, r#"{"window_placement":null}"#).unwrap();
+        assert!(load_app_preferences(&path)
+            .unwrap()
+            .obs_defeat_counts_show
+            .is_none());
+
+        let show = vec!["enemies:4".to_owned(), "bosses:23".to_owned()];
+        store_app_preferences(
+            &path,
+            &AppPreferences {
+                obs_defeat_counts_show: Some(show.clone()),
+                ..AppPreferences::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            load_app_preferences(&path).unwrap().obs_defeat_counts_show,
+            Some(show)
         );
     }
 
