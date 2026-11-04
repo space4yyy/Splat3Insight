@@ -290,8 +290,9 @@
   }
 
   // 图标和 OBS 卡片一致；救援、被救按最近一场打工的物种用鱿鱼或章鱼，不知道时用鱿鱼。
-  function contribution(data, species) {
+  function contribution(data, species, look) {
     const speciesAsset = species === 'OCTOLING' ? 'octo' : 'squid';
+    const variant = look === 'light' ? '-light' : '';
     const item = (icon, value, label) => el('div', { class: 'contrib-item' }, [
       el('img', { src: icon, alt: '' }),
       el('span', {}, [el('span', { class: 'value', text: value }), el('span', { class: 'label', text: label })]),
@@ -299,8 +300,8 @@
     return card('个人贡献', null, el('div', { class: 'contrib' }, [
       item('images/gold-ikura.svg', fixed1(data.golden), '金鲑鱼卵'),
       item('images/ikura.svg', grouped(data.power), '红鲑鱼卵'),
-      item(`images/helpen-${speciesAsset}.svg`, fixed1(data.rescues), '救援'),
-      item(`images/helped-${speciesAsset}.svg`, fixed1(data.rescued), '被救'),
+      item(`images/helpen-${speciesAsset}${variant}.svg`, fixed1(data.rescues), '救援'),
+      item(`images/helped-${speciesAsset}${variant}.svg`, fixed1(data.rescued), '被救'),
     ]), el('span', { class: 'head-note', text: '场均' }));
   }
 
@@ -324,7 +325,7 @@
         salmonHero(data.hero),
         row('row-a is-wide', [kings(data.kings, data.scales)]),
         row('row-b', [grade(data.grade, kind), waves(data.tides, data.events)]),
-        row('row-c', [contribution(data.contribution, species), highlights(data.highlights)]),
+        row('row-c', [contribution(data.contribution, species, look), highlights(data.highlights)]),
       ];
     const classes = ['share', period.kind === 'season' && new Date(period.start).getUTCFullYear() !== new Date(period.end - 1).getUTCFullYear() ? 'is-cross-year' : null, content === 'salmon' ? 'is-salmon' : 'is-ranked', look === 'light' ? 'is-light' : null].filter(Boolean).join(' ');
     return el('article', { class: classes, 'aria-label': `${CONTENT[content]}${KIND[kind]}：${period.title}` }, [head, ...body]);
