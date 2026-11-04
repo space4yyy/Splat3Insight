@@ -544,10 +544,11 @@ table.data tr.is-me td { background: var(--panel-raised); color: var(--ink); }
 .paste-panel p { margin: 0; color: var(--ink-2); font-size: 13px; }
 .paste-panel textarea { width: 100%; min-height: 92px; resize: vertical; padding: 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel); color: var(--ink); font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .paste-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.account-message { margin: 0; color: var(--ink-2); font-size: 13px; overflow-wrap: anywhere; }
-.account-message.is-error { color: var(--danger-text); }
-.account-message .ghost { margin-left: 8px; }
-.settings-stack { display: grid; gap: 16px; max-width: 880px; }
+.app-message { min-width: 0; margin: 0; padding: 12px 16px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); color: var(--ink-2); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.app-message.is-error { border-color: var(--danger-text); background: var(--danger-wash); color: var(--danger-text); }
+.app-message .ghost { margin-left: 8px; }
+.main:has(#view-settings:not([hidden])) > .app-message, .settings-stack { max-width: 880px; }
+.settings-stack { display: grid; gap: 16px; }
 .settings-panel { gap: 4px; }
 .settings-list { display: grid; }
 .settings-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; min-height: 58px; padding: 10px 0; border-bottom: 1px solid var(--line); }

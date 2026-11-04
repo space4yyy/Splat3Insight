@@ -9,6 +9,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+mod auth_error;
 pub mod dashboard;
 pub mod history;
 pub mod images;

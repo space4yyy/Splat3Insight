@@ -5,6 +5,8 @@
 //! app; `finish` validates that link. Passwords never pass through the widget
 //! UI.
 
+use crate::auth_error::{parse_response, provider_error};
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -13,8 +15,8 @@ use url::{form_urlencoded, Url};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NintendoIdentityError {
     Transport,
-    SessionTokenRejected,
-    HttpStatus(u16),
+    SessionTokenRejected(String),
+    HttpStatus(u16, String),
     InvalidResponse,
     InvalidProfile,
 }
@@ -23,16 +25,13 @@ impl std::fmt::Display for NintendoIdentityError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Transport => write!(formatter, "连接 Nintendo 账号服务失败，请检查网络后重试"),
-            Self::SessionTokenRejected => {
+            Self::SessionTokenRejected(details) => {
                 write!(
                     formatter,
-                    "已保存的 Nintendo session token 已失效，请重新登录"
+                    "已保存的 Nintendo session token 已失效，请重新登录：{details}"
                 )
             }
-            Self::HttpStatus(status) => write!(
-                formatter,
-                "Nintendo 账号服务暂时不可用（HTTP {status}），请稍后重试"
-            ),
+            Self::HttpStatus(_, details) => write!(formatter, "{details}"),
             Self::InvalidResponse => {
                 write!(
                     formatter,
@@ -177,7 +176,7 @@ pub async fn exchange_session_token_with_proxy(
     proxy_address: Option<&str>,
 ) -> Result<NintendoIdentity, String> {
     let client = build_client(proxy_address)?;
-    let session_response = client
+    let response = client
         .post("https://accounts.nintendo.com/connect/1.0.0/api/session_token")
         .header("User-Agent", "OnlineLounge/1.0 NASDKAPI")
         .form(&[
@@ -187,12 +186,15 @@ pub async fn exchange_session_token_with_proxy(
         ])
         .send()
         .await
-        .map_err(|error| format!("Nintendo session request failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("Nintendo session request failed: {error}"))?
-        .json::<SessionTokenResponse>()
+        .map_err(|error| format!("Nintendo session request failed: {error}"))?;
+    let status = response.status();
+    let body = response
+        .text()
         .await
-        .map_err(|error| format!("Nintendo session response was invalid: {error}"))?;
+        .map_err(|error| format!("Nintendo session 响应读取失败：{error}"))?;
+    let value = parse_response("Nintendo session", status, &body)?;
+    let session_response = serde_json::from_value::<SessionTokenResponse>(value)
+        .map_err(|error| format!("Nintendo session 响应无效：{error}"))?;
 
     identity_from_session_token(&client, &session_response.session_token)
         .await
@@ -255,13 +257,17 @@ async fn identity_from_session_token(
         .send()
         .await
         .map_err(|_| NintendoIdentityError::Transport)?;
-    if !profile.status().is_success() {
-        return Err(NintendoIdentityError::HttpStatus(profile.status().as_u16()));
-    }
+    let status = profile.status();
     let profile_body = profile
         .text()
         .await
         .map_err(|_| NintendoIdentityError::Transport)?;
+    if !status.is_success() {
+        return Err(NintendoIdentityError::HttpStatus(
+            status.as_u16(),
+            parse_response("Nintendo 账号资料", status, &profile_body).unwrap_err(),
+        ));
+    }
     let profile = serde_json::from_str::<UserProfileResponse>(&profile_body)
         .map_err(|_| NintendoIdentityError::InvalidResponse)?;
 
@@ -301,10 +307,17 @@ fn parse_token_response(
         .and_then(|value| value.get("error"))
         .and_then(serde_json::Value::as_str);
     if error_code == Some("invalid_grant") {
-        return Err(NintendoIdentityError::SessionTokenRejected);
+        return Err(NintendoIdentityError::SessionTokenRejected(provider_error(
+            "Nintendo 账号授权",
+            status.as_u16(),
+            payload.as_ref().unwrap(),
+        )));
     }
     if !status.is_success() {
-        return Err(NintendoIdentityError::HttpStatus(status.as_u16()));
+        return Err(NintendoIdentityError::HttpStatus(
+            status.as_u16(),
+            parse_response("Nintendo 账号授权", status, body).unwrap_err(),
+        ));
     }
     serde_json::from_str::<NintendoTokenResponse>(body)
         .map_err(|_| NintendoIdentityError::InvalidResponse)
@@ -340,7 +353,12 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(error, NintendoIdentityError::SessionTokenRejected);
+        assert!(matches!(
+            error,
+            NintendoIdentityError::SessionTokenRejected(_)
+        ));
+        assert!(error.to_string().contains("invalid_grant"));
+        assert!(error.to_string().contains("invalid credentials"));
     }
 
     #[test]
@@ -351,7 +369,8 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(error, NintendoIdentityError::HttpStatus(503));
+        assert!(matches!(error, NintendoIdentityError::HttpStatus(503, _)));
+        assert!(error.to_string().contains("server_error"));
     }
 
     #[test]

@@ -677,7 +677,7 @@ fn account_auth_error(
     error: String,
 ) -> String {
     write_account_log(path, stage, display_name, account_id, &error);
-    format!("{error}\n认证日志：{}", path.display())
+    error
 }
 
 pub(crate) fn append_timestamped_log(path: &Path, scope: &str, message: &str) {
@@ -727,7 +727,7 @@ pub(crate) fn log_console_error(scope: &str, message: &str) {
 
 fn auth_error(path: &Path, stage: &str, error: String) -> String {
     write_auth_log(path, stage, &error);
-    format!("{error}\n认证日志：{}", path.display())
+    error
 }
 
 fn load_history_summary(
@@ -953,7 +953,7 @@ async fn sync_account(
 
 #[derive(Debug, PartialEq, Eq)]
 enum TokenRefreshFailure {
-    NintendoSessionExpired,
+    NintendoSessionExpired(String),
     Failed(String),
 }
 
@@ -971,8 +971,8 @@ impl From<&str> for TokenRefreshFailure {
 
 fn format_token_refresh_error(error: &TokenRefreshFailure) -> String {
     match error {
-        TokenRefreshFailure::NintendoSessionExpired => {
-            "Nintendo 登录状态已失效，请重新登录。".to_owned()
+        TokenRefreshFailure::NintendoSessionExpired(details) => {
+            format!("Nintendo 登录状态已失效，请重新登录。{details}")
         }
         TokenRefreshFailure::Failed(details) => {
             format!("SplatNet token 自动刷新失败，请检查网络或稍后重试：{details}")
@@ -1874,7 +1874,9 @@ async fn refresh_splatnet_tokens_for_account(
             "系统凭据库里没有这个账号的 Nintendo 登录信息，需要重新登录",
         );
         mark_login_expired(registry, account_id);
-        return Err(TokenRefreshFailure::NintendoSessionExpired);
+        return Err(TokenRefreshFailure::NintendoSessionExpired(
+            "系统凭据库中没有登录信息".to_owned(),
+        ));
     };
     let session_token = secret.session_token;
 
@@ -1895,11 +1897,11 @@ async fn refresh_splatnet_tokens_for_account(
                 account_id,
                 error.to_string(),
             );
-            if error != NintendoIdentityError::SessionTokenRejected {
+            if !matches!(error, NintendoIdentityError::SessionTokenRejected(_)) {
                 return Err(TokenRefreshFailure::Failed(details));
             }
             mark_login_expired(registry, account_id);
-            return Err(TokenRefreshFailure::NintendoSessionExpired);
+            return Err(TokenRefreshFailure::NintendoSessionExpired(details));
         }
     };
     let mut auth_config = SplatNetAuthConfig::default();
@@ -3045,7 +3047,11 @@ mod tests {
 
     #[test]
     fn rejected_nintendo_session_token_requests_a_new_login() {
-        let message = format_token_refresh_error(&TokenRefreshFailure::NintendoSessionExpired);
+        let message = format_token_refresh_error(&TokenRefreshFailure::NintendoSessionExpired(
+            "Nintendo 账号授权失败（HTTP 400）：error=invalid_grant；error_description=Invalid session token".to_owned()
+        ));
+        assert!(message.contains("invalid_grant"));
+        assert!(message.contains("Invalid session token"));
         assert!(message.contains("请重新登录"));
     }
 

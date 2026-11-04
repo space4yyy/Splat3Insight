@@ -102,12 +102,15 @@
   let messagePath = null;
   // 传入 path 时提示后面带「在访达中显示」，例如导出完成后打开导出文件所在的文件夹。
   function setMessage(value, error = false, path = null) {
+    message.setAttribute('role', error ? 'alert' : 'status');
+    message.setAttribute('aria-live', error ? 'assertive' : 'polite');
     messageText.textContent = value;
     message.title = value;
     message.hidden = !value;
     message.classList.toggle('is-error', error);
     messagePath = path;
     messageReveal.hidden = !path;
+    if (value && error) message.scrollIntoView({ block: 'nearest' });
   }
   messageReveal.addEventListener('click', async () => {
     if (!messagePath) return;
@@ -784,7 +787,7 @@
       await invoke('refresh_splatnet_tokens', { accountId });
     } catch (error) {
       app.authError = String(error);
-      setMessage(String(error), true);
+      setMessage(`SplatNet 授权失败：${app.authError}`, true);
       if (button) button.disabled = false;
       // Nintendo 登录状态失效时，账号会被标成需要重新登录；重新读取账号列表，「重新登录」才会出现。
       try { await refreshAccounts(); } catch { /* 下次刷新状态时再读 */ }
@@ -1073,8 +1076,8 @@
         setMessage(`首次历史同步完成：新增 ${summary.added_battle_count} 条对战、${summary.added_coop_count} 条打工。`);
         await loadFacts({ force: true });
       } catch (error) {
-        await refreshAccounts();
-        setMessage(`Nintendo Account 已登录，但 SplatNet 首次同步失败：${String(error)}。可在账号列表中重试。`, true);
+        setMessage(`Nintendo Account 已登录，但 SplatNet 授权或首次同步失败：${String(error)}`, true);
+        try { await refreshAccounts(); } catch { /* 保留原始失败原因，下次刷新时再读账号列表。 */ }
       }
     } catch (error) {
       // 认证一次就用掉了这次登录，同一个链接不能再试：收起粘贴框，重新点「添加账号」或「重新登录」。

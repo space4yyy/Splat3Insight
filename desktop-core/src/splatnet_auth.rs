@@ -16,6 +16,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use url::Url;
 
+use crate::auth_error::{parse_response, provider_detail, provider_error};
 use crate::nintendo_auth::NintendoIdentity;
 
 pub const SPLATNET_URL: &str = "https://api.lp1.av5ja.srv.nintendo.net";
@@ -142,15 +143,7 @@ impl<'a> SplatNetClient<'a> {
             },
         )
         .await?;
-        let response_json: Value = serde_json::from_str(&response_text)
-            .map_err(|error| format!("f 参数服务返回了无效 JSON（HTTP {status}）：{error}"))?;
-        if !status.is_success() {
-            return Err(provider_error(
-                "f 参数服务",
-                status.as_u16(),
-                &response_json,
-            ));
-        }
+        let response_json = parse_response("f 参数服务", status, &response_text)?;
         parse_f_generation_response(&response_json)
     }
 
@@ -195,16 +188,24 @@ impl<'a> SplatNetClient<'a> {
             .await
             .map_err(|error| format!("Nintendo Coral 响应读取失败: {error}"))?;
         if !status.is_success() {
-            let value = serde_json::from_slice::<Value>(&response_bytes).unwrap_or(Value::Null);
-            return Err(provider_error("Nintendo Coral", status.as_u16(), &value));
+            return Err(parse_response(
+                "Nintendo Coral",
+                status,
+                &String::from_utf8_lossy(&response_bytes),
+            )
+            .unwrap_err());
         }
-
-        if is_encrypted {
-            decrypt_coral_response(&self.http, self.config, self.account_id, &response_bytes).await
+        let value = if is_encrypted {
+            decrypt_coral_response(&self.http, self.config, self.account_id, &response_bytes)
+                .await?
         } else {
-            serde_json::from_slice(&response_bytes)
-                .map_err(|error| format!("Nintendo Coral 返回了无效 JSON：{error}"))
-        }
+            parse_response(
+                "Nintendo Coral",
+                status,
+                &String::from_utf8_lossy(&response_bytes),
+            )?
+        };
+        validate_coral_response(value)
     }
 
     async fn fetch_bullet_token(
@@ -248,20 +249,7 @@ impl<'a> SplatNetClient<'a> {
             .text()
             .await
             .map_err(|error| format!("SplatNet bullet token 响应读取失败: {error}"))?;
-        let response_json: Value = serde_json::from_str(&response_text).unwrap_or(Value::Null);
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err("SplatNet game web token 无效或已过期".to_owned());
-        }
-        if status == reqwest::StatusCode::FORBIDDEN {
-            return Err("SplatNet 客户端版本已过期，请稍后更新应用".to_owned());
-        }
-        if !status.is_success() {
-            return Err(provider_error(
-                "SplatNet bullet token",
-                status.as_u16(),
-                &response_json,
-            ));
-        }
+        let response_json = parse_response("SplatNet bullet token", status, &response_text)?;
         let bullet_token = required_string(
             &response_json,
             "bulletToken",
@@ -416,11 +404,7 @@ async fn fetch_nso_app_version(
         || http.get(&url).header("Accept", "application/json"),
     )
     .await?;
-    let value: Value = serde_json::from_str(&response_text)
-        .map_err(|error| format!("Nintendo Switch Online 版本响应无效: {error}"))?;
-    if !status.is_success() {
-        return Err(provider_error("Nintendo 版本服务", status.as_u16(), &value));
-    }
+    let value = parse_response("Nintendo 版本服务", status, &response_text)?;
     required_string(&value, "nso_version", "版本服务缺少 nso_version")
 }
 
@@ -465,7 +449,7 @@ fn nxapi_tokens() -> &'static Mutex<HashMap<String, NxapiToken>> {
 
 enum NxapiTokenError {
     /// 刷新令牌已失效：改用 client_credentials 重新申请。
-    InvalidGrant,
+    InvalidGrant(String),
     Failed(String),
 }
 
@@ -495,12 +479,12 @@ async fn nxapi_access_token(
             )
             .await
         }
-        None => Err(NxapiTokenError::InvalidGrant),
+        None => Err(NxapiTokenError::InvalidGrant(String::new())),
     };
     let token = match refreshed {
         Ok(token) => token,
         Err(NxapiTokenError::Failed(error)) => return Err(error),
-        Err(NxapiTokenError::InvalidGrant) => request_nxapi_token(
+        Err(NxapiTokenError::InvalidGrant(_)) => request_nxapi_token(
             http,
             config,
             &[
@@ -512,7 +496,7 @@ async fn nxapi_access_token(
         .await
         .map_err(|error| match error {
             NxapiTokenError::Failed(error) => error,
-            NxapiTokenError::InvalidGrant => "nxapi 授权被拒绝".to_owned(),
+            NxapiTokenError::InvalidGrant(error) => error,
         })?,
     };
     if let Ok(mut tokens) = nxapi_tokens().lock() {
@@ -544,20 +528,24 @@ async fn request_nxapi_token(
     .await
     .map_err(|error| NxapiTokenError::Failed(format!("nxapi 授权请求失败: {error}")))?;
     let status = response.status();
-    let value: Value = response
-        .json()
+    let body = response
+        .text()
         .await
-        .map_err(|error| NxapiTokenError::Failed(format!("nxapi 授权响应无效: {error}")))?;
+        .map_err(|error| NxapiTokenError::Failed(format!("nxapi 授权响应读取失败: {error}")))?;
+    let value = serde_json::from_str::<Value>(&body).unwrap_or(Value::Null);
     if !status.is_success() {
         if value.get("error").and_then(Value::as_str) == Some("invalid_grant") {
-            return Err(NxapiTokenError::InvalidGrant);
+            return Err(NxapiTokenError::InvalidGrant(provider_error(
+                "nxapi 授权",
+                status.as_u16(),
+                &value,
+            )));
         }
-        return Err(NxapiTokenError::Failed(provider_error(
-            "nxapi 授权",
-            status.as_u16(),
-            &value,
-        )));
+        return Err(NxapiTokenError::Failed(
+            parse_response("nxapi 授权", status, &body).unwrap_err(),
+        ));
     }
+    let value = parse_response("nxapi 授权", status, &body).map_err(NxapiTokenError::Failed)?;
     NxapiToken::from_response(&value, Instant::now()).map_err(NxapiTokenError::Failed)
 }
 
@@ -642,11 +630,7 @@ async fn decrypt_coral_response(
         },
     )
     .await?;
-    if !status.is_success() {
-        return Err(format!("解密 Nintendo Coral 响应失败（HTTP {status}）"));
-    }
-    let value: Value = serde_json::from_str(&response_text)
-        .map_err(|error| format!("解密服务返回了无效 JSON：{error}"))?;
+    let value = parse_response("解密 Nintendo Coral 响应", status, &response_text)?;
     if let Some(data) = value.get("data").and_then(Value::as_str) {
         return serde_json::from_str(data)
             .map_err(|error| format!("解密后的 Nintendo Coral 响应无效：{error}"));
@@ -773,20 +757,22 @@ fn nested_string(value: &Value, path: &[&str], error: &str) -> Result<String, St
     }
 }
 
-fn provider_error(service: &str, status: u16, value: &Value) -> String {
-    let detail = safe_provider_detail(value, &["error", "reason", "message", "error_description"])
-        .unwrap_or("服务返回错误");
-    format!("{service}失败（HTTP {status}）：{detail}")
+fn validate_coral_response(value: Value) -> Result<Value, String> {
+    if value
+        .get("status")
+        .and_then(Value::as_i64)
+        .is_some_and(|status| status != 0)
+    {
+        return Err(provider_error("Nintendo Coral", 200, &value));
+    }
+    Ok(value)
 }
 
 fn parse_f_generation_response(value: &Value) -> Result<FGeneration, String> {
     if value.get("error").and_then(Value::as_bool) == Some(true)
         || value.get("error").and_then(Value::as_str).is_some()
     {
-        let detail =
-            safe_provider_detail(value, &["reason", "message", "error_description", "error"])
-                .map(str::to_owned)
-                .unwrap_or_else(|| "服务返回错误".to_owned());
+        let detail = provider_detail(value);
         return Err(format!("f 参数服务返回错误：{detail}"));
     }
 
@@ -806,41 +792,6 @@ fn parse_f_generation_response(value: &Value) -> Result<FGeneration, String> {
         request_id,
         timestamp,
         encrypted_body,
-    })
-}
-
-fn safe_provider_detail<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
-    keys.iter().find_map(|key| {
-        let text = value.get(*key)?.as_str()?.trim();
-        let normalized = text.to_ascii_lowercase();
-        let contains_credential_hint = [
-            "token",
-            "cookie",
-            "password",
-            "secret",
-            "authorization",
-            "bearer ",
-            "session",
-            "verifier",
-            "f=",
-        ]
-        .iter()
-        .any(|hint| normalized.contains(hint));
-        let looks_like_opaque_credential = text.len() > 32
-            && !text.chars().any(char::is_whitespace)
-            && text
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || "-_.+/=".contains(character));
-        if text.is_empty()
-            || text.len() > 160
-            || text.chars().any(char::is_control)
-            || contains_credential_hint
-            || looks_like_opaque_credential
-        {
-            None
-        } else {
-            Some(text)
-        }
     })
 }
 
@@ -951,6 +902,27 @@ mod tests {
     #[test]
     fn decodes_standard_base64_encrypted_payloads() {
         assert_eq!(decode_urlsafe_base64("++8=").unwrap(), [251, 239]);
+    }
+
+    #[test]
+    fn coral_business_errors_report_the_interface_error_instead_of_missing_credentials() {
+        let error = validate_coral_response(json!({
+            "status": 9403, "errorMessage": "Membership required"
+        }))
+        .unwrap_err();
+        assert!(error.contains("9403"));
+        assert!(error.contains("Membership required"));
+        assert!(validate_coral_response(json!({"status": 0, "result": {}})).is_ok());
+    }
+
+    #[test]
+    fn f_errors_keep_both_code_and_description() {
+        let error = parse_f_generation_response(&json!({
+            "error": "invalid_token", "error_description": "The access token has expired"
+        }))
+        .unwrap_err();
+        assert!(error.contains("invalid_token"));
+        assert!(error.contains("The access token has expired"));
     }
 
     #[test]
