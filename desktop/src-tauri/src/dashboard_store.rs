@@ -120,6 +120,7 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
         connection,
         "extension_dashboard_coop",
         &[
+            ("enemy_defeats_json", "TEXT"),
             ("golden_assists", "INTEGER"),
             ("weapons_json", "TEXT"),
             ("rotation_start_ms", "INTEGER"),
@@ -242,6 +243,8 @@ fn write_battle(
 }
 
 fn write_coop(connection: &Connection, account_id: &str, fact: &CoopFact) -> Result<(), String> {
+    let enemies_json = serde_json::to_string(&fact.enemy_defeats)
+        .map_err(|error| format!("序列化巨大鲑鱼击倒数失败：{error}"))?;
     let waves_json = serde_json::to_string(&fact.waves)
         .map_err(|error| format!("序列化面板波次数据失败：{error}"))?;
     let weapons_json = serde_json::to_string(&fact.supplied_weapons)
@@ -253,8 +256,8 @@ fn write_coop(connection: &Connection, account_id: &str, fact: &CoopFact) -> Res
                  cleared, waves_json, boss_appeared, boss_defeated, boss_id, boss_name,
                  danger_rate, grade_name, grade_point, golden_eggs, power_eggs, rescue_count,
                  rescued_count, defeat_enemy_count, scale_gold, scale_silver, scale_bronze,
-                 golden_assists, weapons_json, rotation_start_ms, rotation_end_ms
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
+                 golden_assists, weapons_json, rotation_start_ms, rotation_end_ms, enemy_defeats_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)",
             params![
                 account_id,
                 fact.record_id,
@@ -284,6 +287,7 @@ fn write_coop(connection: &Connection, account_id: &str, fact: &CoopFact) -> Res
                 weapons_json,
                 played_at_ms(fact.rotation_start_time.as_deref()),
                 played_at_ms(fact.rotation_end_time.as_deref()),
+                enemies_json,
             ],
         )
         .map_err(|error| format!("保存面板打工数据失败：{error}"))?;
@@ -620,6 +624,7 @@ pub(crate) struct CoopRow {
     scale_bronze: Option<i64>,
     golden_assists: Option<i64>,
     supplied_weapons: Vec<SuppliedWeaponRow>,
+    enemy_defeats: Vec<EnemyDefeatRow>,
     rotation_start_ms: Option<i64>,
     rotation_end_ms: Option<i64>,
 }
@@ -628,6 +633,14 @@ pub(crate) struct CoopRow {
 pub(crate) struct SuppliedWeaponRow {
     name: Option<String>,
     image: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct EnemyDefeatRow {
+    enemy_id: Option<i64>,
+    name: Option<String>,
+    image: Option<usize>,
+    defeat_count: i64,
 }
 
 /// Returns every fact with a known play time, oldest first.
@@ -710,7 +723,7 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
                         waves_json, boss_appeared, boss_defeated, boss_id, boss_name, danger_rate,
                         grade_name, grade_point, golden_eggs, power_eggs, rescue_count,
                         rescued_count, defeat_enemy_count, scale_gold, scale_silver, scale_bronze,
-                        golden_assists, weapons_json, rotation_start_ms, rotation_end_ms
+                        golden_assists, weapons_json, rotation_start_ms, rotation_end_ms, enemy_defeats_json
                  FROM extension_dashboard_coop
                  WHERE account_id = ?1 AND played_at_ms IS NOT NULL
                  ORDER BY played_at_ms, record_id",
@@ -752,6 +765,18 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
                         .map(|weapon| SuppliedWeaponRow {
                             name: weapon.name,
                             image: images.add(weapon.image),
+                        })
+                        .collect(),
+                    enemy_defeats: row
+                        .get::<_, Option<String>>(27)?
+                        .and_then(|json| serde_json::from_str::<Vec<CoopDefeatFact>>(&json).ok())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|enemy| EnemyDefeatRow {
+                            enemy_id: enemy.enemy_id,
+                            name: enemy.name,
+                            image: images.add(enemy.image),
+                            defeat_count: enemy.defeat_count,
                         })
                         .collect(),
                     rotation_start_ms: row.get(25)?,
@@ -981,6 +1006,10 @@ mod tests {
         shift.record.rotation_start_time = Some("2026-10-16T00:00:00Z".to_owned());
         shift.record.rotation_end_time = Some("2026-10-17T16:00:00Z".to_owned());
         shift.raw["myResult"]["goldenAssistCount"] = json!(5);
+        shift.raw["enemyResults"] = json!([
+            { "enemy": { "coopEnemyId": 4, "name": "Steelhead", "image": { "url": "https://example.test/c1.png" } }, "defeatCount": 3, "teamDefeatCount": 8 },
+            { "enemy": { "name": "Missing" }, "teamDefeatCount": 9 }
+        ]);
         shift.raw["weapons"] = json!([
             { "name": "Splattershot", "image": { "url": "https://example.test/c1.png" } }
         ]);
@@ -1012,6 +1041,13 @@ mod tests {
         assert_eq!(facts.battles[1].sub_weapon_image, battle.sub_weapon_image);
         let shift = &facts.coop[0];
         assert_eq!(shift.golden_assists, Some(5));
+        assert_eq!(shift.enemy_defeats.len(), 1);
+        assert_eq!(shift.enemy_defeats[0].defeat_count, 3);
+        assert_eq!(shift.enemy_defeats[0].name.as_deref(), Some("Steelhead"));
+        assert_eq!(
+            link(shift.enemy_defeats[0].image),
+            Some("https://example.test/c1.png")
+        );
         assert_eq!(shift.supplied_weapons.len(), 1);
         assert_eq!(
             shift.supplied_weapons[0].name.as_deref(),

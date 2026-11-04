@@ -201,16 +201,22 @@
   function salmonSummary(shifts, period) {
     const list = shifts.filter((row) => inside(row, period));
     const graded = list.filter((row) => analysis.gradeLadder(row) != null);
-    // 评价起点取本期之前最后一条有评价的记录，跳过缺评价的打工。
-    const before = last(shifts.filter((row) => (
-      row.t < period.start && analysis.gradeLadder(row) != null
-    )));
-    const series = graded.length
-      ? [analysis.gradeLadder(before || graded[0]), ...graded.map(analysis.gradeLadder)]
-      : [];
-    // 记录中的危险度可能是百分数或比例，逐条换算后再统计。
-    const dangers = list.filter((row) => isNum(row.danger))
-      .map((row) => row.danger < 10 ? row.danger * 100 : row.danger);
+    const peak = graded.length ? Math.max(...graded.map(analysis.gradeLadder)) : null;
+    const enemies = new Map();
+    for (const row of list) for (const enemy of row.enemyDefeats || []) {
+      if (!isNum(enemy.count) || !enemy.name) continue;
+      const key = enemy.name;
+      const item = enemies.get(key) || { name: enemy.name, image: enemy.image, count: 0 };
+      item.count += enemy.count;
+      item.image ||= enemy.image;
+      enemies.set(key, item);
+    }
+    // 最高危险度固定为 333%；只计期间内三波通关且未掉线的场次。
+    const maxHazardClears = list.filter((row) => {
+      if (!row.cleared || row.disconnected || !isNum(row.danger)) return false;
+      const danger = row.danger < 10 ? row.danger * 100 : row.danger;
+      return Math.abs(danger - 333) < 0.000001;
+    }).length;
     const matrix = analysis.tideEventMatrix(list);
     // 特殊波次合并三种潮位，只列至少 3 波、出现最多的前 4 种。
     const events = matrix.rows
@@ -247,11 +253,9 @@
         .map((row) => [row.id, [row.defeated, row.appeared]])),
       scales: analysis.scaleTotals(list),
       grade: {
-        series,
-        hazardMax: dangers.length ? Math.round(Math.max(...dangers)) : null,
-        hazardAverage: dangers.length
-          ? Math.round(dangers.reduce((sum, value) => sum + value, 0) / dangers.length)
-          : null,
+        peak,
+        maxHazardClears,
+        enemies: [...enemies.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
       },
       tides: ['干潮', '普通', '满潮'].map((water) => {
         const cells = matrix.rows.flatMap((row) => row.cells.filter((cell) => cell.water === water));

@@ -130,13 +130,12 @@ test('disconnected shifts count as played but not in the clear rate', () => {
   assert.equal(summary.hero.clearRate, 50);
 });
 
-test('grade baseline is the latest graded record before the period, danger converts per record', () => {
+test('grade peak uses only this period and max hazard clears normalize danger per record', () => {
   const rows = [shift(start - 3, { gradeName: '传说', gradePoint: 500 }), shift(start - 2, { gradeName: '传说', gradePoint: 520 }), shift(start - 1), shift(start, { gradeName: '传说', gradePoint: 540, danger: 2.4 }), shift(start + 1, { gradeName: '传说', gradePoint: 560, danger: 333 })];
-  equal(salmon(rows).grade.series, [8520, 8540, 8560]);
-  assert.equal(salmon(rows).grade.hazardMax, 333);
-  assert.equal(salmon(rows).grade.hazardAverage, 287);
-  equal(salmon(rows.slice(3)).grade.series, [8540, 8540, 8560]);
-  equal(salmon([rows[0], shift(start)]).grade.series, []);
+  assert.equal(salmon(rows).grade.peak, 8560);
+  assert.equal(salmon(rows).grade.maxHazardClears, 1);
+  assert.equal(salmon(rows.slice(3)).grade.peak, 8560);
+  assert.equal(salmon([rows[0], shift(start)]).grade.peak, null);
 });
 
 test('special waves choose four most frequent events, skip plain and fewer than three waves', () => {
@@ -160,4 +159,44 @@ test('normalized defeated counts sum across all shift modes, contributions exclu
   assert.equal(summary.contribution.golden, 10);
   assert.equal(salmon([shift(start)]).hero.bosses, null);
   assert.equal(ranked([]).hero.kd, null);
+});
+
+
+test('salmon highlights retain 999 after resets', () => {
+  const hour = 3600000;
+  const rows = [
+    shift(start - 1, { gradeName: '传说', gradePoint: 999 }),
+    ...[999, 999, 500, 999].map((gradePoint, i) => shift(start + i * 40 * hour, {
+      gradeName: '传说', gradePoint, danger: i === 0 ? 3.33 : 2.4,
+      rotationStart: start + Math.floor(i / 2) * 80 * hour,
+      rotationEnd: start + (Math.floor(i / 2) + 1) * 80 * hour,
+    })),
+    shift(start + 200 * hour, { gradeName: '传说', gradePoint: 500 }),
+  ];
+  assert.equal(salmon(rows).grade.peak, 8999);
+  assert.equal(salmon(rows).grade.maxHazardClears, 1);
+  assert.equal(salmon([rows[0], rows.at(-1)]).grade.peak, 8500);
+  assert.equal(salmon([]).grade.peak, null);
+  assert.equal(salmon([]).grade.maxHazardClears, 0);
+});
+
+
+test('333% clears exclude failures, disconnects, lower hazards and out-of-period records', () => {
+  const rows = [
+    shift(start, { danger: 3.33 }), shift(start + 1, { danger: 333 }),
+    shift(start + 2, { danger: 333, cleared: false }),
+    shift(start + 3, { danger: 333, disconnected: true }),
+    shift(start + 4, { danger: 332.9 }), shift(start + 5),
+    shift(start - 1, { danger: 333 }), shift(period.end, { danger: 333 }),
+  ];
+  assert.equal(salmon(rows).grade.maxHazardClears, 2);
+  assert.equal(salmon([]).grade.maxHazardClears, 0);
+});
+
+
+test('share enemy kills aggregate personal counts only within the selected period', () => {
+  const enemy = (count) => ({ name: '炸弹鱼', image: 'test.png', count });
+  const rows = [shift(start - 1, { enemyDefeats: [enemy(99)] }), shift(start, { enemyDefeats: [enemy(3)] }), shift(start + 1, { enemyDefeats: [enemy(2)] }), shift(period.end, { enemyDefeats: [enemy(99)] })];
+  equal(salmon(rows).grade.enemies, [{ name: '炸弹鱼', image: 'test.png', count: 5 }]);
+  equal(salmon([]).grade.enemies, []);
 });

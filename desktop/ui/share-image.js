@@ -17,7 +17,6 @@
     { id: 30, name: '头目联合', image: 'images/boss_all_color.png', silhouette: 'images/boss_all.png' },
   ];
   const GRADES = ['新手', '半吊子', '独当一面', '熟练', '达人', '达人+1', '达人+2', '达人+3', '传说'];
-  const gradeLabel = (value) => `${GRADES[Math.floor(value / 1000)]} ${Math.round(value % 1000)}`;
 
   const SVG = 'http://www.w3.org/2000/svg';
   function el(tag, props = {}, children = []) {
@@ -42,8 +41,6 @@
   const integerPct = (value) => value == null ? '—' : `${Math.round(value)}%`;
   const deltaText = (value) => value == null || Math.abs(value) < 0.00001 ? '' : signed(value);
   const signed = (value) => (value >= 0 ? `+${fixed1(value)}` : `−${fixed1(-value)}`);
-  const signedInt = (value) => (value >= 0 ? `+${grouped(value)}` : `−${grouped(-value)}`);
-  let uid = 0;
 
   function card(title, dotColor, body, extra) {
     const heading = el('h3', {}, [dotColor ? el('span', { class: 'mode-dot', style: `background:${dotColor}` }) : null, title]);
@@ -261,44 +258,24 @@
     return card('头目鲑鱼', 'var(--mode-salmon)', el('div', { class: 'kings' }, columns), scaleTotals);
   }
 
-  // 评价：现在的评价、这段时间的走势（每场一个点），以及危险度。
+  // 分享图强调期间达到过的高度，换期重置不计为退步。
   function grade(data, kind) {
-    const missing = !data.series.length;
-    const series = missing ? [0, 0] : data.series;
-    const end = series[series.length - 1];
-    const change = end - series[0];
-    const width = 412;
-    const height = 70;
-    const pad = { top: 10, right: 10, bottom: 6, left: 6 };
-    const min = Math.min(...series);
-    const max = Math.max(...series);
-    const span = Math.max(max - min, 1);
-    const x = (index) => pad.left + (index / Math.max(series.length - 1, 1)) * (width - pad.left - pad.right);
-    const y = (value) => pad.top + (1 - (value - min) / span) * (height - pad.top - pad.bottom);
-    const points = series.map((value, index) => [x(index), y(value)]);
-    const line = points.map(([px, py], index) => `${index ? 'L' : 'M'}${px.toFixed(1)},${py.toFixed(1)}`).join(' ');
-    const fillId = `grade-fill-${(uid += 1)}`;
-    const chart = svg('svg', { class: 'chart', viewBox: `0 0 ${width} ${height}`, width, height, role: 'img', 'aria-label': `评价从 ${gradeLabel(series[0])} 到 ${gradeLabel(end)}` });
-    const gradient = svg('linearGradient', { id: fillId, x1: 0, y1: 0, x2: 0, y2: 1 });
-    gradient.append(svg('stop', { offset: '0', style: 'stop-color:var(--meter-a);stop-opacity:0.32' }), svg('stop', { offset: '1', style: 'stop-color:var(--meter-a);stop-opacity:0' }));
-    const defs = svg('defs');
-    defs.append(gradient);
-    chart.append(defs);
-    chart.append(svg('path', { d: `${line} L${points[points.length - 1][0].toFixed(1)},${height} L${points[0][0].toFixed(1)},${height} Z`, fill: `url(#${fillId})` }));
-    chart.append(svg('path', { d: line, fill: 'none', stroke: 'var(--meter-a)', 'stroke-width': 4, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
-    const [ex, ey] = points[points.length - 1];
-    chart.append(svg('circle', { cx: ex, cy: ey, r: 7, fill: 'var(--meter-a)', stroke: 'var(--card-solid)', 'stroke-width': 3 }));
-    const now = el('div', { class: 'grade-now' }, [
-      el('span', { text: missing ? '—' : GRADES[Math.floor(end / 1000)] }),
-      el('span', { class: 'pt', text: missing ? '' : String(Math.round(end % 1000)) }),
-      change ? el('span', { class: `chg ${change > 0 ? 'up' : 'down'}`, text: signedInt(change) }) : null,
+    const period = kind === 'month' ? '本月' : '本赛季';
+    const metric = (label, value, unit) => el('div', { class: 'grade-achievement' }, [
+      el('span', { class: 'label', text: label }),
+      el('div', { class: 'grade-now' }, [el('span', { class: 'pt', text: value }), el('span', { class: 'grade-unit', text: unit })]),
     ]);
-    const hazard = el('div', { class: 'stats-2' }, [
-      el('div', { class: 'stat' }, [el('span', { class: 'label', text: '最高危险度' }), el('span', { class: 'value' }, [data.hazardMax == null ? '—' : `${data.hazardMax}%`, data.hazardMax >= 333 ? el('span', { class: 'max-tag', text: 'MAX' }) : null])]),
-      el('div', { class: 'stat' }, [el('span', { class: 'label', text: '平均危险度' }), el('span', { class: 'value', text: data.hazardAverage == null ? '—' : `${data.hazardAverage}%` })]),
+    const body = el('div', { class: 'grade-highlights' }, [
+      el('div', { class: 'grade-secondary' }, [
+        metric(`${period}最高评级`, data.peak == null ? '—' : String(Math.round(data.peak % 1000)), data.peak == null ? '' : GRADES[Math.floor(data.peak / 1000)]),
+        metric('333%通关', grouped(data.maxHazardClears), '次'),
+      ]),
+      el('div', { class: 'share-enemy-kills' }, (data.enemies || []).map((enemy) => el('div', { class: 'share-enemy-kill', title: `${enemy.name}：${grouped(enemy.count)}` }, [
+        enemy.image ? el('img', { src: enemy.image, alt: enemy.name }) : el('span', { class: 'enemy-name', text: enemy.name }),
+        el('span', { text: `×${grouped(enemy.count)}` }),
+      ]))),
     ]);
-    const body = el('div', { style: 'display:grid;gap:12px' }, [now, missing ? null : chart, hazard]);
-    return card('评价', null, body, el('span', { class: 'head-note', text: missing ? '' : `${kind === 'month' ? '月初' : '赛季初'} ${gradeLabel(series[0])}` }));
+    return card('打工高光', null, body);
   }
 
   function waves(tides, events) {
@@ -415,6 +392,46 @@
     const $ = (id) => document.getElementById(id);
     const dialog = $('share-dialog');
     const preview = $('share-preview');
+    const zoomOut = el('button', { type: 'button', class: 'ghost', text: '−', 'aria-label': '缩小' });
+    const zoomIn = el('button', { type: 'button', class: 'ghost', text: '+', 'aria-label': '放大' });
+    const zoomPercent = el('span', { class: 'share-zoom-percent', 'aria-live': 'polite' });
+    const zoomFit = el('button', { type: 'button', class: 'ghost', text: '适应窗口' });
+    $('share-zoom-controls').append(zoomOut, zoomPercent, zoomIn, zoomFit);
+    const zoomCanvas = preview;
+    const zoomViewport = $('share-preview-viewport');
+    let zoomScale = null;
+    const sizeZoom = () => {
+      const node = zoomCanvas.firstElementChild;
+      if (!node) return;
+      const fit = Math.min((zoomViewport.clientHeight - 16) / 1440, (zoomViewport.clientWidth - 16) / 1080);
+      const scale = zoomScale ?? Math.max(0.1, fit);
+      node.style.transform = `scale(${scale})`;
+      zoomCanvas.style.width = `${1080 * scale}px`;
+      zoomCanvas.style.height = `${1440 * scale}px`;
+      zoomPercent.textContent = `${Math.round(scale * 100)}%`;
+      zoomOut.disabled = scale <= 0.1;
+      zoomIn.disabled = scale >= 3;
+      return scale;
+    };
+    const changeZoom = (factor) => {
+      zoomScale = Math.max(0.1, Math.min(3, sizeZoom() * factor));
+      sizeZoom();
+    };
+    zoomOut.addEventListener('click', () => changeZoom(1 / 1.25));
+    zoomIn.addEventListener('click', () => changeZoom(1.25));
+    zoomFit.addEventListener('click', () => {
+      zoomScale = null;
+      sizeZoom();
+      zoomViewport.scrollTo(0, 0);
+    });
+    zoomViewport.addEventListener('wheel', (event) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      changeZoom(Math.exp(-event.deltaY * 0.01));
+    }, { passive: false });
+    window.addEventListener('resize', () => { if (dialog.open) sizeZoom(); });
+    new ResizeObserver(() => { if (dialog.open) sizeZoom(); }).observe(zoomViewport);
+
     const content = $('share-content');
     const kind = $('share-kind');
     let selectedContent = 'ranked';
@@ -433,13 +450,27 @@
     let savedPath;
     let busy = false;
     let revision = 0;
+    let selectedEnemies = null;
+    try {
+      const saved = JSON.parse(localStorage.getItem('splat3-share-enemies'));
+      if (Array.isArray(saved) && saved.every((name) => typeof name === 'string')) selectedEnemies = new Set(saved);
+    } catch {}
+    const enemyOptions = $('share-enemy-options');
+    const enemyChoices = $('share-enemy-choices');
     const look = () => document.documentElement.dataset.theme === 'light' || (!document.documentElement.dataset.theme && lightQuery.matches) ? 'light' : 'dark';
-    const build = () => buildShare(selectedContent, selectedKind, showName.checked, look(), period, summary, context.name || '', context.species);
+    const build = () => {
+      const data = selectedContent === 'salmon' ? { ...summary, grade: { ...summary.grade, enemies: summary.grade.enemies.filter((enemy) => selectedEnemies?.has(enemy.name)) } } : summary;
+      return buildShare(selectedContent, selectedKind, showName.checked, look(), period, data, context.name || '', context.species);
+    };
     function updateControls() {
       for (const button of [...content.querySelectorAll('button'), ...kind.querySelectorAll('button')]) button.disabled = busy;
       showName.disabled = busy;
+      for (const input of enemyChoices.querySelectorAll('input')) input.disabled = busy;
       periodSelect.disabled = busy || !periods.length;
       save.disabled = busy || !summary?.n;
+      save.textContent = busy ? '正在保存…' : '下载图片';
+      zoomFit.disabled = !summary?.n;
+      if (!summary?.n) { zoomOut.disabled = true; zoomIn.disabled = true; zoomPercent.textContent = '—'; }
     }
     function render(resetPeriod = false) {
       revision += 1;
@@ -458,14 +489,36 @@
       periodSelect.value = String(period.start);
       $('share-period-label').textContent = selectedKind === 'month' ? '月份' : '赛季';
       summary = selectedContent === 'salmon' ? window.Splat3ShareData.salmonSummary(context.data.shifts, period) : window.Splat3ShareData.rankedSummary(context.data.battles, context.data.xSettlements, period);
+      enemyOptions.hidden = selectedContent !== 'salmon';
+      if (selectedContent === 'salmon') {
+        if (selectedEnemies == null && summary.grade.enemies.length) selectedEnemies = new Set(summary.grade.enemies.slice(0, 3).map((enemy) => enemy.name));
+        enemyChoices.replaceChildren(...summary.grade.enemies.map((enemy) => {
+          const input = el('input', { type: 'checkbox' });
+          input.checked = selectedEnemies?.has(enemy.name) || false;
+          input.addEventListener('change', () => {
+            if (input.checked) selectedEnemies.add(enemy.name);
+            else selectedEnemies.delete(enemy.name);
+            try { localStorage.setItem('splat3-share-enemies', JSON.stringify([...selectedEnemies])); } catch {}
+            render();
+          });
+          return el('label', { class: 'share-enemy-option' }, [input, enemy.image ? el('img', { src: enemy.image, alt: '' }) : null, enemy.name]);
+        }));
+        if (!summary.grade.enemies.length) enemyChoices.textContent = '所选期间没有分类击倒记录';
+      }
       preview.classList.toggle('is-empty', !summary.n);
       if (summary.n) {
         const node = build();
-        node.style.transform = 'scale(0.25)';
         preview.replaceChildren(node);
+        zoomScale = null;
+        sizeZoom();
+        zoomViewport.scrollTo(0, 0);
         fitHighlights(node);
         document.fonts.ready.then(() => { if (node.isConnected) fitHighlights(node); });
-      } else preview.textContent = selectedContent === 'salmon' ? '这段时间没有打工记录' : '这段时间没有真格对战';
+      } else {
+        preview.style.width = '';
+        preview.style.height = '';
+        preview.textContent = selectedContent === 'salmon' ? '这段时间没有打工记录' : '这段时间没有真格对战';
+      }
       updateControls();
     }
     $('share-button').addEventListener('click', () => {
@@ -519,7 +572,7 @@
       if (!savedPath) return;
       try { await revealPath(savedPath); } catch (error) { statusText.textContent = `打开位置失败：${String(error)}`; status.hidden = false; }
     });
-    save.addEventListener('click', async () => {
+    const saveImage = async () => {
       if (busy || !summary?.n) return;
       busy = true;
       updateControls();
@@ -545,7 +598,8 @@
         busy = false;
         updateControls();
       }
-    });
+    };
+    save.addEventListener('click', saveImage);
     const followTheme = () => { if (dialog.open) render(); };
     lightQuery.addEventListener('change', followTheme);
     new MutationObserver(followTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });

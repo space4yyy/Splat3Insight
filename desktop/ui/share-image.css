@@ -184,9 +184,26 @@
 .share .scales { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-3); font-size: 20px; white-space: nowrap; }
 .share .scales img { width: 30px; height: 30px; }
 .share .scales b { margin-right: 6px; color: var(--ink); font-size: 24px; font-weight: 400; }
-.share .grade-now { display: flex; align-items: baseline; gap: 16px; font-size: 54px; line-height: 1; white-space: nowrap; }
+.share .grade-highlights { display: grid; grid-template-rows: auto 1fr; gap: 12px; flex: 1; min-height: 0; }
+.share .grade-secondary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.share .grade-achievement { display: grid; gap: 8px; min-width: 0; }
+.share .grade-highlights .label { color: var(--ink-3); font-size: 22px; white-space: nowrap; }
+.share .grade-now { display: flex; align-items: baseline; gap: 8px; font-size: 54px; line-height: 1; white-space: nowrap; }
 .share .grade-now .pt { color: var(--accent-text); }
-.share .grade-now .chg { font-size: 22px; }
+.share .grade-unit { color: var(--ink-2); font-size: 24px; }
+.share .share-enemy-kills { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-content: center; gap: 4px 20px; }
+.share .share-enemy-kill { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; font-size: 30px; line-height: 1.1; white-space: nowrap; }
+.share .share-enemy-kill img { width: 64px; height: 64px; object-fit: contain; }
+.share .share-enemy-kills:has(> :nth-child(4)) .share-enemy-kill { flex-direction: row; align-items: center; justify-content: flex-start; font-size: 24px; }
+.share .share-enemy-kills:has(> :nth-child(4)) img { width: 44px; height: 44px; }
+.share .share-enemy-kills:has(> :nth-child(7)) .share-enemy-kill { font-size: 20px; }
+.share .share-enemy-kills:has(> :nth-child(7)) img { width: 32px; height: 32px; }
+.share .share-enemy-kills:has(> :nth-child(10)) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.share .share-enemy-kills:has(> :nth-child(10)) img { width: 30px; height: 30px; }
+.share .share-enemy-kills:has(> :nth-child(10)) .share-enemy-kill { font-size: 18px; }
+.share .share-enemy-kills:has(> :nth-child(13)) img { width: 24px; height: 24px; }
+.share .share-enemy-kills:has(> :nth-child(13)) .share-enemy-kill { font-size: 16px; }
+.share .enemy-name { font-size: 16px; }
 .share .stats-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .share .stat .label { display: block; color: var(--ink-3); font-size: 20px; }
 .share .stat .value { display: flex; align-items: center; gap: 10px; font-size: 34px; line-height: 1.15; white-space: nowrap; }
@@ -224,3 +241,13 @@
 
 .share .cal.is-six-weeks { row-gap: 4px; }
 .share .cal.is-six-weeks .day { height: 26px; }
+
+/* 预览缩放控件沿用应用按钮样式。 */
+.share-zoom-toolbar { display: grid; grid-template-columns: 32px 48px 32px minmax(0, 1fr); align-items: center; gap: 8px; width: 100%; }
+.share-zoom-toolbar > button { height: 32px; padding: 0 6px; }
+.share-fields > .share-field:has(.share-zoom-toolbar) { justify-items: stretch; }
+@media (max-width: 640px) {
+  .share-zoom-toolbar { grid-template-columns: 32px minmax(0, 1fr) 32px; }
+  .share-zoom-toolbar > button:last-child { grid-column: 1 / -1; }
+}
+.share-zoom-percent { min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; }

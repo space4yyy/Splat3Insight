@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::history::{BattleRecord, CoopRecord};
 
 /// Bump when the extraction below changes so stored facts are rebuilt.
-pub const DASHBOARD_FACTS_VERSION: i64 = 4;
+pub const DASHBOARD_FACTS_VERSION: i64 = 5;
 
 /// 对战里一把武器的标识、名称和图片（名称跟着账号语言，图片是带签名的原链接）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +92,8 @@ pub struct CoopFact {
     pub rescue_count: Option<i64>,
     pub rescued_count: Option<i64>,
     pub defeat_enemy_count: Option<i64>,
+    #[serde(default)]
+    pub enemy_defeats: Vec<CoopDefeatFact>,
     pub scale_gold: Option<i64>,
     pub scale_silver: Option<i64>,
     pub scale_bronze: Option<i64>,
@@ -241,6 +243,22 @@ pub fn coop_fact(record: &CoopRecord, raw: &Value) -> CoopFact {
         rescue_count: my_count(&["rescueCount", "rescuedByOthers"]).or(record.rescued_by_others),
         rescued_count: my_count(&["rescuedCount", "rescued"]).or(record.rescued),
         defeat_enemy_count: my_count(&["defeatEnemyCount"]),
+        enemy_defeats: raw
+            .get("enemyResults")
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|row| {
+                        Some(CoopDefeatFact {
+                            enemy_id: integer(row, "/enemy/coopEnemyId"),
+                            name: text(row, "/enemy/name"),
+                            image: text(row, "/enemy/image/url"),
+                            defeat_count: integer(row, "/defeatCount")?,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         scale_gold: scale_count("gold"),
         scale_silver: scale_count("silver"),
         scale_bronze: scale_count("bronze"),

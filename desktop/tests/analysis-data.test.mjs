@@ -363,3 +363,9 @@ test('rotation peaks keep the highest recorded grade and isolate the next reset'
   assert.equal(partial[1].peakGrade.point, 980);
   assert.equal(analysis.rotationGroups([list[4]])[0].peakGrade, null);
 });
+
+
+test('shift enemy defeats preserve personal counts and resolve localized names and images', () => {
+  const prepared = data.prepare({ images: ['enemy.png'], coop: [{ id: 'e', played_at_ms: 1, enemy_defeats: [{ enemy_id: 4, name: 'Steelhead', image: 0, defeat_count: 3 }] }] });
+  deepEqual(prepared.shifts[0].enemyDefeats, [{ id: 4, name: '炸弹鱼', image: 'enemy.png', count: 3 }]);
+});

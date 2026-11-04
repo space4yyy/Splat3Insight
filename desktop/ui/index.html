@@ -551,10 +551,9 @@
       </div>
     </dialog>
 
-    <dialog id="share-dialog" class="close-prompt share-dialog" aria-labelledby="share-title" tabindex="-1">
-      <h2 id="share-title">分享</h2>
+    <dialog id="share-dialog" class="close-prompt share-dialog" aria-label="分享" tabindex="-1">
       <div class="share-dialog-body">
-        <div id="share-preview" class="share-preview" aria-label="分享图预览"></div>
+        <div id="share-preview-viewport" class="share-preview-viewport"><div id="share-preview" class="share-preview" aria-label="分享图预览"></div></div>
         <div class="share-fields">
           <div class="share-field">
             <span id="share-content-label">内容</span>
@@ -572,15 +571,17 @@
           </div>
           <label><span id="share-period-label">月份</span><select id="share-period"></select></label>
           <label class="share-name"><input id="share-name" type="checkbox" checked>显示名字</label>
+          <fieldset id="share-enemy-options" class="share-enemy-options" hidden><legend>展示巨大鲑鱼</legend><div id="share-enemy-choices" class="share-enemy-choices"></div></fieldset>
+          <div class="share-field"><span>预览缩放</span><div id="share-zoom-controls" class="share-zoom-toolbar"></div></div>
+          <p id="share-status" role="status" aria-live="polite" hidden>
+            <span id="share-status-text"></span>
+            <button id="share-reveal" type="button" class="ghost" data-windows="在文件资源管理器中显示" hidden>在访达中显示</button>
+          </p>
+          <div class="close-prompt-actions">
+            <button id="share-cancel" type="button" class="ghost">关闭</button>
+            <button id="share-save" type="button" class="button-primary">下载图片</button>
+          </div>
         </div>
-      </div>
-      <p id="share-status" role="status" aria-live="polite" hidden>
-        <span id="share-status-text"></span>
-        <button id="share-reveal" type="button" class="ghost" data-windows="在文件资源管理器中显示" hidden>在访达中显示</button>
-      </p>
-      <div class="close-prompt-actions">
-        <button id="share-cancel" type="button" class="ghost">取消</button>
-        <button id="share-save" type="button" class="button-primary">保存图片</button>
       </div>
     </dialog>
     <dialog id="background-close-prompt" class="close-prompt" aria-labelledby="background-close-title">

@@ -110,6 +110,10 @@
       kingId: enemyNumber(row.boss_id),
       goldenEggs: isNum(row.golden_eggs) ? row.golden_eggs : null,
       defeated: isNum(row.defeat_enemy_count) ? row.defeat_enemy_count : null,
+      enemyDefeats: (row.enemy_defeats || []).map((enemy) => ({
+        id: enemy.enemy_id, name: gameName('bosses', enemy.name),
+        image: link(enemy.image), count: enemy.defeat_count,
+      })),
       powerEggs: isNum(row.power_eggs) ? row.power_eggs : null,
       rescues: isNum(row.rescue_count) ? row.rescue_count : null,
       rescued: isNum(row.rescued_count) ? row.rescued_count : null,

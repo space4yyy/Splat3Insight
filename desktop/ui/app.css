@@ -718,15 +718,22 @@ table.data.sticky-first th:first-child { z-index: 2; }
   .account-row-actions { grid-column: 1 / -1; justify-content: flex-start; }
 }
 
-/* 分享对话框：原尺寸卡片按 1/4 缩放，控件沿用应用外观。 */
-dialog.share-dialog { width: min(640px, calc(100vw - 40px)); max-width: none; max-height: calc(100vh - 40px); overflow: auto; }
-/* 打开时焦点放在对话框本身，不给第一个按钮画焦点框；对话框自己也不画。 */
+/* 分享窗口：左侧大图预览，右侧设置与下载。 */
+html:has(#share-dialog[open]), body:has(#share-dialog[open]) { overflow: hidden; }
+#share-dialog .share-preview-viewport, #share-dialog .share-fields { overscroll-behavior: contain; }
+dialog.share-dialog { box-sizing: border-box; width: calc(100vw - 40px); height: calc(100vh - 40px); max-width: none; max-height: none; overflow: hidden; }
+dialog.share-dialog[open] { display: flex; flex-direction: column; gap: 16px; }
 dialog.share-dialog:focus { outline: none; }
-.share-dialog-body { display: flex; flex-wrap: wrap; gap: 22px; margin: 20px 0; }
-.share-preview { position: relative; flex: none; width: 270px; height: 360px; overflow: hidden; border-radius: 10px; }
+.share-dialog-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 24px; flex: 1; min-height: 0; }
+.share-preview-viewport { min-width: 0; min-height: 0; overflow: auto; padding: 8px; border-radius: 10px; background: var(--panel-raised); }
+.share-preview { position: relative; margin: 0 auto; border-radius: 10px; overflow: hidden; }
 .share-preview > .share { position: absolute; top: 0; left: 0; transform-origin: top left; }
-.share-preview.is-empty { display: grid; place-items: center; color: var(--ink-3); font-size: 14px; }
-.share-fields { display: grid; align-content: start; flex: 1 1 220px; gap: 16px; }
+.share-preview.is-empty { display: grid; place-items: center; width: 100%; height: 100%; color: var(--ink-3); font-size: 14px; }
+.share-fields { display: grid; align-content: start; min-height: 0; overflow: auto; gap: 16px; }
+@media (max-width: 640px) {
+  .share-dialog-body { grid-template-columns: minmax(0, 1fr) 200px; gap: 12px; }
+  dialog.share-dialog { padding: 16px; }
+}
 .share-fields label, .share-field { display: grid; gap: 6px; color: var(--ink-2); font-size: 14px; }
 .share-field { justify-items: start; }
 .share-fields select { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-raised); color: var(--ink); font: inherit; }
@@ -734,7 +741,8 @@ dialog.share-dialog:focus { outline: none; }
 .share-name input { accent-color: var(--accent); }
 dialog.share-dialog #share-status { margin: 12px 0; overflow-wrap: anywhere; }
 .share-dialog #share-reveal { margin-left: 8px; }
-.share-dialog .close-prompt-actions { margin-top: 16px; }
+.share-dialog .close-prompt-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; margin-top: 0; }
+.share-dialog .close-prompt-actions > button { height: 32px; padding: 0 10px; }
 
 .battle-assists { font-size: .8em; }
 
@@ -743,3 +751,10 @@ dialog.share-dialog #share-status { margin: 12px 0; overflow-wrap: anywhere; }
   .status-dot.is-busy, .drawer-head, .drawer-body, .drawer-banner { animation: none; }
   .nav button:active, .segmented button:active, .ghost:active:not(:disabled), .button-primary:active:not(:disabled), .button-danger:active:not(:disabled), .rule-tab:active, .obs-option:active, .form-cell:not(.none):hover, .form-cell:not(.none):focus-visible { transform: none; }
 }
+
+.share-enemy-options { min-width: 0; margin: 0; padding: 0; border: 0; color: var(--ink-2); font-size: 14px; }
+.share-enemy-options legend { margin-bottom: 8px; }
+.share-enemy-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.share-fields .share-enemy-option { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.share-enemy-option img { width: 24px; height: 24px; object-fit: contain; }
+.share-enemy-option input { margin: 0; accent-color: var(--accent); }
