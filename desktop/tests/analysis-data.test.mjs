@@ -342,3 +342,24 @@ test('rotations group by their window, fall back to stage and weapons, and list 
   assert.equal(groups[3].rule, 'BIG_RUN');
   assert.equal(regular.rule, 'REGULAR');
 });
+
+test('rotation peaks keep the highest recorded grade and isolate the next reset', () => {
+  const list = [
+    shift({ t: HOUR, rotationStart: 0, rotationEnd: 40 * HOUR, gradeName: '传说', gradePoint: 999 }),
+    shift({ t: 2 * HOUR, rotationStart: 0, rotationEnd: 40 * HOUR, gradeName: '传说', gradePoint: 980 }),
+    shift({ t: 41 * HOUR, rotationStart: 40 * HOUR, rotationEnd: 80 * HOUR, gradeName: '传说', gradePoint: 400 }),
+    shift({ t: 42 * HOUR, rotationStart: 40 * HOUR, rotationEnd: 80 * HOUR, gradeName: '传说', gradePoint: 500 }),
+    shift({ t: 43 * HOUR, rotationStart: 40 * HOUR, rotationEnd: 80 * HOUR, gradeName: null, gradePoint: null }),
+  ];
+  const groups = analysis.rotationGroups(list, 50 * HOUR);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].peakGrade.point, 500);
+  assert.equal(groups[1].peakGrade.point, 999);
+  assert.equal(groups[1].grade.point, 980);
+  assert.equal(groups[0].n, 3);
+  assert.equal(groups[0].shifts.length, 3);
+  assert.equal(groups[1].peakGrade.value, analysis.gradeLadder(list[0]));
+  const partial = analysis.rotationGroups(list.slice(1), 50 * HOUR);
+  assert.equal(partial[1].peakGrade.point, 980);
+  assert.equal(analysis.rotationGroups([list[4]])[0].peakGrade, null);
+});

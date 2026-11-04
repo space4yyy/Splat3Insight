@@ -382,6 +382,7 @@
         const appeared = list.filter((shift) => shift.kingAppeared);
         const graded = list.filter((shift) => gradeLadder(shift) != null);
         const lastGraded = graded[graded.length - 1] || null;
+        const peak = graded.reduce((best, shift) => !best || gradeLadder(shift) > gradeLadder(best) ? shift : best, null);
         return {
           start: group.start,
           end: group.end,
@@ -396,6 +397,8 @@
           avgGoldenEggs: average(list, (shift) => shift.goldenEggs),
           king: appeared.length ? { name: lastWith(appeared, 'kingName'), image: KING_IMAGES[lastWith(appeared, 'kingId')] ?? null, appeared: appeared.length, defeated: appeared.filter((shift) => shift.kingDefeated).length } : null,
           scales: scaleTotals(list),
+          shifts: list,
+          peakGrade: peak ? { name: peak.gradeName, point: peak.gradePoint, value: gradeLadder(peak) } : null,
           grade: lastGraded ? { name: lastGraded.gradeName, point: lastGraded.gradePoint } : null,
         };
       })

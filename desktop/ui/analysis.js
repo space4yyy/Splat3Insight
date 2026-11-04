@@ -107,7 +107,7 @@
   const fmtMedian = (value) => (value == null ? '—' : Number.isInteger(value) ? String(value) : value.toFixed(1));
 
   // 折线：x 是时间或序号；指针靠近哪个点就提示哪个点。
-  function drawLine(box, { points, color, height = 170, yMin, yMax, ticks, tickLabel = String, strongTick = () => false, xMin, xMax, xLabels = [], refValue = null, area = false, endLabel, aria, marginLeft = 40, marginRight = 48 }) {
+  function drawLine(box, { points, color, height = 170, yMin, yMax, ticks, tickLabel = String, strongTick = () => false, xMin, xMax, xLabels = [], refValue = null, area = false, endLabel, aria, marginLeft = 40, marginRight = 48, connect = true }) {
     box.textContent = '';
     const width = Math.max(220, Math.floor(box.clientWidth));
     const margin = { top: 12, right: marginRight, bottom: 22, left: marginLeft };
@@ -127,7 +127,8 @@
     if (refValue != null) svgEl('line', { x1: margin.left, x2: width - margin.right, y1: y(refValue), y2: y(refValue), stroke: COLOR.ink3, 'stroke-width': 1, 'stroke-dasharray': '3 3' }, svg);
     const line = points.map((point, index) => `${index ? 'L' : 'M'}${x(point.x).toFixed(1)},${y(point.y).toFixed(1)}`).join(' ');
     if (area && points.length > 1) svgEl('path', { d: `${line} L${x(points[points.length - 1].x).toFixed(1)},${y(yMin)} L${x(points[0].x).toFixed(1)},${y(yMin)} Z`, fill: color, opacity: 0.1 }, svg);
-    if (points.length > 1) svgEl('path', { d: line, fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+    if (connect && points.length > 1) svgEl('path', { d: line, fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+    if (!connect) for (const point of points) svgEl('circle', { cx: x(point.x), cy: y(point.y), r: 5, fill: color, stroke: COLOR.panel, 'stroke-width': 2 }, svg);
     const last = points[points.length - 1];
     svgEl('circle', { cx: x(last.x), cy: y(last.y), r: 4, fill: color, stroke: COLOR.panel, 'stroke-width': 2 }, svg);
     if (endLabel) svgText(svg, x(last.x) + 8, y(last.y) + 5, endLabel, { fill: COLOR.ink, 'font-size': 13, class: 'font-number' });
@@ -828,36 +829,78 @@
   const gradeText = (name, point) => `${name} ${point ?? ''}`.trim();
   function renderGradeChart(list, start, end) {
     const box = $('grade-chart');
-    const graded = list.filter((shift) => analysis.gradeLadder(shift) != null);
     if (!list.length) { noShifts(box); return; }
-    if (!graded.length) { emptyState(box, '没有评级记录', '换一个打工模式看看。'); return; }
+    const groups = analysis.rotationGroups(list).filter((group) => group.peakGrade).reverse();
+    if (!groups.length) { emptyState(box, '没有评级记录', '换一个打工模式看看。'); return; }
+    const periodText = (group) => `${fmtDateTime(group.start ?? group.first)} · ${group.stage}${group.ongoing ? ' · 进行中' : ''}${group.start == null ? ' · 轮班时间不详' : group.start < start || group.end > end ? ' · 仅所选范围' : ''}`;
     if (dashboard.tableOn('grade')) {
-      renderTable(box, [{ label: '时间', number: true }, { label: '场地' }, { label: '结果' }, { label: '评级', num: true }], [...graded].reverse().map((shift) => [
-        fmtDateTime(shift.t), shift.stage, shiftResult(shift), gradeText(shift.gradeName, shift.gradePoint),
+      renderTable(box, [{ label: '打工期' }, { label: '已记录最高评级', num: true }, { label: '场次', num: true }, { label: '通关率', num: true }], [...groups].reverse().map((group) => [
+        periodText(group), gradeText(group.peakGrade.name, group.peakGrade.point), count(group.n), pct(group.clear),
       ]));
       return;
     }
-    const values = graded.map((shift) => analysis.gradeLadder(shift));
-    const scale = niceScale(Math.min(...values) - 10, Math.max(...values) + 10, 4);
-    // 最高段位的评级点到 999 为止，纵轴不画到它上面。
-    const ladderTop = analysis.GRADES.length * 1000 - 1;
-    const ticks = scale.ticks.filter((tick) => tick >= 0 && tick <= ladderTop);
-    const yMin = Math.max(0, scale.min);
-    const yMax = Math.min(scale.max, ladderTop);
-    if (yMax === ladderTop && ladderTop - ticks[ticks.length - 1] >= (scale.ticks[1] - scale.ticks[0]) / 2) ticks.push(ladderTop);
-    const last = graded[graded.length - 1];
-    const endText = gradeText(last.gradeName, last.gradePoint);
-    const parts = box.clientWidth < 480 ? 2 : 4;
-    drawLine(box, {
-      points: graded.map((shift, index) => ({ x: shift.t, y: values[index], title: fmtDateTime(shift.t), rows: [
-        { value: gradeText(shift.gradeName, shift.gradePoint), label: '评级', color: COLOR.salmon },
-        { value: shiftResult(shift), label: shift.stage },
-      ] })),
-      color: COLOR.salmon, height: 248, yMin, yMax, ticks, tickLabel: analysis.gradeLabel, strongTick: (tick) => tick % 1000 === 0,
-      xMin: start, xMax: end, xLabels: Array.from({ length: parts + 1 }, (_, index) => { const t = start + ((end - start) * index) / parts; return [t, fmtDate(t)]; }),
-      endLabel: endText, aria: `评级走势，当前 ${endText}`,
-      marginLeft: Math.ceil(Math.max(...ticks.map((tick) => textWidth(analysis.gradeLabel(tick), 12)))) + 12,
-      marginRight: Math.ceil(textWidth(endText, 13)) + 16,
+    box.replaceChildren();
+    const chart = el('div');
+    const controls = el('div', { class: 'card-actions' });
+    const detail = el('div');
+    box.append(chart, controls, detail);
+    const draw = (target, points, connected, xLabels) => {
+      const values = points.map((point) => point.y);
+      const scale = niceScale(Math.min(...values) - 10, Math.max(...values) + 10, 4);
+      const top = analysis.GRADES.length * 1000 - 1;
+      const ticks = scale.ticks.filter((tick) => tick >= 0 && tick <= top);
+      if (scale.max >= top && !ticks.includes(top)) ticks.push(top);
+      const marginLeft = Math.ceil(Math.max(...ticks.map((tick) => textWidth(analysis.gradeLabel(tick), 12)))) + 12;
+      drawLine(target, {
+        points, connect: connected, color: COLOR.salmon, height: 248,
+        yMin: Math.max(0, scale.min), yMax: Math.min(scale.max, top), ticks,
+        tickLabel: analysis.gradeLabel, strongTick: (tick) => tick % 1000 === 0,
+        xMin: connected ? points[0].x : -0.5,
+        xMax: connected ? points[points.length - 1].x : points.length - 0.5,
+        xLabels, aria: connected ? '本期逐场评级' : '各期已记录最高评级，期与期之间不连线',
+        marginLeft,
+        marginRight: 16,
+      });
+      return marginLeft;
+    };
+    const step = Math.max(1, Math.ceil(groups.length / (box.clientWidth < 480 ? 3 : 6)));
+    const overviewLeft = draw(chart, groups.map((group, index) => ({
+      x: index, y: group.peakGrade.value, title: periodText(group), rows: [
+        { value: gradeText(group.peakGrade.name, group.peakGrade.point), label: '已记录最高评级', color: COLOR.salmon },
+        { value: `${count(group.n)} 场`, label: '所选范围' },
+        { value: pct(group.clear), label: '通关率' },
+      ],
+    })), false, groups.flatMap((group, index) => index % step === 0 ? [[index, fmtShortDate(group.start ?? group.first)]] : []));
+    controls.append(el('span', { class: 'card-sub', text: '查看期内走势' }));
+    const select = el('select', { class: 'card-select', 'aria-label': '选择打工期' }, groups.map((group, index) => el('option', { value: String(index), text: periodText(group) })));
+    select.value = String(groups.length - 1);
+    detail.hidden = true;
+    const renderDetail = () => {
+      if (detail.hidden) return;
+      const group = groups[Number(select.value)];
+      const graded = group.shifts.filter((shift) => analysis.gradeLadder(shift) != null);
+      draw(detail, graded.map((shift, index) => ({
+        x: index, y: analysis.gradeLadder(shift), title: fmtDateTime(shift.t), rows: [
+          { value: gradeText(shift.gradeName, shift.gradePoint), label: '评级', color: COLOR.salmon },
+          { value: shiftResult(shift), label: shift.stage },
+        ],
+      })), true, [[0, '第 1 场'], ...(graded.length > 1 ? [[graded.length - 1, `第 ${graded.length} 场`]] : [])]);
+    };
+    select.addEventListener('change', () => {
+      detail.hidden = false;
+      renderDetail();
+    });
+    controls.append(select);
+    // 点击同一期收起；下拉框可选择并展开期内走势。
+    const svg = chart.querySelector('svg');
+    svg.addEventListener('click', (event) => {
+      const width = Number(svg.getAttribute('width'));
+      const fraction = (event.clientX - svg.getBoundingClientRect().left - overviewLeft) / (width - overviewLeft - 16);
+      const selected = String(Math.max(0, Math.min(groups.length - 1, Math.floor(fraction * groups.length))));
+      const collapse = select.value === selected && !detail.hidden;
+      select.value = selected;
+      detail.hidden = collapse;
+      renderDetail();
     });
   }
   function renderKings(list) {
