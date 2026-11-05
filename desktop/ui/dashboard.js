@@ -9,8 +9,9 @@
     line: token('--line'), lineStrong: token('--line-strong'), panel: token('--panel'),
     accent: token('--accent'), brandBlue: token('--brand-blue'), winLine: token('--win-line'),
     meterWin: token('--meter-win'), meterLose: token('--meter-lose'),
-    salmon: token('--mode-salmon'), context: token('--context'), seq0: token('--seq-0'),
+    salmon: token('--mode-salmon'), salmonGreen: token('--salmon-green'), context: token('--context'), seq0: token('--seq-0'),
     seq: ['--seq-1', '--seq-2', '--seq-3', '--seq-4', '--seq-5'].map(token),
+    salmonSeq: ['--salmon-seq-1', '--salmon-seq-2', '--salmon-seq-3', '--salmon-seq-4', '--salmon-seq-5'].map(token),
     div: ['--div-neg-3', '--div-neg-2', '--div-neg-1', '--div-mid', '--div-pos-1', '--div-pos-2', '--div-pos-3'].map(token),
     salmonDiv: ['--salmon-div-neg-3', '--salmon-div-neg-2', '--salmon-div-neg-1', '--div-mid', '--salmon-div-pos-1', '--salmon-div-pos-2', '--salmon-div-pos-3'].map(token),
     modes: {
@@ -522,10 +523,11 @@
     svgText(svg, margin.left, height - 6, `第 ${first} 场`, { 'text-anchor': 'start', class: 'font-number' });
     svgText(svg, width - margin.right, height - 6, `第 ${last} 场`, { 'text-anchor': 'end', class: 'font-number' });
     const line = points.map((point, index) => `${index ? 'L' : 'M'}${x(point.index).toFixed(1)},${y(point.wr).toFixed(1)}`).join(' ');
-    svgEl('path', { d: `${line} L${x(last).toFixed(1)},${y(0)} L${x(first).toFixed(1)},${y(0)} Z`, fill: COLOR.winLine, opacity: 0.1 }, svg);
-    svgEl('path', { d: line, fill: 'none', stroke: COLOR.winLine, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+    const rateColor = salmon ? COLOR.salmonGreen : COLOR.winLine;
+    svgEl('path', { d: `${line} L${x(last).toFixed(1)},${y(0)} L${x(first).toFixed(1)},${y(0)} Z`, fill: rateColor, opacity: 0.1 }, svg);
+    svgEl('path', { d: line, fill: 'none', stroke: rateColor, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
     const lastPoint = points[points.length - 1];
-    svgEl('circle', { cx: x(lastPoint.index), cy: y(lastPoint.wr), r: 4, fill: COLOR.winLine, stroke: COLOR.panel, 'stroke-width': 2 }, svg);
+    svgEl('circle', { cx: x(lastPoint.index), cy: y(lastPoint.wr), r: 4, fill: rateColor, stroke: COLOR.panel, 'stroke-width': 2 }, svg);
     svgText(svg, x(lastPoint.index) + 8, y(lastPoint.wr) + 5, pct(lastPoint.wr, 0), { fill: COLOR.ink, 'font-size': 14, class: 'font-number' });
     const crosshair = svgEl('line', { y1: margin.top, y2: height - margin.bottom, stroke: COLOR.ink3, 'stroke-width': 1, visibility: 'hidden' }, svg);
     const overlay = svgEl('rect', { x: margin.left, y: margin.top, width: width - margin.left - margin.right, height: height - margin.top - margin.bottom, fill: 'transparent' }, svg);
@@ -537,7 +539,7 @@
       crosshair.setAttribute('x2', x(point.index));
       crosshair.setAttribute('visibility', 'visible');
       showTip(event, `第 ${point.index} 场 · ${fmtDateTime(point.t)}`, [
-        { value: pct(point.wr, 0), label: `20 场滚动${word.rate}`, color: COLOR.winLine },
+        { value: pct(point.wr, 0), label: `20 场滚动${word.rate}`, color: rateColor },
         { value: point.win ? word.win : word.lose, label: '本场结果' },
       ]);
     });
@@ -745,11 +747,13 @@
     }
     const max = Math.max(0, ...cells.flat().map((cell) => cell.n));
     const metric = state.heatMetric;
+    const countColors = salmon ? COLOR.salmonSeq : COLOR.seq;
+    const rateColors = salmon ? COLOR.salmonDiv : COLOR.div;
     const rateOf = (cell) => (cell.decided >= 3 ? cell.wins / cell.decided : null);
     const colorFor = (cell) => {
-      if (metric === 'count') return cell.n ? COLOR.seq[Math.min(4, Math.ceil((cell.n / max) * 5) - 1)] : COLOR.seq0;
+      if (metric === 'count') return cell.n ? countColors[Math.min(countColors.length - 1, Math.ceil((cell.n / max) * countColors.length) - 1)] : COLOR.seq0;
       const rate = rateOf(cell);
-      return rate == null ? COLOR.seq0 : divergingColor(rate);
+      return rate == null ? COLOR.seq0 : divergingColor(rate, rateColors);
     };
     if (state.tables.heat) {
       const rows = [];
@@ -780,11 +784,11 @@
     if (metric === 'count') {
       legend.append(
         el('span', {}, [el('span', { class: 'legend-scale' }, [el('span', { style: `background:${COLOR.seq0}` })]), document.createTextNode(salmon ? ' 没有打工' : ' 没有对战')]),
-        el('span', {}, [document.createTextNode('少 '), el('span', { class: 'legend-scale' }, COLOR.seq.map((color) => el('span', { style: `background:${color}` }))), document.createTextNode(` 多（最多 ${max} 场）`)]),
+        el('span', {}, [document.createTextNode('少 '), el('span', { class: 'legend-scale' }, countColors.map((color) => el('span', { style: `background:${color}` }))), document.createTextNode(` 多（最多 ${max} 场）`)]),
       );
     } else {
       legend.append(
-        el('span', {}, [document.createTextNode('低于 50% '), el('span', { class: 'legend-scale' }, COLOR.div.map((color) => el('span', { style: `background:${color}` }))), document.createTextNode(' 高于 50%')]),
+        el('span', {}, [document.createTextNode('低于 50% '), el('span', { class: 'legend-scale' }, rateColors.map((color) => el('span', { style: `background:${color}` }))), document.createTextNode(' 高于 50%')]),
         el('span', {}, [el('span', { class: 'legend-scale' }, [el('span', { style: `background:${COLOR.seq0}` })]), document.createTextNode(' 少于 3 场')]),
       );
     }

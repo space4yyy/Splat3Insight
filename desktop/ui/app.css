@@ -8,7 +8,7 @@
    --color-xmatch、--color-bankara、--color-league、--color-private、--color-coop。
    黄色用于主要选中、胜利、上升；蓝色用于次要控件、账号、失败、下降。图表、标志和模式色在两种主题下都用原色；
    只有文字为了看清调了深浅（深色主题的蓝字调浅，浅色主题的黄字调深）。
-   按百分比着色的色阶两端就是官方黄、蓝，中间几档向中间的灰色过渡。
+   按场次着色用打工橙红渐变；按百分比着色的色阶两端就是官方黄、蓝，中间几档向中间的灰色过渡。
    鲑鱼跑的色阶两端换成打工色：低于平均取 --color-coop 橙，高于平均取 --color-salmon-green 绿 #00f82d，
    和 SplatNet 3 打工记录里失败波次用橙、通关和击倒头目鲑鱼用绿一致。 */
 :root {
@@ -49,6 +49,11 @@
   --seq-3: var(--splat-blue);
   --seq-4: #827ffe;
   --seq-5: #aeb2fe;
+  --salmon-seq-1: #58362f;
+  --salmon-seq-2: #794034;
+  --salmon-seq-3: #a34737;
+  --salmon-seq-4: #d64e37;
+  --salmon-seq-5: var(--mode-salmon);
   --div-neg-3: var(--splat-blue);
   --div-neg-2: #5243ca;
   --div-neg-1: #45448d;
@@ -112,6 +117,11 @@
     --seq-3: #9598fe;
     --seq-4: #7971ff;
     --seq-5: var(--splat-blue);
+    --salmon-seq-1: #fff0ec;
+    --salmon-seq-2: #ffe0d9;
+    --salmon-seq-3: #ffc4b7;
+    --salmon-seq-4: #ff947e;
+    --salmon-seq-5: var(--mode-salmon);
     --div-neg-2: #9597fb;
     --div-neg-1: #cacdf2;
     --div-mid: #ecebe8;
@@ -155,6 +165,11 @@
   --seq-3: #9598fe;
   --seq-4: #7971ff;
   --seq-5: var(--splat-blue);
+  --salmon-seq-1: #fff0ec;
+  --salmon-seq-2: #ffe0d9;
+  --salmon-seq-3: #ffc4b7;
+  --salmon-seq-4: #ff947e;
+  --salmon-seq-5: var(--mode-salmon);
   --div-neg-2: #9597fb;
   --div-neg-1: #cacdf2;
   --div-mid: #ecebe8;
@@ -356,6 +371,8 @@ table.data .num { text-align: right; }
 .form-cell:not(.none):hover, .form-cell:not(.none):focus-visible { transform: translateY(-1px); }
 .form-cell.win { background: var(--win); color: var(--on-win); }
 .form-cell.lose { background: var(--lose); color: var(--on-lose); }
+.is-salmon .form-cell.win { background: var(--salmon-green); color: var(--on-salmon); }
+.is-salmon .form-cell.lose { background: var(--mode-salmon); color: var(--on-salmon); }
 .form-cell.none { background: var(--seq-0); }
 .form-summary { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--ink-3); font-size: 12px; }
 .form-summary strong { color: var(--ink); font-size: 14px; }
