@@ -49,7 +49,7 @@
     "page": "defeat-counts",
     "name": "击倒数量卡片",
     "optionLabel": "击倒数量",
-    "description": "一行显示鲑鱼跑记录里巨大鲑鱼和头目鲑鱼的累计击倒数量。",
+    "description": "单行展示鲑鱼跑记录中巨大鲑鱼与头目鲑鱼的累计击倒数量。",
     "sizeLabel": "OBS 尺寸推荐",
     "width": 3072,
     "height": 256

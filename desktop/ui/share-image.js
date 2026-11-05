@@ -504,7 +504,7 @@
           });
           return el('label', { class: 'share-enemy-option' }, [input, enemy.image ? el('img', { src: enemy.image, alt: '' }) : null, enemy.name]);
         }));
-        if (!summary.grade.enemies.length) enemyChoices.textContent = '所选期间没有分类击倒记录';
+        if (!summary.grade.enemies.length) enemyChoices.textContent = '所选期间无分类击倒记录';
       }
       preview.classList.toggle('is-empty', !summary.n);
       if (summary.n) {
@@ -518,7 +518,7 @@
       } else {
         preview.style.width = '';
         preview.style.height = '';
-        preview.textContent = selectedContent === 'salmon' ? '这段时间没有打工记录' : '这段时间没有真格对战';
+        preview.textContent = selectedContent === 'salmon' ? '所选期间无打工记录' : '所选期间无真格对战记录';
       }
       updateControls();
     }

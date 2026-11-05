@@ -17,8 +17,8 @@
   const decided = (stat) => stat.wins + stat.losses;
   const enough = (stat) => decided(stat) >= analysis.MIN_DECIDED;
   const ruleName = (rule, fallback) => RULE_LABEL[rule] || fallback || '未知规则';
-  const noBattles = (box) => emptyState(box, '这段时间没有对战', '换一个时间范围或模式看看。');
-  const noShifts = (box) => emptyState(box, '这段时间没有打工记录', '换一个时间范围看看。');
+  const noBattles = (box) => emptyState(box, '所选时间范围内无对战记录', '请尝试切换其他时间范围或模式。');
+  const noShifts = (box) => emptyState(box, '所选时间范围内无打工记录', '请尝试切换其他时间范围。');
   function fmtClock(seconds) {
     const total = Math.round(seconds);
     return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
@@ -347,7 +347,7 @@
     const summary = analysis.durationSummary(list);
     statsBox.textContent = '';
     legend.textContent = '';
-    if (!summary.n) { emptyState(box, '这段时间没有真格规则的对战', '换一个时间范围或模式看看。'); return; }
+    if (!summary.n) { emptyState(box, '所选时间范围内无真格规则对战', '请尝试切换其他时间范围或模式。'); return; }
     statsBox.append(
       miniStat('平均用时', summary.average == null ? '—' : fmtClock(summary.average)),
       miniStat('加时', `${summary.overtime.n} 场`),
@@ -507,7 +507,7 @@
     const WINDOW = 10;
     const rolling = analysis.rollingWinRate(row.battles, WINDOW);
     if (!rolling.length) {
-      emptyState(trendBox, `至少 ${WINDOW} 场后显示`, '扩大时间范围看看。');
+      emptyState(trendBox, `满 ${WINDOW} 场后显示`, '请尝试扩大时间范围。');
     } else {
       const first = rolling[0].index;
       const last = rolling[rolling.length - 1].index;
@@ -526,7 +526,7 @@
     // 挑战战力只和同一把武器比较；按场次等距排列，连着打的几场不会挤成一条竖线。
     const challenge = row.battles.filter((battle) => battle.mode === 'anarchy' && battle.bankara === 'challenge' && battle.power != null);
     if (!challenge.length) {
-      emptyState(powerBox, '没有蛮颓挑战记录', weaponView.showPower ? '这段时间没有用它打蛮颓挑战。' : '当前只看 X 比赛。');
+      emptyState(powerBox, '无蛮颓挑战记录', weaponView.showPower ? '所选时间范围内未使用该武器进行蛮颓挑战。' : '当前筛选仅包含 X 比赛，切换至“全部模式”或“真格”后可查看。');
     } else {
       const values = challenge.map((battle) => battle.power);
       const scale = niceScale(Math.min(...values) - 5, Math.max(...values) + 5, 3);
@@ -543,7 +543,7 @@
     }
 
     const extremes = analysis.stageExtremes(row.battles);
-    if (!extremes) emptyState(stageBox, '场地样本不足', '每张图至少 3 场分出胜负后比较。');
+    if (!extremes) emptyState(stageBox, '场地样本不足', '每个场地至少有 3 场分出胜负后参与比较。');
     else stageBox.append(stageRanks('最好', extremes.best), stageRanks('最差', extremes.worst));
   }
   function opponentRanks(label, items) {
@@ -565,8 +565,8 @@
         noBattles(chartBox);
         noBattles(extremesBox);
       } else {
-        emptyState(chartBox, '没有对手武器数据', '同步包含对局详情的记录后显示。');
-        emptyState(extremesBox, '没有对手武器数据', '同步包含对局详情的记录后显示。');
+        emptyState(chartBox, '暂无对手武器数据', '同步包含对局详情的记录后即可显示。');
+        emptyState(extremesBox, '暂无对手武器数据', '同步包含对局详情的记录后即可显示。');
       }
       return;
     }
@@ -575,9 +575,9 @@
     extremesBox.textContent = '';
     const extremes = analysis.opponentExtremes(rows, 4);
     if (!extremes) {
-      emptyState(extremesBox, '对阵样本不足', '至少 2 把对手武器各有 3 场分出胜负后比较。');
+      emptyState(extremesBox, '对阵样本不足', '至少 2 把对手武器各有 3 场分出胜负后参与比较。');
     } else {
-      extremesBox.append(opponentRanks('最好打（胜率最高）', extremes.best), opponentRanks('最难打（胜率最低）', extremes.worst));
+      extremesBox.append(opponentRanks('优势对阵（胜率最高）', extremes.best), opponentRanks('劣势对阵（胜率最低）', extremes.worst));
     }
 
     const shown = rows.slice(0, 12);
@@ -831,7 +831,7 @@
     const box = $('grade-chart');
     if (!list.length) { noShifts(box); return; }
     const groups = analysis.rotationGroups(list).filter((group) => group.peakGrade).reverse();
-    if (!groups.length) { emptyState(box, '没有评级记录', '换一个打工模式看看。'); return; }
+    if (!groups.length) { emptyState(box, '暂无评级记录', '请尝试切换其他时间范围或打工模式。'); return; }
     const periodText = (group) => `${fmtDateTime(group.start ?? group.first)} · ${group.stage}${group.ongoing ? ' · 进行中' : ''}${group.start == null ? ' · 轮班时间不详' : group.start < start || group.end > end ? ' · 仅所选范围' : ''}`;
     if (dashboard.tableOn('grade')) {
       renderTable(box, [{ label: '打工期' }, { label: '已记录最高评级', num: true }, { label: '场次', num: true }, { label: '通关率', num: true }], [...groups].reverse().map((group) => [
@@ -910,7 +910,7 @@
     scalesBox.textContent = '';
     const rows = analysis.kingRows(list);
     scalesBox.hidden = !rows.length;
-    if (!rows.length) { emptyState(box, '这段时间没有遇到头目鲑鱼', '换一个时间范围看看。'); return; }
+    if (!rows.length) { emptyState(box, '所选时间范围内未遇到头目鲑鱼', '请尝试切换其他时间范围。'); return; }
     for (const row of rows) {
       const rate = row.defeated / row.appeared;
       box.append(el('div', { class: 'king-row' }, [
@@ -969,7 +969,7 @@
     box.append(el('div', { class: 'chart-pair' }, metrics.map((metric, index) => el('div', { class: 'chart-block' }, [el('p', { class: 'subhead', text: metric.label }), charts[index]]))));
     metrics.forEach((metric, index) => {
       const { result } = metric;
-      if (!result.total) { emptyState(charts[index], '没有数据', '旧记录可能没有这一项。'); return; }
+      if (!result.total) { emptyState(charts[index], '暂无数据', '早期历史记录可能未包含此项数据。'); return; }
       drawHistogram(charts[index], {
         bins: histogramBins(result, { step: metric.step, label: metric.label, unit: metric.unit }),
         color: COLOR.salmon, height: 132, labelEvery: metric.every,
@@ -1131,7 +1131,7 @@
       ['巨大鲑鱼', record.enemies, analysis.DEFEAT_TARGETS.enemies],
       ['头目鲑鱼', record.bosses, analysis.DEFEAT_TARGETS.bosses],
     ].filter(([, rows]) => rows.length);
-    if (!groups.length) { emptyState(box, '还没有击倒记录', '打工之后再来看看。'); return; }
+    if (!groups.length) { emptyState(box, '暂无击倒记录', '完成打工并同步后将显示累计击倒数据。'); return; }
     box.replaceChildren(...groups.map(([label, rows, target]) => el('div', { class: 'defeat-group' }, [
       el('p', { class: 'subhead', text: label }),
       defeatView === 'bars' ? defeatBarView(rows, target) : defeatGridView(rows),

@@ -1247,7 +1247,7 @@ async fn choose_export_directory(
         .app_config_dir()
         .map_err(|error| error.to_string())?;
     if directory.starts_with(&config_dir) {
-        return Err("不能导出到应用自己的数据文件夹，请换一个位置".to_owned());
+        return Err("不能导出至应用数据目录，请选择其他位置".to_owned());
     }
     let mut preferences = load_app_preferences(&state.preferences_path)?;
     preferences.export_directory = Some(directory.clone());
@@ -1739,7 +1739,7 @@ fn save_nintendo_login<S: SecretStore>(
             |account| format!("“{}”", account.display_name),
         );
         return Err(format!(
-            "登录的是另一个 Nintendo 账号“{}”，没有保存。请在浏览器里换成{expected}后重新登录。",
+            "当前登录的是另一个 Nintendo 账号“{}”，未保存更改。请在浏览器中切换为{expected}后重新登录。",
             identity.display_name
         ));
     }

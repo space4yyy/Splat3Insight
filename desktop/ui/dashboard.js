@@ -377,11 +377,11 @@
     }
 
     if (!(state.mode === 'all' || state.mode === 'x')) {
-      emptyState(box, '当前筛选不包含 X 比赛', 'X 战力只在 X 比赛中计算。切换到“全部模式”或“X”后查看。');
+      emptyState(box, '当前筛选不包含 X 比赛', 'X 战力仅在 X 比赛中计算，请切换至“全部模式”或“X”后查看。');
       return;
     }
     if (!xRules.has(state.rule)) {
-      emptyState(box, `${RULE_LABEL[state.rule]}还没有定级`, '这个规则还没有 X 战力记录，战力保持为空，也不会借用其他规则的分数。');
+      emptyState(box, `${RULE_LABEL[state.rule]}尚未定级`, '该规则尚无 X 战力记录，未定级时保持为空，不借用其他规则的分数。');
       return;
     }
     const series = [...xRules].map((rule) => ({
@@ -394,13 +394,13 @@
         const previous = xSettlements.filter((other) => other.rule === item.rule && other.t < item.t).slice(-1)[0];
         return [fmtDateTime(item.t), RULE_LABEL[item.rule] || item.rule, item.value.toFixed(1), previous ? signed(item.value - previous.value) : '—'];
       });
-      if (!rows.length) { emptyState(box, '这段时间 X 战力没有变化', '完成一次测定后会出现新的分数点。'); return; }
+      if (!rows.length) { emptyState(box, '所选时间范围内 X 战力无变化', '完成新一组测定后将显示新的战力数据点。'); return; }
       renderTable(box, [{ label: '时间', number: true }, { label: '规则' }, { label: 'X 战力', num: true }, { label: '变化', num: true }], rows);
       return;
     }
     const selectedSeries = series.find((item) => item.rule === state.rule);
     if (!selectedSeries.points.length && selectedSeries.anchor == null) {
-      emptyState(box, '这段时间没有 X 战力记录', '完成一次测定后会出现新的分数点。');
+      emptyState(box, '所选时间范围内无 X 战力记录', '完成测定后将显示新的战力数据点。');
       return;
     }
     const values = series.flatMap((item) => item.points.map((point) => point.value).concat(item.anchor == null ? [] : [item.anchor]));
@@ -502,7 +502,7 @@
       if (index >= 20) wins -= list[index - 20].win ? 1 : 0;
       if (index >= 19) points.push({ index: index + 1, t: list[index].t, wr: wins / 20, win: list[index].win });
     }
-    if (points.length < 2) { emptyState(box, `至少 20 场后显示滚动${word.rate}`, '扩大时间范围，或切换到场次更多的模式。'); return; }
+    if (points.length < 2) { emptyState(box, `至少 20 场后显示滚动${word.rate}`, '请尝试扩大时间范围，或切换至场次更多的模式。'); return; }
     if (state.tables.form) {
       renderTable(box, [{ label: '场次', number: true }, { label: '时间', number: true }, { label: '本场' }, { label: `20 场${word.rate}`, num: true }], points.slice().reverse().map((point) => [`第 ${point.index} 场`, fmtDateTime(point.t), point.win ? word.win : word.lose, pct(point.wr, 0)]));
       return;
@@ -561,10 +561,10 @@
     ];
     const swatchBackground = (item) => (item.hatch ? `repeating-linear-gradient(45deg, ${item.color} 0 3px, ${COLOR.panel} 3px 5px)` : item.color);
     document.getElementById('time-sub').textContent = state.mode === 'salmon'
-      ? '只统计打工，时长按波次估算'
+      ? '仅统计打工，时长按波次估算'
       : includeSalmon
         ? '对战按每场对局时长累加，鲑鱼跑按波次估算'
-        : `只统计${MODE[state.mode].label}的对局时长`;
+        : `仅统计${MODE[state.mode].label}的对局时长`;
     const emptyEntry = () => ({
       seconds: Object.fromEntries(series.map((item) => [item.key, 0])),
       counts: Object.fromEntries(series.map((item) => [item.key, 0])),
@@ -608,7 +608,7 @@
         legend.append(el('span', {}, [el('span', { class: 'swatch', style: `background:${swatchBackground(item)}` }), document.createTextNode(item.estimated ? `${item.label}（估算）` : item.label)]));
       }
     }
-    if (!total) { emptyState(box, '这段时间没有游玩记录', '换一个时间范围看看。'); return; }
+    if (!total) { emptyState(box, '所选时间范围内无游玩记录', '请尝试切换其他时间范围。'); return; }
 
     const weekly = state.range === 'all';
     const buckets = [];
@@ -698,7 +698,7 @@
     const list = battlesIn(start, end);
     const total = list.length;
     bar.textContent = '';
-    if (!total) { emptyState(bar, '这段时间没有对战', '换一个时间范围看看。'); tableBox.textContent = ''; return; }
+    if (!total) { emptyState(bar, '所选时间范围内无对战记录', '请尝试切换其他时间范围。'); tableBox.textContent = ''; return; }
     const stats = MODES
       .map((mode) => ({ mode, ...summarize(list.filter((battle) => battle.mode === mode.key)) }))
       .filter((stat) => !stat.mode.optional || stat.n);
@@ -758,7 +758,7 @@
     if (state.tables.heat) {
       const rows = [];
       cells.forEach((row, day) => row.forEach((cell, hour) => { if (cell.n) rows.push([WEEKDAYS[day], `${pad2(hour)}:00`, String(cell.n), rateOf(cell) == null ? '样本不足' : pct(rateOf(cell), 0)]); }));
-      if (!rows.length) emptyState(box, salmon ? '这段时间没有打工' : '这段时间没有对战', '换一个时间范围看看。');
+      if (!rows.length) emptyState(box, salmon ? '所选时间范围内无打工记录' : '所选时间范围内无对战记录', '请尝试切换其他时间范围。');
       else renderTable(box, [{ label: '星期' }, { label: '时段', number: true }, { label: '场次', num: true }, { label: rateWord, num: true }], rows);
     } else {
       box.textContent = '';
@@ -807,8 +807,8 @@
       el('span', {}, [document.createTextNode('低于 50% '), el('span', { class: 'legend-scale' }, COLOR.div.map((color) => el('span', { style: `background:${color}` }))), document.createTextNode(' 高于 50%')]),
       el('span', {}, [el('span', { class: 'legend-scale' }, [el('span', { style: `background:${COLOR.seq0}` })]), document.createTextNode(' 少于 3 场')]),
     );
-    if (stages.length > STAGE_ROWS && !state.tables.stage) legend.append(el('span', { text: `只列场次最多的 ${STAGE_ROWS} 张图` }));
-    if (!list.length) { emptyState(box, '这段时间没有真格规则的对战', '占地对战不计入这个矩阵。'); return; }
+    if (stages.length > STAGE_ROWS && !state.tables.stage) legend.append(el('span', { text: `仅显示场次最多的前 ${STAGE_ROWS} 个场地` }));
+    if (!list.length) { emptyState(box, '所选时间范围内无真格规则对战', '占地对战不计入此矩阵。'); return; }
     const cellOf = (stage, rule) => summarize(list.filter((battle) => battle.stage === stage && battle.rule === rule));
     const decided = (cell) => cell.wins + cell.losses;
     if (state.tables.stage) {
@@ -868,7 +868,7 @@
       .map(([name, used]) => ({ name, last: used[used.length - 1].t, ...summarize(used) }))
       .sort((a, b) => b.n - a.n)
       .slice(0, 6);
-    if (!rows.length) { emptyState(box, '这段时间没有对战', '换一个时间范围看看。'); return; }
+    if (!rows.length) { emptyState(box, '所选时间范围内无对战记录', '请尝试切换其他时间范围。'); return; }
     renderTable(box, [{ label: '武器' }, { label: '场次', num: true }, { label: '胜率', number: true }, { label: 'K/D', num: true }, { label: '场均涂地', num: true }, { label: '最近使用', num: true }], rows.map((row) => [
       row.name, String(row.n),
       row.wr == null ? '—' : el('span', {}, [el('span', { class: 'meter', 'aria-hidden': 'true' }, el('span', { style: `width:${(row.wr * 100).toFixed(1)}%` })), document.createTextNode(pct(row.wr))]),
@@ -903,7 +903,7 @@
       const cleared = attempted.filter((wave) => wave.cleared).length;
       return { water, attempted: attempted.length, cleared, rate: attempted.length ? cleared / attempted.length : null };
     });
-    if (!list.length) emptyState(box, '这段时间没有打工记录', '换一个时间范围看看。');
+    if (!list.length) emptyState(box, '所选时间范围内无打工记录', '请尝试切换其他时间范围。');
     else if (state.tables.salmon) renderTable(box, [{ label: '潮位' }, { label: '波次', num: true }, { label: '通关', num: true }, { label: '通关率', num: true }], waves.map((wave) => [wave.water, String(wave.attempted), String(wave.cleared), pct(wave.rate, 0)]));
     else {
       box.textContent = '';
@@ -938,7 +938,7 @@
     const box = document.getElementById('salmon-rotation');
     box.textContent = '';
     if (!salmonRun) {
-      box.append(el('span', { text: '还没有打工记录' }));
+      box.append(el('span', { text: '暂无打工记录' }));
       return;
     }
     const playedAt = Date.parse(salmonRun.played_time ?? '');
@@ -979,11 +979,11 @@
     document.getElementById('recent-more').hidden = false;
     document.getElementById('recent-title').textContent = salmon ? '最近打工' : '最近对战';
     document.getElementById('recent-sub').textContent = salmon
-      ? '每场打工的结果、金鲑鱼卵、救援和评级。'
-      : '战力变化只和同一赛道的上一场比较：X 赛按规则，挑战按武器；开放和活动赛只显示战力。';
+      ? '展示近期打工的结果、金鲑鱼卵、救援次数与评级。'
+      : '战力变化仅与同一赛道的上一场比较（X 比赛按规则，蛮颓挑战按武器）；蛮颓开放与活动比赛仅显示当局战力。';
     if (salmon) {
       const recentShifts = shiftsIn(start, end).slice(-10).reverse();
-      if (!recentShifts.length) { emptyState(box, '这段时间没有打工', '换一个时间范围看看。'); return; }
+      if (!recentShifts.length) { emptyState(box, '所选时间范围内无打工记录', '请尝试切换其他时间范围。'); return; }
       renderTable(box, [{ label: '时间', number: true }, { label: '场地' }, { label: '结果' }, { label: '金鲑鱼卵', num: true }, { label: '救援 / 被救', num: true }, { label: '头目鲑鱼' }, { label: '评级', num: true }], recentShifts.map((shift) => [
         fmtDateTime(shift.t),
         shift.stage,
@@ -996,7 +996,7 @@
       return;
     }
     const list = battlesIn(start, end).slice(-10).reverse();
-    if (!list.length) { emptyState(box, '这段时间没有对战', '换一个时间范围看看。'); return; }
+    if (!list.length) { emptyState(box, '所选时间范围内无对战记录', '请尝试切换其他时间范围。'); return; }
     renderTable(box, [{ label: '时间', number: true }, { label: '模式' }, { label: '规则 · 场地' }, { label: '武器' }, { label: '结果' }, { label: '击倒 / 协助 / 死亡', num: true }, { label: '战力', num: true }], list.map((battle) => [
       fmtDateTime(battle.t),
       el('span', {}, [el('span', { class: 'swatch', style: `background:${modeColor(battle.mode)}` }), document.createTextNode(modeLabelOf(battle))]),

@@ -29,14 +29,14 @@
   }, true);
 
   const VIEWS = {
-    overview: ['总览', '最近的状态、战力走势和常用配置，一页看完。'],
-    battles: ['对战', '规则、连胜连败、击倒和对局时长。'],
-    weapons: ['武器', '每把武器的表现、挑战战力，以及对手武器、副武器和特殊武器。'],
-    stages: ['场地', '每张地图的胜率、出现时间和武器表现。'],
-    salmon: ['鲑鱼跑', '各期打工、评级、头目鲑鱼、特殊波次、个人贡献和击倒数量。'],
-    log: ['对战记录', '所有对局，点一行查看详情。'],
-    obs: ['其他工具', '直播用的 OBS 数据卡片等附加工具。'],
-    settings: ['设置', '账号、网络代理、日志目录和开机启动。'],
+    overview: ['总览', '近期状态、战力走势与常用配置概览。'],
+    battles: ['对战', '各规则表现、连胜连败胜率、击倒与死亡分布及对局时长统计。'],
+    weapons: ['武器', '各武器表现、挑战战力，以及对手武器、副武器与特殊武器统计。'],
+    stages: ['场地', '各场地胜率、近期轮换记录与武器表现。'],
+    salmon: ['鲑鱼跑', '各期打工、评级表现、头目鲑鱼、特殊波次、个人贡献与累计击倒数量。'],
+    log: ['对战记录', '全部对局记录，点击任意记录查看详情。'],
+    obs: ['其他工具', '用于直播推流的 OBS 数据卡片等附加工具。'],
+    settings: ['设置', '账号管理、数据导出、网络代理、日志目录与开机启动。'],
   };
   const VIEW_KEY = 'splat3-view';
   const OBS_SELECTION_KEY = 'splat3-obs-card-selection';
@@ -493,8 +493,8 @@
     if (!app.accountsLoaded) return { title: '正在读取账号…' };
     if (!app.activeAccountId) {
       return {
-        title: '还没有添加账号',
-        body: '添加 Nintendo 账号并完成首次同步后，这里会显示你的对战和打工数据。',
+        title: '尚未添加账号',
+        body: '添加 Nintendo 账号并完成首次同步后，即可在此查看对战与打工数据。',
         action: { label: '添加账号', run: startLogin },
       };
     }
@@ -502,9 +502,9 @@
       return { title: '读取历史数据失败', body: app.facts.error, action: { label: '重试', run: () => loadFacts({ force: true }) } };
     }
     if (app.facts.accountId !== app.activeAccountId || app.facts.status !== 'ready') {
-      return { title: '正在整理历史数据…', body: '第一次打开时会为全部历史记录建立索引，记录很多时需要一点时间。' };
+      return { title: '正在整理历史数据…', body: '首次打开时需为全部历史记录建立索引，记录较多时可能需要片刻。' };
     }
-    if (!dashboard.hasRecords()) return { title: '还没有对战或打工记录', body: '同步完成后，这里会显示你的数据。同步进度显示在左下角。' };
+    if (!dashboard.hasRecords()) return { title: '暂无对战或打工记录', body: '数据同步完成后将在此展示，可在左下角查看同步进度。' };
     return null;
   }
   function showDataNotice(status, content) {
@@ -748,7 +748,7 @@
   function renderAccountList() {
     const list = $('#account-list');
     if (!app.accounts.length) {
-      list.replaceChildren(el('p', { class: 'account-empty', text: '点击“添加账号”开始。' }));
+      list.replaceChildren(el('p', { class: 'account-empty', text: '尚未添加账号，请点击“添加账号”开始使用。' }));
       return;
     }
     list.replaceChildren(...app.accounts.map((account) => {
@@ -850,7 +850,7 @@
       const { added_battle_count: battles, added_coop_count: coop, skipped_count: skipped } = summary;
       setMessage(battles + coop
         ? `导入完成：新增 ${battles} 条对战、${coop} 条打工${skipped ? `，${skipped} 条本地已有` : ''}。`
-        : '文件里的记录本地都已有。');
+        : '导入完成：文件中的记录均已存在于本地。');
       if (target.accountId === app.activeAccountId) {
         await loadFacts({ force: true });
         refreshOverlayStates();
@@ -881,7 +881,7 @@
     const withData = deleteLocalData.checked;
     $('#delete-export').hidden = !withData;
     deleteConfirm.textContent = withData ? '删除账号和数据' : '删除账号';
-    deleteExport.textContent = deleteTarget?.exportPath ? '再导出一份' : '导出数据';
+    deleteExport.textContent = deleteTarget?.exportPath ? '重新导出' : '导出数据';
     deleteReveal.hidden = !deleteTarget?.exportPath;
   }
   function openDeleteDialog(accountId, name) {
@@ -1023,10 +1023,10 @@
       loginTarget = target;
       await openUrl(url);
       const who = target ? `“${target.name}”` : '';
-      pasteHint.textContent = `在浏览器登录${who}后，右键“选择此人”按钮，复制链接地址并粘贴到这里。`;
+      pasteHint.textContent = `在浏览器中完成登录${who}后，右键点击“选择此人”按钮，复制链接地址并粘贴至下方。`;
       pastePanel.hidden = false;
       loginLink.focus();
-      setMessage(`请在浏览器登录${who}，然后复制“选择此人”按钮的链接。`);
+      setMessage(`请在浏览器中登录${who}，并复制“选择此人”按钮的链接地址。`);
     } catch (error) {
       setMessage(String(error), true);
     } finally {
@@ -1099,7 +1099,7 @@
 
   // 同步状态
   function syncSummary(status) {
-    if (!status || (status.state === 'idle' && !status.account_id)) return { text: '还没有账号', tone: 'is-idle' };
+    if (!status || (status.state === 'idle' && !status.account_id)) return { text: '未添加账号', tone: 'is-idle' };
     if (['preparing', 'syncing', 'refreshing'].includes(status.state)) {
       return { text: status.progress_total > 0 ? `同步中 ${status.progress_completed}/${status.progress_total}` : '同步中…', tone: 'is-busy' };
     }
@@ -1137,7 +1137,7 @@
       }
     }
     foot.title = summary.relogin
-      ? 'Nintendo 登录状态已失效，点一下重新登录'
+      ? 'Nintendo 登录状态已失效，点击重新登录'
       : (summary.authorize && app.authError) || status?.error || status?.message || '';
     foot.classList.toggle('is-error', summary.tone === 'is-error');
     // 有账号、已获取权限、当前没在同步时，可以立即同步一次。
@@ -1220,7 +1220,7 @@
     serviceToggle.disabled = starting;
     const warning = $('#obs-url-warning');
     warning.hidden = running || starting;
-    warning.textContent = failed ? (status?.error || status?.message || 'OBS 服务出错') : '服务已停止，OBS 里的卡片不会更新。';
+    warning.textContent = failed ? (status?.error || status?.message || 'OBS 服务出错') : '服务已停止，OBS 中的卡片将暂停更新。';
     warning.classList.toggle('is-error', failed);
     renderObsUrl();
   }
@@ -1381,8 +1381,8 @@
     });
     box.replaceChildren(el('code', { text: url }), copy);
     const [width, height] = obsSourceSize(card);
-    $('#obs-size-hint').textContent = `在浏览器来源属性里把宽高设为 ${width} × ${height}，使用高分辨率渲染，再在 OBS 画布中等比缩小。`
-      + (card.id === 'defeat-counts' ? '在预览里点鲑鱼切换显示后，OBS 里的卡片几秒内自动更新，地址和尺寸都不用改；卡片高度不变，隐藏的鲑鱼不占位置。' : '');
+    $('#obs-size-hint').textContent = `建议将浏览器来源宽高设为 ${width} × ${height}。`
+      + (card.id === 'defeat-counts' ? '增减显示项后自动同步，无需修改地址或尺寸。' : '');
   }
   async function copyText(text, button, failure) {
     try {
@@ -1493,7 +1493,7 @@
       box.replaceChildren();
       return;
     }
-    $('#obs-preview-title').textContent = card.id === 'defeat-counts' ? '预览：击倒数量（点鲑鱼显示或隐藏）' : `预览：${card.optionLabel}`;
+    $('#obs-preview-title').textContent = card.id === 'defeat-counts' ? '预览：击倒数量（点击图标可显示或隐藏）' : `预览：${card.optionLabel}`;
     const [width, height] = obsSourceSize(card);
     $('#obs-preview-size').textContent = `建议 ${width} × ${height}`;
     let preview = box.querySelector('.overlay-preview');

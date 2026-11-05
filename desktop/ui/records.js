@@ -212,7 +212,7 @@
     const pager = document.getElementById('log-pager');
     box.textContent = '';
     if (!state.rows.length) {
-      emptyState(box, state.salmon ? '没有符合条件的打工' : '没有符合条件的对战', '换一个时间范围或筛选条件看看。');
+      emptyState(box, state.salmon ? '没有符合条件的打工记录' : '没有符合条件的对战记录', '请尝试调整时间范围或筛选条件。');
       pager.textContent = '';
       return;
     }
@@ -247,7 +247,7 @@
   function render() {
     const source = dashboard.logSource();
     state.salmon = source.salmon;
-    document.getElementById('page-sub').textContent = source.salmon ? '所有打工，点一行查看详情。' : '所有对局，点一行查看详情。';
+    document.getElementById('page-sub').textContent = source.salmon ? '全部打工记录，点击任意记录查看详情。' : '全部对局记录，点击任意记录查看详情。';
     const filters = state.filters[kindOf(source.salmon)];
     const sortable = source.salmon ? ['t', 'goldenEggs', 'duration'] : ['t', 'kills', 'paint', 'duration'];
     if (!sortable.includes(state.sort.key)) state.sort = { key: 't', dir: 'desc' };
@@ -469,7 +469,7 @@
   function fillDrawer(banner, body, item, kind, raw) {
     body.textContent = '';
     if (raw == null) {
-      body.append(el('p', { class: 'muted', text: '归档里没有找到这条记录的原始数据。' }));
+      body.append(el('p', { class: 'muted', text: '本地归档中未找到该记录的原始数据。' }));
       return;
     }
     const parsed = kind === 'coop' ? detail.shiftDetail(raw) : detail.battleDetail(raw);

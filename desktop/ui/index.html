@@ -113,7 +113,7 @@
                 <div class="card-head">
                   <div>
                     <h2 class="card-title"><span class="mode-dot" style="background: var(--mode-x)" aria-hidden="true"></span>X 战力走势</h2>
-                    <p class="card-sub">每个规则单独计算；没有完成测定的规则保持为空，不借用其他规则的分数。</p>
+                    <p class="card-sub">各规则独立计算；未完成定级的规则保持为空，不借用其他规则的分数。</p>
                   </div>
                   <div class="card-actions"><button type="button" class="ghost" data-table-toggle="x">查看表格</button></div>
                 </div>
@@ -168,7 +168,7 @@
                 <div class="card-head">
                   <div>
                     <h2 class="card-title">常用武器</h2>
-                    <p class="card-sub">按场次排序，胜率条的竖线是 50%</p>
+                    <p class="card-sub">按使用场次排序，胜率条中的竖线代表 50% 基准线</p>
                   </div>
                 </div>
                 <div class="table-wrap scroll-x" id="weapon-table"></div>
@@ -178,7 +178,7 @@
                 <div class="card-head">
                   <div>
                     <h2 class="card-title"><span class="mode-dot" style="background: var(--mode-salmon)" aria-hidden="true"></span>鲑鱼跑</h2>
-                    <p class="card-sub">只受时间范围影响，不受对战模式筛选影响</p>
+                    <p class="card-sub">仅受时间范围影响，不受对战模式筛选影响</p>
                   </div>
                   <div class="card-actions"><button type="button" class="ghost" data-table-toggle="salmon">查看表格</button></div>
                 </div>
@@ -275,7 +275,7 @@
                 <div class="card-head">
                   <div>
                     <h2 class="card-title">常见对手武器</h2>
-                    <p class="card-sub">按遇到场次排序，横条显示对阵胜率</p>
+                    <p class="card-sub">按遭遇场次排序，横条表示对阵胜率</p>
                   </div>
                   <div class="card-actions"><button type="button" class="ghost" data-table-toggle="opponents">查看表格</button></div>
                 </div>
@@ -285,7 +285,7 @@
                 <div class="card-head">
                   <div>
                     <h2 class="card-title">对阵胜率</h2>
-                    <p class="card-sub">每把武器至少遇到 3 场分出胜负后比较</p>
+                    <p class="card-sub">仅统计分出胜负不少于 3 场的对手武器</p>
                   </div>
                   <div class="card-actions"><button type="button" class="ghost" data-table-toggle="opponentRank">查看表格</button></div>
                 </div>
@@ -352,7 +352,7 @@
                 <div class="card-head">
                   <div>
                     <h2 class="card-title" id="defeat-title">徽章进度</h2>
-                    <p class="card-sub" id="defeat-sub">累计数量，不受筛选影响</p>
+                    <p class="card-sub" id="defeat-sub">历史累计数量，不受筛选条件影响</p>
                   </div>
                   <div class="card-actions">
                     <div class="segmented small" id="defeat-view" role="group" aria-label="击倒数量的显示方式">
@@ -431,15 +431,15 @@
                   </div>
                   <input type="range" class="obs-range" id="obs-transparency" min="0" max="100" step="5" value="0">
                   <div class="obs-url obs-css" id="obs-css"></div>
-                  <p class="obs-hint">粘贴到 OBS 浏览器源属性里的“自定义 CSS”，所有卡片都会生效。</p>
+                  <p class="obs-hint">粘贴至 OBS 浏览器来源属性的“自定义 CSS”中，对所有卡片生效。</p>
                 </div>
-                <p class="obs-hint">用法：在 OBS 添加“浏览器”来源并粘贴地址；更换卡片类型或透明度后要重新粘贴。</p>
+                <p class="obs-hint">使用方法：在 OBS 中添加“浏览器”来源并粘贴上方地址；更改卡片类型或背景透明度后需重新复制粘贴。</p>
               </div>
               <div class="obs-column">
                 <div class="obs-field">
                   <p class="subhead" id="obs-types-title">卡片类型</p>
                   <div class="obs-options" id="obs-options" role="group" aria-labelledby="obs-types-title"></div>
-                  <p class="obs-hint">自动、击倒数量和时钟只能单选；其他可多选，哪种有新记录就显示哪种。</p>
+                  <p class="obs-hint">“自动”、“击倒数量”和“时钟”仅支持单选；其余类型可多选，组合后将自动切换显示最新产生记录的卡片。</p>
                 </div>
                 <div class="obs-field">
                   <div class="obs-preview-top">
@@ -459,12 +459,12 @@
               <div class="card-head">
                 <div>
                   <h2 class="card-title">账号</h2>
-                  <p class="card-sub">登录信息保存在<span data-windows="凭据管理器">系统钥匙串</span>里，历史数据只保存在这台电脑上。</p>
+                  <p class="card-sub">登录凭据保存在<span data-windows="凭据管理器">系统钥匙串</span>中，历史数据仅保存在本地设备。</p>
                 </div>
                 <div class="card-actions"><button type="button" class="button-primary" id="login">添加账号</button></div>
               </div>
               <div class="paste-panel" id="paste-panel" hidden>
-                <p id="paste-hint">在浏览器登录后，右键“选择此人”按钮，复制链接地址并粘贴到这里。</p>
+                <p id="paste-hint">在浏览器中完成登录后，右键点击“选择此人”按钮，复制链接地址并粘贴至下方。</p>
                 <textarea id="login-link" autocomplete="off" spellcheck="false" placeholder="粘贴 Nintendo 账号选择链接"></textarea>
                 <div class="paste-actions">
                   <button type="button" class="ghost" id="cancel-login">取消</button>
@@ -531,7 +531,7 @@
 
     <dialog id="proxy-dialog" class="close-prompt proxy-settings-dialog" aria-labelledby="proxy-dialog-title" tabindex="-1">
       <h2 id="proxy-dialog-title">网络代理</h2>
-      <p>应用内的 Nintendo 账号认证、SplatNet 数据和资源图片请求会使用此代理。外部浏览器中的登录页面仍按浏览器自己的网络设置访问。</p>
+      <p>应用内的 Nintendo 账号认证、SplatNet 数据同步及图片资源请求均通过此代理发送；外部浏览器中的登录页面仍使用浏览器自身的网络设置。</p>
       <div class="proxy-settings-form">
         <label class="proxy-enabled-row" for="proxy-enabled">
           <input type="checkbox" class="switch" id="proxy-enabled" role="switch">
@@ -541,7 +541,7 @@
           <span>代理地址</span>
           <input id="proxy-address" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:7890" disabled>
         </label>
-        <p class="proxy-settings-help">支持 HTTP 或 HTTPS 代理，例如本机代理软件提供的 HTTP / 混合端口。SOCKS 暂不支持；地址中不要填写用户名或密码。测试只检查代理主机的 TCP 端口是否可连接，不会访问 Nintendo 服务。关闭自定义代理后，沿用应用原有网络环境设置。</p>
+        <p class="proxy-settings-help">支持 HTTP 或 HTTPS 代理（如本机代理软件提供的 HTTP / 混合端口），暂不支持 SOCKS 代理，且地址中请勿包含用户名或密码。“测试端口”仅检测代理主机的 TCP 端口连通性，不会访问 Nintendo 服务。关闭自定义代理后，将恢复使用系统或环境变量中的网络设置。</p>
         <p id="proxy-dialog-status" class="proxy-dialog-status" role="status" aria-live="polite" hidden></p>
       </div>
       <div class="close-prompt-actions proxy-dialog-actions">
@@ -586,7 +586,7 @@
     </dialog>
     <dialog id="background-close-prompt" class="close-prompt" aria-labelledby="background-close-title">
       <h2 id="background-close-title">在后台继续运行？</h2>
-      <p>隐藏主界面后，OBS 服务和数据同步会继续运行。之后可从<span data-windows="系统托盘">Dock</span>图标重新打开，或选择退出应用。</p>
+      <p>隐藏主窗口后，OBS 服务与后台数据同步将继续运行。后续可通过<span data-windows="系统托盘">Dock</span>图标重新打开主界面，或直接退出应用。</p>
       <div class="close-prompt-actions">
         <button id="cancel-close" class="ghost" type="button">取消</button>
         <button id="exit-from-close" class="ghost" type="button">退出应用</button>
@@ -595,13 +595,13 @@
     </dialog>
     <dialog id="delete-account-dialog" class="close-prompt delete-prompt" aria-labelledby="delete-account-title">
       <h2 id="delete-account-title">删除账号</h2>
-      <p>会移除这个账号的登录信息。本地的对战和打工记录默认保留，重新添加同一个账号后可以继续使用。</p>
+      <p>此操作将移除该账号的登录凭据。本地的对战与打工历史记录默认保留，重新添加同一账号后可继续使用。</p>
       <label class="delete-option">
         <input type="checkbox" id="delete-local-data">
-        <span>同时删除本地数据<small>这个账号的对战、打工记录和统计，删除后无法恢复。</small></span>
+        <span>同时删除本地数据<small>一并删除该账号的对战、打工记录及统计数据，删除后无法恢复。</small></span>
       </label>
       <div class="delete-export" id="delete-export" hidden>
-        <p>删除前建议先导出一份数据到本地，导出的文件不会被删除。</p>
+        <p>删除前建议先导出数据备份至本地，已导出的文件不会受影响。</p>
         <div class="delete-export-actions">
           <button type="button" class="ghost" id="delete-export-button">导出数据</button>
           <button type="button" class="ghost" id="delete-export-reveal" data-windows="在文件资源管理器中显示" hidden>在访达中显示</button>
@@ -615,7 +615,7 @@
     </dialog>
     <dialog id="login-consent" class="close-prompt" aria-labelledby="login-consent-title" tabindex="-1">
       <h2 id="login-consent-title">登录前请确认</h2>
-      <p>登录 SplatNet 3 需要第三方服务 nxapi 生成登录参数。继续后，你的 Nintendo 账号 id_token、Nintendo Switch Online 应用接口（Coral）的令牌，以及和 Coral 收发的全部数据都会发送给 nxapi。<a href="https://github.com/samuelthomas2774/nxapi-znca-api" id="login-consent-link">了解 nxapi</a></p>
+      <p>登录 SplatNet 3 需借助第三方服务 nxapi 生成认证参数。继续操作即表示同意将您的 Nintendo 账号 id_token、Nintendo Switch Online 应用接口（Coral）令牌，以及与 Coral 通信的相关数据发送至 nxapi。<a href="https://github.com/samuelthomas2774/nxapi-znca-api" id="login-consent-link">了解 nxapi</a></p>
       <div class="close-prompt-actions">
         <button type="button" class="ghost" id="login-consent-cancel">取消</button>
         <button type="button" class="button-primary" id="login-consent-accept">同意并登录</button>
