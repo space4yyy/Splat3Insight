@@ -14,8 +14,9 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 use serde_json::Value;
 use splat3_widget_core::dashboard::{
-    battle_fact, coop_defeat_facts, coop_fact, BattleFact, BattleWeaponFact, CoopDefeatFact,
-    CoopDefeatFacts, CoopFact, CoopWaveFact, CoopWeaponFact, DASHBOARD_FACTS_VERSION,
+    battle_fact, coop_defeat_facts, coop_fact, BattleAwardFact, BattleFact, BattleTeamMemberFact,
+    BattleWeaponFact, CoopDefeatFact, CoopDefeatFacts, CoopFact, CoopWaveFact, CoopWeaponFact,
+    DASHBOARD_FACTS_VERSION,
 };
 use splat3_widget_core::history::{BattleRecord, CoopRecord};
 use std::collections::HashMap;
@@ -58,6 +59,8 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
                  power REAL,
                  power_kind TEXT,
                  opponent_weapons_json TEXT,
+                 awards_json TEXT,
+                 team_members_json TEXT,
                  PRIMARY KEY (account_id, record_id)
              );
              CREATE INDEX IF NOT EXISTS idx_extension_dashboard_battles_time
@@ -114,6 +117,8 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
             ("special_weapon_name", "TEXT"),
             ("special_weapon_image", "TEXT"),
             ("opponent_weapons_json", "TEXT"),
+            ("awards_json", "TEXT"),
+            ("team_members_json", "TEXT"),
         ],
     )?;
     add_missing_columns(
@@ -199,6 +204,10 @@ fn write_battle(
 ) -> Result<(), String> {
     let opponent_weapons_json = serde_json::to_string(&fact.opponent_weapons)
         .map_err(|error| format!("序列化面板对手武器失败：{error}"))?;
+    let awards_json = serde_json::to_string(&fact.awards)
+        .map_err(|error| format!("序列化面板表彰数据失败：{error}"))?;
+    let team_members_json = serde_json::to_string(&fact.team_members)
+        .map_err(|error| format!("序列化面板队员数据失败：{error}"))?;
     connection
         .execute(
             "INSERT OR REPLACE INTO extension_dashboard_battles(
@@ -206,8 +215,8 @@ fn write_battle(
                  stage_id, stage_name, weapon_id, weapon_name, judgement, knockout,
                  duration_seconds, kills, assists, deaths, specials, paint, power, power_kind,
                  weapon_image, sub_weapon_name, sub_weapon_image, special_weapon_name,
-                 special_weapon_image, opponent_weapons_json
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
+                 special_weapon_image, opponent_weapons_json, awards_json, team_members_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)",
             params![
                 account_id,
                 fact.record_id,
@@ -236,6 +245,8 @@ fn write_battle(
                 fact.special_weapon_name,
                 fact.special_weapon_image,
                 opponent_weapons_json,
+                awards_json,
+                team_members_json,
             ],
         )
         .map_err(|error| format!("保存面板对战数据失败：{error}"))?;
@@ -588,6 +599,8 @@ pub(crate) struct BattleRow {
     power: Option<f64>,
     power_kind: Option<String>,
     opponent_weapons: Vec<BattleWeaponRow>,
+    awards: Vec<BattleAwardFact>,
+    team_members: Vec<BattleTeamMemberFact>,
 }
 
 #[derive(Debug, Serialize)]
@@ -664,7 +677,7 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
                         stage_id, stage_name, weapon_id, weapon_name, judgement, knockout,
                         duration_seconds, kills, assists, deaths, specials, paint, power, power_kind,
                         weapon_image, sub_weapon_name, sub_weapon_image, special_weapon_name,
-                        special_weapon_image, opponent_weapons_json
+                        special_weapon_image, opponent_weapons_json, awards_json, team_members_json
                  FROM extension_dashboard_battles
                  WHERE account_id = ?1 AND played_at_ms IS NOT NULL
                  ORDER BY played_at_ms, record_id",
@@ -673,6 +686,8 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
         let rows = statement
             .query_map([account_id], |row| {
                 let opponent_weapons_json: Option<String> = row.get(25)?;
+                let awards_json: Option<String> = row.get(26)?;
+                let team_members_json: Option<String> = row.get(27)?;
                 Ok(BattleRow {
                     id: row.get(0)?,
                     played_at_ms: row.get(1)?,
@@ -709,6 +724,14 @@ pub(crate) fn load_facts(history_dir: &Path, account_id: &str) -> Result<Dashboa
                             image: images.add(weapon.image),
                         })
                         .collect(),
+                    awards: awards_json
+                        .and_then(|json| serde_json::from_str::<Vec<BattleAwardFact>>(&json).ok())
+                        .unwrap_or_default(),
+                    team_members: team_members_json
+                        .and_then(|json| {
+                            serde_json::from_str::<Vec<BattleTeamMemberFact>>(&json).ok()
+                        })
+                        .unwrap_or_default(),
                 })
             })
             .map_err(|error| format!("读取面板对战数据失败：{error}"))?;
@@ -959,6 +982,8 @@ mod tests {
             "special_weapon_name",
             "special_weapon_image",
             "opponent_weapons_json",
+            "awards_json",
+            "team_members_json",
         ] {
             assert!(battles.iter().any(|name| name == column), "{column}");
         }
@@ -984,11 +1009,27 @@ mod tests {
             ("b2", "2026-10-16T13:10:00Z"),
         ] {
             let mut armed = battle(id, played_time, None);
-            armed.raw["myTeam"]["players"][0]["weapon"] = json!({
-                "id": "weapon-40",
-                "subWeapon": { "name": "吸盘炸弹", "image": { "url": "https://example.test/sub.png" } },
-                "specialWeapon": { "name": "螃蟹坦克", "image": { "url": "https://example.test/sp.png" } }
-            });
+            armed.raw["myTeam"]["players"] = json!([
+                {
+                    "isMyself": true,
+                    "paint": 980,
+                    "result": { "kill": 6, "assist": 1, "death": 3, "special": 2 },
+                    "weapon": {
+                        "id": "weapon-40",
+                        "subWeapon": { "name": "吸盘炸弹", "image": { "url": "https://example.test/sub.png" } },
+                        "specialWeapon": { "name": "螃蟹坦克", "image": { "url": "https://example.test/sp.png" } }
+                    }
+                },
+                {
+                    "isMyself": false,
+                    "paint": 750,
+                    "result": { "kill": 4, "assist": 2, "death": 5, "special": 1 },
+                    "weapon": { "id": "weapon-20" }
+                }
+            ]);
+            armed.raw["awards"] = json!([
+                { "name": "击倒数 No.1", "rank": "GOLD" }
+            ]);
             armed.raw["otherTeams"] = json!([{
                 "players": [{
                     "weapon": {
@@ -1037,6 +1078,17 @@ mod tests {
             link(battle.opponent_weapons[0].image),
             Some("https://example.test/c1.png")
         );
+        assert_eq!(
+            battle.awards,
+            vec![BattleAwardFact {
+                name: "击倒数 No.1".to_owned(),
+                rank: Some("GOLD".to_owned()),
+            }]
+        );
+        assert_eq!(battle.team_members.len(), 2);
+        assert!(battle.team_members[0].myself);
+        assert_eq!(battle.team_members[0].kills, Some(6));
+        assert_eq!(battle.team_members[1].paint, Some(750));
         // 两场用的是同一套图片：每个链接只传一份。
         assert_eq!(facts.battles[1].sub_weapon_image, battle.sub_weapon_image);
         let shift = &facts.coop[0];

@@ -60,6 +60,28 @@
           image: link(weapon?.image),
         }))
         .filter((weapon) => weapon.id),
+      awards: (row.awards || [])
+        .map((award) => {
+          const name = gameName('awards', award?.name);
+          if (!name) return null;
+          const rank = award?.rank === 'SILVER'
+            ? 'silver'
+            : award?.rank === 'GOLD'
+              ? 'gold'
+              : /(?:No\.2|^#2\b)/.test(name) ? 'silver' : 'gold';
+          return { name, rank };
+        })
+        .filter(Boolean),
+      team: (row.team_members || [])
+        .map((member) => ({
+          me: member?.myself === true,
+          kills: isNum(member?.kills) ? member.kills : null,
+          assists: isNum(member?.assists) ? member.assists : null,
+          deaths: isNum(member?.deaths) ? member.deaths : null,
+          specials: isNum(member?.specials) ? member.specials : null,
+          paint: isNum(member?.paint) ? member.paint : null,
+        }))
+        .filter((member) => [member.kills, member.assists, member.deaths, member.specials, member.paint].some(isNum)),
       win: row.judgement === 'WIN',
       lose: LOSSES.has(row.judgement),
       duration: isNum(row.duration_seconds) ? row.duration_seconds : null,

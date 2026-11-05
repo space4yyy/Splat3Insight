@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::history::{BattleRecord, CoopRecord};
 
 /// Bump when the extraction below changes so stored facts are rebuilt.
-pub const DASHBOARD_FACTS_VERSION: i64 = 5;
+pub const DASHBOARD_FACTS_VERSION: i64 = 6;
 
 /// 对战里一把武器的标识、名称和图片（名称跟着账号语言，图片是带签名的原链接）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,6 +18,26 @@ pub struct BattleWeaponFact {
     pub id: Option<String>,
     pub name: Option<String>,
     pub image: Option<String>,
+}
+
+/// 对战结算的一枚奖牌（名称跟着账号语言，rank 为 "GOLD" 或 "SILVER"）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BattleAwardFact {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<String>,
+}
+
+/// 己方小队一名队员的本场个人数据，用来算队内贡献占比与队内排名。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BattleTeamMemberFact {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub myself: bool,
+    pub kills: Option<i64>,
+    pub assists: Option<i64>,
+    pub deaths: Option<i64>,
+    pub specials: Option<i64>,
+    pub paint: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -52,6 +72,12 @@ pub struct BattleFact {
     /// 对方队伍这场的武器（按对方队伍和队员顺序）。
     #[serde(default)]
     pub opponent_weapons: Vec<BattleWeaponFact>,
+    /// 我在这场获得的表彰奖牌（按结算顺序，最多 3 枚）。
+    #[serde(default)]
+    pub awards: Vec<BattleAwardFact>,
+    /// 己方全队队员的本场个人数据（含自己，按队伍顺序）。
+    #[serde(default)]
+    pub team_members: Vec<BattleTeamMemberFact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -177,6 +203,8 @@ pub fn battle_fact(record: &BattleRecord, raw: &Value) -> BattleFact {
         power: record.power,
         power_kind: record.power_kind.clone(),
         opponent_weapons: opponent_battle_weapons(raw),
+        awards: battle_awards(raw),
+        team_members: battle_team_members(raw),
     }
 }
 
@@ -201,6 +229,49 @@ fn opponent_battle_weapons(raw: &Value) -> Vec<BattleWeaponFact> {
             })
         })
         .collect()
+}
+
+fn battle_awards(raw: &Value) -> Vec<BattleAwardFact> {
+    let Some(awards) = raw.get("awards").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    awards
+        .iter()
+        .filter_map(|award| {
+            Some(BattleAwardFact {
+                name: text(award, "/name")?,
+                rank: text(award, "/rank"),
+            })
+        })
+        .collect()
+}
+
+fn battle_team_members(raw: &Value) -> Vec<BattleTeamMemberFact> {
+    let Some(players) = raw.pointer("/myTeam/players").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let members: Vec<BattleTeamMemberFact> = players
+        .iter()
+        .map(|player| BattleTeamMemberFact {
+            myself: player.get("isMyself").and_then(Value::as_bool) == Some(true),
+            kills: integer(player, "/result/kill"),
+            assists: integer(player, "/result/assist"),
+            deaths: integer(player, "/result/death"),
+            specials: integer(player, "/result/special"),
+            paint: integer(player, "/paint"),
+        })
+        .filter(|member| {
+            member.kills.is_some()
+                || member.assists.is_some()
+                || member.deaths.is_some()
+                || member.specials.is_some()
+                || member.paint.is_some()
+        })
+        .collect();
+    if members.len() < 2 || !members.iter().any(|member| member.myself) {
+        return Vec::new();
+    }
+    members
 }
 
 pub fn coop_fact(record: &CoopRecord, raw: &Value) -> CoopFact {
@@ -393,13 +464,17 @@ mod tests {
             "knockout": "WIN",
             "duration": 214,
             "myTeam": { "players": [
-                { "isMyself": false, "weapon": { "id": "other" } },
-                { "isMyself": true, "weapon": {
+                { "isMyself": false, "weapon": { "id": "other" }, "paint": 860, "result": { "kill": 5, "assist": 1, "death": 6, "special": 2 } },
+                { "isMyself": true, "paint": 1024, "result": { "kill": 7, "assist": 2, "death": 4, "special": 3 }, "weapon": {
                     "id": "V2VhcG9uLTQw", "name": "斯普拉机动枪", "image": { "url": "https://example.test/w.png" },
                     "subWeapon": { "name": "吸盘炸弹", "image": { "url": "https://example.test/sub.png" } },
                     "specialWeapon": { "name": "螃蟹坦克", "image": { "url": "https://example.test/sp.png" } }
                 } }
             ] },
+            "awards": [
+                { "name": "击倒数 No.1", "rank": "GOLD" },
+                { "name": "螃蟹坦克 No.1", "rank": "SILVER" }
+            ],
             "otherTeams": [{
                 "players": [
                     { "weapon": { "id": "V2VhcG9uLTEw", "name": "新叶射击枪", "image": { "url": "https://example.test/o1.png" } } },
@@ -439,6 +514,40 @@ mod tests {
                 image: Some("https://example.test/o1.png".to_owned()),
             }]
         );
+        assert_eq!(
+            fact.awards,
+            vec![
+                BattleAwardFact {
+                    name: "击倒数 No.1".to_owned(),
+                    rank: Some("GOLD".to_owned()),
+                },
+                BattleAwardFact {
+                    name: "螃蟹坦克 No.1".to_owned(),
+                    rank: Some("SILVER".to_owned()),
+                },
+            ]
+        );
+        assert_eq!(
+            fact.team_members,
+            vec![
+                BattleTeamMemberFact {
+                    myself: false,
+                    kills: Some(5),
+                    assists: Some(1),
+                    deaths: Some(6),
+                    specials: Some(2),
+                    paint: Some(860),
+                },
+                BattleTeamMemberFact {
+                    myself: true,
+                    kills: Some(7),
+                    assists: Some(2),
+                    deaths: Some(4),
+                    specials: Some(3),
+                    paint: Some(1024),
+                },
+            ]
+        );
     }
 
     #[test]
@@ -452,6 +561,8 @@ mod tests {
         assert_eq!(fact.sub_weapon_name, None);
         assert_eq!(fact.special_weapon_image, None);
         assert!(fact.opponent_weapons.is_empty());
+        assert!(fact.awards.is_empty());
+        assert!(fact.team_members.is_empty());
         assert_eq!(fact.rule_name.as_deref(), Some("真格区域"));
     }
 

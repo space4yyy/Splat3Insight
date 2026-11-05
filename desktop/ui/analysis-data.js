@@ -130,6 +130,145 @@
     };
   }
 
+  // 胜败场个人数据对比：对比赢局和输局的场均击倒、助攻、死亡、特殊武器和涂地。
+  const OUTCOME_METRICS = [
+    { key: 'kills', label: '击倒', unit: '次', digits: 1, lowerBetter: false },
+    { key: 'assists', label: '助攻', unit: '次', digits: 1, lowerBetter: false },
+    { key: 'deaths', label: '死亡', unit: '次', digits: 1, lowerBetter: true },
+    { key: 'specials', label: '特殊武器', unit: '次', digits: 1, lowerBetter: false },
+    { key: 'paint', label: '涂地', unit: '点', digits: 0, lowerBetter: false },
+  ];
+  function outcomeComparison(battles) {
+    const wins = battles.filter((battle) => battle.win);
+    const losses = battles.filter((battle) => battle.lose);
+    const winSummary = summarize(wins);
+    const lossSummary = summarize(losses);
+    return {
+      wins: winSummary,
+      losses: lossSummary,
+      kdDiff: winSummary.kd != null && lossSummary.kd != null ? winSummary.kd - lossSummary.kd : null,
+      rows: OUTCOME_METRICS.map((metric) => {
+        const winAvg = average(wins, (battle) => battle[metric.key]);
+        const lossAvg = average(losses, (battle) => battle[metric.key]);
+        return {
+          ...metric,
+          winAvg,
+          lossAvg,
+          diff: winAvg != null && lossAvg != null ? winAvg - lossAvg : null,
+        };
+      }),
+    };
+  }
+
+  // 表彰金银牌统计：把同一项目的 No.1（金）与 No.2（银）归并到一行（特殊武器保留 No.1 后缀以免和武器名混淆）。
+  function awardCategory(rawName) {
+    const text = typeof rawName === 'string' ? rawName.trim() : '';
+    if (!text) return null;
+    const stripped = text.replace(/\s+No\.[12]$/, '');
+    if (!stripped || stripped === text) return text;
+    if (window.Splat3GameNames?.lookup('specialWeapons', stripped)) return text;
+    return stripped;
+  }
+  function awardSummary(battles) {
+    const withAwards = battles.filter((battle) => Array.isArray(battle.awards) && battle.awards.length > 0);
+    const byName = new Map();
+    let gold = 0;
+    let silver = 0;
+    for (const battle of withAwards) {
+      const seen = new Set();
+      for (const award of battle.awards) {
+        const name = awardCategory(award?.name);
+        if (!name) continue;
+        let entry = byName.get(name);
+        if (!entry) {
+          entry = { name, gold: 0, silver: 0, games: 0, last: battle.t };
+          byName.set(name, entry);
+        }
+        entry.last = battle.t;
+        if (award.rank === 'silver') {
+          entry.silver += 1;
+          silver += 1;
+        } else {
+          entry.gold += 1;
+          gold += 1;
+        }
+        if (!seen.has(name)) {
+          seen.add(name);
+          entry.games += 1;
+        }
+      }
+    }
+    const rows = [...byName.values()]
+      .map((entry) => ({
+        name: entry.name,
+        gold: entry.gold,
+        silver: entry.silver,
+        total: entry.gold + entry.silver,
+        games: entry.games,
+        rate: withAwards.length ? entry.games / withAwards.length : null,
+        last: entry.last,
+      }))
+      .sort((a, b) => b.total - a.total || b.gold - a.gold || b.last - a.last);
+    return {
+      battles: withAwards.length,
+      gold,
+      silver,
+      total: gold + silver,
+      avgGold: withAwards.length ? gold / withAwards.length : null,
+      rows,
+    };
+  }
+
+  // 队内贡献：统计个人占全队数据的比例（4 人均等基准为 25%）以及队内第一占比（死亡为队内最少占比）。
+  const TEAM_METRICS = [
+    { key: 'kills', label: '击倒', unit: '次', digits: 1, lowerBetter: false },
+    { key: 'assists', label: '助攻', unit: '次', digits: 1, lowerBetter: false },
+    { key: 'specials', label: '特殊武器', unit: '次', digits: 1, lowerBetter: false },
+    { key: 'paint', label: '涂地', unit: '点', digits: 0, lowerBetter: false },
+    { key: 'deaths', label: '死亡', unit: '次', digits: 1, lowerBetter: true },
+  ];
+  function teamContribution(battles) {
+    const withTeam = battles.filter((battle) => Array.isArray(battle.team) && battle.team.length >= 2 && battle.team.some((member) => member.me));
+    const rows = TEAM_METRICS.map((metric) => {
+      let validGames = 0;
+      let mySum = 0;
+      let teamSum = 0;
+      let mateSum = 0;
+      let mateCount = 0;
+      let topWins = 0;
+      for (const battle of withTeam) {
+        const me = battle.team.find((member) => member.me);
+        const mates = battle.team.filter((member) => !member.me && isNum(member[metric.key]));
+        if (!me || !isNum(me[metric.key]) || !mates.length) continue;
+        const myValue = me[metric.key];
+        const matesTotal = mates.reduce((sum, member) => sum + member[metric.key], 0);
+        validGames += 1;
+        mySum += myValue;
+        teamSum += myValue + matesTotal;
+        mateSum += matesTotal;
+        mateCount += mates.length;
+        const mateValues = mates.map((member) => member[metric.key]);
+        const isTop = metric.lowerBetter
+          ? myValue <= Math.min(...mateValues)
+          : myValue > 0 && myValue >= Math.max(...mateValues);
+        if (isTop) topWins += 1;
+      }
+      return {
+        ...metric,
+        n: validGames,
+        share: teamSum > 0 ? mySum / teamSum : null,
+        topWins,
+        topRate: validGames ? topWins / validGames : null,
+        myAvg: validGames ? mySum / validGames : null,
+        mateAvg: mateCount ? mateSum / mateCount : null,
+      };
+    });
+    return {
+      n: withTeam.length,
+      rows,
+    };
+  }
+
   // ----- 武器 -----
 
   // 武器排行：每把武器的场次、胜率、K/D 和场均数据；挑战战力取这把武器最近一场蛮颓挑战的战力。
@@ -420,6 +559,9 @@
     histogram,
     durationBin,
     durationSummary,
+    outcomeComparison,
+    awardSummary,
+    teamContribution,
     weaponRows,
     rollingWinRate,
     stageExtremes,

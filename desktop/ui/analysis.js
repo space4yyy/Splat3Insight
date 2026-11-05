@@ -251,56 +251,74 @@
     svgText(svg, half, height - 4, '50%', { 'text-anchor': 'middle', class: 'font-number' });
   }
 
-  const streakTick = (key) => (key === 0 ? '开局' : `${Math.abs(key)}${Math.abs(key) === 4 ? '+' : ''}`);
-  const streakName = (key) => (key === 0 ? '开局' : `之前${Math.abs(key)}${Math.abs(key) === 4 ? ' 场以上' : ' 场'}${key < 0 ? '连败' : '连胜'}`);
-  function renderStreakChart(list) {
-    const box = $('streak-chart');
-    const rows = analysis.streakBuckets(list);
-    if (!rows.some((row) => row.n)) { noBattles(box); return; }
-    if (dashboard.tableOn('streak')) {
-      renderTable(box, [{ label: '之前' }, { label: '场次', num: true }, { label: '胜', num: true }, { label: '负', num: true }, { label: '胜率', num: true }], rows.filter((row) => row.n).map((row) => [
-        streakName(row.key).replace(/^之前/, ''), String(row.n), String(row.wins), String(row.losses), enough(row) ? pct(row.wr) : '样本不足',
+  const fmtMetricValue = (row, value) => (value == null ? '—' : row.digits === 0 ? count(value) : fixed(value, row.digits));
+  const fmtMetricDiff = (row) => (row.diff == null ? '—' : signed(row.diff, row.digits));
+  function renderOutcomeChart(list) {
+    const box = $('outcome-chart');
+    const statsBox = $('outcome-stats');
+    const legend = $('outcome-legend');
+    const summary = analysis.outcomeComparison(list);
+    statsBox.textContent = '';
+    legend.textContent = '';
+    if (!summary.wins.n && !summary.losses.n) { noBattles(box); return; }
+    statsBox.append(
+      miniStat('胜场 K/D', fixed(summary.wins.kd, 2)),
+      miniStat('败场 K/D', fixed(summary.losses.kd, 2)),
+      miniStat('K/D 差值', summary.kdDiff == null ? '—' : signed(summary.kdDiff, 2)),
+    );
+    legend.append(
+      legendSwatch(COLOR.meterWin, `胜场（${summary.wins.n} 场）`),
+      legendSwatch(COLOR.meterLose, `败场（${summary.losses.n} 场）`),
+    );
+    if (dashboard.tableOn('outcome')) {
+      renderTable(box, [
+        { label: '项目' },
+        { label: '胜场场均', num: true },
+        { label: '败场场均', num: true },
+        { label: '差值', num: true },
+      ], summary.rows.map((row) => [
+        row.label,
+        fmtMetricValue(row, row.winAvg),
+        fmtMetricValue(row, row.lossAvg),
+        fmtMetricDiff(row),
       ]));
       return;
     }
     box.textContent = '';
     const width = Math.max(260, Math.floor(box.clientWidth));
-    const height = 236;
-    const margin = { top: 20, right: 4, bottom: 58, left: 38 };
-    const shown = rows.filter(enough);
-    // 纵轴以 50% 为中心，上下留出放数字的空间。
-    const deviation = Math.min(0.5, Math.max(0.2, Math.ceil((Math.max(0, ...shown.map((row) => Math.abs(row.wr - 0.5))) + 0.06) * 10 - 1e-9) / 10));
-    const low = 0.5 - deviation;
-    const high = 0.5 + deviation;
-    const y = (value) => margin.top + (1 - (Math.max(low, Math.min(high, value)) - low) / (high - low)) * (height - margin.top - margin.bottom);
-    const band = (width - margin.left - margin.right) / rows.length;
-    const barWidth = Math.max(6, Math.min(26, band * 0.56));
-    const svg = svgEl('svg', { width, height, viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': `之前连胜或连败后的胜率：${shown.map((row) => `${streakName(row.key)} ${pct(row.wr, 0)}`).join('，')}` }, box);
-    const step = deviation > 0.25 ? 0.2 : 0.1;
-    const steps = Math.floor(deviation / step + 1e-9);
-    for (let index = -steps; index <= steps; index += 1) {
-      const tick = 0.5 + index * step;
-      svgEl('line', { x1: margin.left, x2: width - margin.right, y1: y(tick), y2: y(tick), stroke: index ? COLOR.line : COLOR.ink3, 'stroke-width': 1, 'stroke-dasharray': index ? 'none' : '3 3' }, svg);
-      svgText(svg, margin.left - 6, y(tick) + 4, `${Math.round(tick * 100)}%`, { 'text-anchor': 'end', class: 'font-number' });
-    }
-    const axisY = height - margin.bottom;
-    rows.forEach((row, index) => {
-      const cx = margin.left + band * index + band / 2;
-      svgText(svg, cx, axisY + 18, streakTick(row.key), { 'text-anchor': 'middle', fill: COLOR.ink2, class: 'font-number' });
-      svgText(svg, cx, axisY + 34, row.n ? String(row.n) : '', { 'text-anchor': 'middle', 'font-size': 11, class: 'font-number' });
-      if (enough(row)) {
-        const up = row.wr >= 0.5;
-        svgEl('path', { d: vbarPath(y(0.5), y(row.wr), cx - barWidth / 2, cx + barWidth / 2), fill: up ? COLOR.meterWin : COLOR.meterLose }, svg);
-        svgText(svg, cx, up ? y(row.wr) - 6 : y(row.wr) + 15, pct(row.wr, 0), { 'text-anchor': 'middle', fill: COLOR.ink, 'font-size': 12, class: 'font-number' });
+    const labelWidth = Math.ceil(Math.max(...summary.rows.map((row) => textWidth(row.label, 13)))) + 14;
+    const rightWidth = 108;
+    const rowHeight = 32;
+    const top = 4;
+    const plotWidth = Math.max(60, width - labelWidth - rightWidth);
+    const height = top + summary.rows.length * rowHeight + 4;
+    const svg = svgEl('svg', {
+      width,
+      height,
+      viewBox: `0 0 ${width} ${height}`,
+      role: 'img',
+      'aria-label': `胜败场个人数据对比：${summary.rows.map((row) => `${row.label} 胜 ${fmtMetricValue(row, row.winAvg)} 败 ${fmtMetricValue(row, row.lossAvg)}`).join('，')}`,
+    }, box);
+    summary.rows.forEach((row, index) => {
+      const cy = top + index * rowHeight + rowHeight / 2;
+      svgText(svg, 0, cy + 5, row.label, { fill: COLOR.ink2, 'font-size': 13 });
+      const scaleMax = Math.max(row.winAvg ?? 0, row.lossAvg ?? 0, 1e-6);
+      if (row.winAvg != null && row.winAvg > 0) {
+        const w = Math.max(2, (row.winAvg / scaleMax) * plotWidth);
+        svgEl('path', { d: hbarPath(labelWidth, labelWidth + w, cy - 8, cy - 1), fill: COLOR.meterWin }, svg);
       }
-      const hit = svgEl('rect', { x: margin.left + band * index, y: margin.top, width: band, height: axisY + 38 - margin.top, class: 'col-hit', tabindex: row.n ? '0' : '-1' }, svg);
-      bindTip(hit, () => [streakName(row.key), [
-        { value: enough(row) ? pct(row.wr) : row.n ? '样本不足' : '—', label: `${row.wins} 胜 ${row.losses} 负`, color: enough(row) ? (row.wr >= 0.5 ? COLOR.meterWin : COLOR.meterLose) : COLOR.seq0, box: true },
+      if (row.lossAvg != null && row.lossAvg > 0) {
+        const w = Math.max(2, (row.lossAvg / scaleMax) * plotWidth);
+        svgEl('path', { d: hbarPath(labelWidth, labelWidth + w, cy + 1, cy + 8), fill: COLOR.meterLose }, svg);
+      }
+      svgText(svg, width - rightWidth + 10, cy + 5, `${fmtMetricValue(row, row.winAvg)} / ${fmtMetricValue(row, row.lossAvg)}`, { fill: COLOR.ink2, 'font-size': 12, class: 'font-number' });
+      svgText(svg, width, cy + 5, fmtMetricDiff(row), { 'text-anchor': 'end', fill: COLOR.ink, 'font-size': 13, class: 'font-number' });
+      bindTip(rowHit(svg, cy - rowHeight / 2, width, rowHeight), () => [row.label, [
+        { value: `${fmtMetricValue(row, row.winAvg)} ${row.unit}`, label: `胜场场均 · ${summary.wins.n} 场`, color: COLOR.meterWin, box: true },
+        { value: `${fmtMetricValue(row, row.lossAvg)} ${row.unit}`, label: `败场场均 · ${summary.losses.n} 场`, color: COLOR.meterLose, box: true },
+        ...(row.diff != null ? [{ value: `${fmtMetricDiff(row)} ${row.unit}`, label: '胜败场均差值' }] : []),
       ]]);
     });
-    svgText(svg, margin.left + band * 2, height - 4, '← 之前连败', { 'text-anchor': 'middle' });
-    svgText(svg, margin.left + band * 7, height - 4, '之前连胜 →', { 'text-anchor': 'middle' });
-    svgText(svg, margin.left - 6, axisY + 34, '场', { 'text-anchor': 'end', 'font-size': 11 });
   }
 
   function renderKdChart(list) {
@@ -400,12 +418,172 @@
     });
   }
 
+  function renderAwardChart(list) {
+    const box = $('award-chart');
+    const statsBox = $('award-stats');
+    const legend = $('award-legend');
+    const summary = analysis.awardSummary(list);
+    statsBox.textContent = '';
+    legend.textContent = '';
+    if (!summary.rows.length) {
+      if (!list.length) noBattles(box);
+      else emptyState(box, '暂无表彰奖牌数据', '同步包含对局详情的记录后即可显示。');
+      return;
+    }
+    statsBox.append(
+      miniStat('金牌', `${count(summary.gold)} 枚`),
+      miniStat('银牌', `${count(summary.silver)} 枚`),
+      miniStat('场均金牌', fixed(summary.avgGold, 2)),
+    );
+    legend.append(legendSwatch(COLOR.meterWin, '金牌'), legendSwatch(COLOR.meterLose, '银牌'));
+    if (dashboard.tableOn('awards')) {
+      renderTable(box, [
+        { label: '表彰' },
+        { label: '金牌', num: true },
+        { label: '银牌', num: true },
+        { label: '合计', num: true },
+        { label: '获得率', num: true },
+      ], summary.rows.map((row) => [
+        row.name,
+        String(row.gold),
+        String(row.silver),
+        String(row.total),
+        pct(row.rate, 0),
+      ]));
+      return;
+    }
+    box.textContent = '';
+    const shown = summary.rows.slice(0, 10);
+    const width = Math.max(280, Math.floor(box.clientWidth));
+    const labelWidth = Math.min(184, Math.ceil(Math.max(...shown.map((row) => textWidth(row.name, 13)))) + 14);
+    const rightWidth = 96;
+    const rowHeight = 28;
+    const barHeight = 14;
+    const top = 4;
+    const plotWidth = Math.max(80, width - labelWidth - rightWidth);
+    const height = top + shown.length * rowHeight + 8;
+    const maxTotal = Math.max(1, ...shown.map((row) => row.total));
+    const svg = svgEl('svg', {
+      width,
+      height,
+      viewBox: `0 0 ${width} ${height}`,
+      role: 'img',
+      'aria-label': `表彰奖牌分布：${shown.map((row) => `${row.name} ${row.total} 次`).join('，')}`,
+    }, box);
+    const defs = svgEl('defs', {}, svg);
+    const maxLabel = labelWidth - 10;
+    shown.forEach((row, index) => {
+      const cy = top + index * rowHeight + rowHeight / 2;
+      const label = svgText(svg, 0, cy + 5, row.name, { fill: COLOR.ink2, 'font-size': 13 });
+      for (let length = row.name.length - 1; length > 0 && textWidth(label.textContent, 13) > maxLabel; length -= 1) {
+        label.textContent = `${row.name.slice(0, length)}…`;
+      }
+      const totalWidth = Math.max(2, (row.total / maxTotal) * plotWidth);
+      const segments = [
+        { count: row.gold, fill: COLOR.meterWin },
+        { count: row.silver, fill: COLOR.meterLose },
+      ].filter((segment) => segment.count > 0);
+      if (segments.length) {
+        const clipId = `award-clip-${index}-${Math.random().toString(36).slice(2)}`;
+        svgEl('rect', { x: labelWidth, y: cy - barHeight / 2, width: totalWidth, height: barHeight, rx: 4 }, svgEl('clipPath', { id: clipId }, defs));
+        const group = svgEl('g', { 'clip-path': `url(#${clipId})` }, svg);
+        const gap = segments.length > 1 && totalWidth > 6 ? 2 : 0;
+        const available = Math.max(1, totalWidth - gap * (segments.length - 1));
+        let cursor = labelWidth;
+        for (const segment of segments) {
+          const segmentWidth = (available * segment.count) / row.total;
+          svgEl('rect', { x: cursor, y: cy - barHeight / 2, width: Math.max(1, segmentWidth), height: barHeight, fill: segment.fill }, group);
+          cursor += segmentWidth + gap;
+        }
+      }
+      svgText(svg, width - rightWidth + 10, cy + 5, `${row.total} 次`, { fill: COLOR.ink, 'font-size': 13, class: 'font-number' });
+      svgText(svg, width, cy + 5, pct(row.rate, 0), { 'text-anchor': 'end', class: 'font-number' });
+      bindTip(rowHit(svg, cy - rowHeight / 2, width, rowHeight), () => [row.name, [
+        { value: `${row.gold} 枚`, label: '金牌', color: COLOR.meterWin, box: true },
+        { value: `${row.silver} 枚`, label: '银牌', color: COLOR.meterLose, box: true },
+        { value: pct(row.rate, 1), label: `共 ${row.total} 枚 · ${summary.battles} 场中有 ${row.games} 场获得` },
+      ]]);
+    });
+  }
+
+  function renderTeamContributionChart(list) {
+    const box = $('team-contrib-chart');
+    const statsBox = $('team-contrib-stats');
+    const summary = analysis.teamContribution(list);
+    statsBox.textContent = '';
+    if (!summary.n || !summary.rows.some((row) => row.n)) {
+      if (!list.length) noBattles(box);
+      else emptyState(box, '暂无小队统计数据', '同步包含对局详情的记录后即可显示。');
+      return;
+    }
+    const byKey = Object.fromEntries(summary.rows.map((row) => [row.key, row]));
+    statsBox.append(
+      miniStat('击倒第一', pct(byKey.kills?.topRate, 0)),
+      miniStat('涂地第一', pct(byKey.paint?.topRate, 0)),
+      miniStat('死亡最少', pct(byKey.deaths?.topRate, 0)),
+    );
+    if (dashboard.tableOn('teamContrib')) {
+      renderTable(box, [
+        { label: '项目' },
+        { label: '队内占比', num: true },
+        { label: '队内第一', num: true },
+        { label: '我的场均', num: true },
+        { label: '队友场均', num: true },
+      ], summary.rows.map((row) => [
+        row.label,
+        pct(row.share, 1),
+        row.topRate == null ? '—' : row.lowerBetter ? `${pct(row.topRate, 0)}（最少）` : pct(row.topRate, 0),
+        fmtMetricValue(row, row.myAvg),
+        fmtMetricValue(row, row.mateAvg),
+      ]));
+      return;
+    }
+    box.textContent = '';
+    const width = Math.max(260, Math.floor(box.clientWidth));
+    const labelWidth = Math.ceil(Math.max(...summary.rows.map((row) => textWidth(row.label, 13)))) + 14;
+    const rightWidth = 108;
+    const rowHeight = 32;
+    const barHeight = 14;
+    const top = 4;
+    const plotWidth = Math.max(60, width - labelWidth - rightWidth);
+    const height = top + summary.rows.length * rowHeight + 20;
+    const maxShare = Math.max(0.5, Math.ceil(Math.max(0.35, ...summary.rows.map((row) => row.share ?? 0)) * 10) / 10);
+    const x = (value) => labelWidth + (Math.max(0, Math.min(maxShare, value)) / maxShare) * plotWidth;
+    const svg = svgEl('svg', {
+      width,
+      height,
+      viewBox: `0 0 ${width} ${height}`,
+      role: 'img',
+      'aria-label': `队内贡献占比：${summary.rows.map((row) => `${row.label} ${pct(row.share, 0)}`).join('，')}`,
+    }, box);
+    summary.rows.forEach((row, index) => {
+      const cy = top + index * rowHeight + rowHeight / 2;
+      svgText(svg, 0, cy + 5, row.label, { fill: COLOR.ink2, 'font-size': 13 });
+      const good = row.share != null && (row.lowerBetter ? row.share <= 0.25 : row.share >= 0.25);
+      if (row.share != null) {
+        svgEl('path', { d: hbarPath(labelWidth, x(row.share), cy - barHeight / 2, cy + barHeight / 2), fill: good ? COLOR.meterWin : COLOR.meterLose }, svg);
+      }
+      svgText(svg, width - rightWidth + 10, cy + 5, pct(row.share, 1), { fill: row.share == null ? COLOR.ink3 : COLOR.ink, 'font-size': 13, class: 'font-number' });
+      svgText(svg, width, cy + 5, row.topRate == null ? '—' : `${row.lowerBetter ? '最少' : '第一'} ${pct(row.topRate, 0)}`, { 'text-anchor': 'end', class: 'font-number' });
+      bindTip(rowHit(svg, cy - rowHeight / 2, width, rowHeight), () => [row.label, [
+        { value: pct(row.share, 1), label: '占全队比例（均等线 25%）', color: row.share == null ? COLOR.seq0 : good ? COLOR.meterWin : COLOR.meterLose, box: true },
+        { value: pct(row.topRate, 1), label: `${row.lowerBetter ? '队内最少死亡' : '队内第一'} · ${row.topWins} / ${row.n} 场` },
+        { value: `${fmtMetricValue(row, row.myAvg)} / ${fmtMetricValue(row, row.mateAvg)} ${row.unit}`, label: '我的场均 vs 队友场均' },
+      ]]);
+    });
+    const refX = x(0.25);
+    svgEl('line', { x1: refX, x2: refX, y1: top, y2: top + summary.rows.length * rowHeight, stroke: COLOR.ink, 'stroke-width': 1, 'stroke-dasharray': '3 3', 'pointer-events': 'none' }, svg);
+    svgText(svg, refX, height - 4, '25%', { 'text-anchor': 'middle', class: 'font-number' });
+  }
+
   function renderBattles() {
     const { battles } = dashboard.analysisSource();
     renderRuleChart(battles);
-    renderStreakChart(battles);
+    renderOutcomeChart(battles);
     renderKdChart(battles);
     renderDurationChart(battles);
+    renderAwardChart(battles);
+    renderTeamContributionChart(battles);
   }
 
   // ---------- 武器 ----------

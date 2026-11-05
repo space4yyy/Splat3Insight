@@ -223,10 +223,15 @@
               </article>
               <article class="card span-5">
                 <div class="card-head">
-                  <h2 class="card-title">连胜与连败之后</h2>
-                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="streak">查看表格</button></div>
+                  <div>
+                    <h2 class="card-title">胜败场对比</h2>
+                    <p class="card-sub">胜场与败场的场均个人数据</p>
+                  </div>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="outcome">查看表格</button></div>
                 </div>
-                <div class="chart" id="streak-chart"></div>
+                <div class="time-stats" id="outcome-stats"></div>
+                <div class="legend" id="outcome-legend"></div>
+                <div class="chart" id="outcome-chart"></div>
               </article>
               <article class="card span-7">
                 <div class="card-head">
@@ -246,6 +251,29 @@
                 <div class="time-stats" id="duration-stats"></div>
                 <div class="legend" id="duration-legend"></div>
                 <div class="chart" id="duration-chart"></div>
+              </article>
+              <article class="card span-7">
+                <div class="card-head">
+                  <div>
+                    <h2 class="card-title">表彰统计</h2>
+                    <p class="card-sub">对局结算获得的金银奖牌分布</p>
+                  </div>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="awards">查看表格</button></div>
+                </div>
+                <div class="time-stats" id="award-stats"></div>
+                <div class="legend" id="award-legend"></div>
+                <div class="chart" id="award-chart"></div>
+              </article>
+              <article class="card span-5">
+                <div class="card-head">
+                  <div>
+                    <h2 class="card-title">队内贡献</h2>
+                    <p class="card-sub">个人数据占全队的比例，虚线为 25% 均等线</p>
+                  </div>
+                  <div class="card-actions"><button type="button" class="ghost" data-table-toggle="teamContrib">查看表格</button></div>
+                </div>
+                <div class="time-stats" id="team-contrib-stats"></div>
+                <div class="chart" id="team-contrib-chart"></div>
               </article>
             </div>
           </div>

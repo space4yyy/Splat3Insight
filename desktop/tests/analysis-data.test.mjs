@@ -147,6 +147,105 @@ test('ranked durations separate knockouts, full time and overtime', () => {
   assert.equal(summary.average, (120 + 300 + 301 + 420) / 4);
 });
 
+test('outcome comparison contrasts win and loss averages and K/D diff', () => {
+  const summary = analysis.outcomeComparison([
+    battle({ result: 'win', kills: 10, assists: 2, deaths: 4, specials: 3, paint: 1200 }),
+    battle({ result: 'win', kills: 6, assists: 4, deaths: 4, specials: 1, paint: 1000 }),
+    battle({ result: 'lose', kills: 4, assists: 1, deaths: 8, specials: 1, paint: 800 }),
+    battle({ result: 'draw', kills: 99, assists: 99, deaths: 1, specials: 9, paint: 9999 }),
+  ]);
+  assert.equal(summary.wins.n, 2);
+  assert.equal(summary.losses.n, 1);
+  assert.equal(summary.wins.kd, 16 / 8);
+  assert.equal(summary.losses.kd, 4 / 8);
+  assert.equal(summary.kdDiff, 1.5);
+  const byKey = Object.fromEntries(summary.rows.map((row) => [row.key, row]));
+  assert.equal(byKey.kills.winAvg, 8);
+  assert.equal(byKey.kills.lossAvg, 4);
+  assert.equal(byKey.kills.diff, 4);
+  assert.equal(byKey.assists.winAvg, 3);
+  assert.equal(byKey.assists.lossAvg, 1);
+  assert.equal(byKey.deaths.winAvg, 4);
+  assert.equal(byKey.deaths.lossAvg, 8);
+  assert.equal(byKey.deaths.diff, -4);
+  assert.equal(byKey.paint.winAvg, 1100);
+  assert.equal(byKey.paint.lossAvg, 800);
+});
+
+test('award summary merges No.1 and No.2 into one category while preserving special weapon No.1 suffix', () => {
+  const { battles } = data.prepare({
+    battles: [
+      {
+        id: 'b1', played_at_ms: 1, mode: 'X_MATCH', judgement: 'WIN',
+        awards: [
+          { name: '擊倒數 No.1', rank: 'GOLD' },
+          { name: '#1 Turf Inker', rank: 'GOLD' },
+          { name: '螃蟹坦克 No.1', rank: 'SILVER' },
+        ],
+      },
+      {
+        id: 'b2', played_at_ms: 2, mode: 'X_MATCH', judgement: 'LOSE',
+        awards: [
+          { name: '擊倒數 No.2', rank: 'SILVER' },
+          { name: '塗墨點數 No.1', rank: 'GOLD' },
+          { name: 'First Splat!', rank: 'GOLD' },
+        ],
+      },
+      { id: 'b3', played_at_ms: 3, mode: 'X_MATCH', judgement: 'WIN', awards: [] },
+    ],
+    coop: [],
+  });
+  const summary = analysis.awardSummary(battles);
+  assert.equal(summary.battles, 2);
+  assert.equal(summary.gold, 4);
+  assert.equal(summary.silver, 2);
+  assert.equal(summary.avgGold, 2);
+  deepEqual(summary.rows.map((row) => [row.name, row.gold, row.silver, row.total, row.rate]), [
+    ['涂墨点数', 2, 0, 2, 1],
+    ['击倒数', 1, 1, 2, 1],
+    ['先泼制人', 1, 0, 1, 0.5],
+    ['螃蟹坦克 No.1', 0, 1, 1, 0.5],
+  ]);
+});
+
+test('team contribution computes team share, top rate and fewest deaths rate', () => {
+  const { battles } = data.prepare({
+    battles: [
+      {
+        id: 'b1', played_at_ms: 1, mode: 'X_MATCH', judgement: 'WIN',
+        team_members: [
+          { myself: true, kills: 9, assists: 3, deaths: 2, specials: 4, paint: 1200 },
+          { myself: false, kills: 5, assists: 1, deaths: 4, specials: 2, paint: 900 },
+          { myself: false, kills: 3, assists: 2, deaths: 5, specials: 1, paint: 1000 },
+          { myself: false, kills: 3, assists: 0, deaths: 5, specials: 1, paint: 900 },
+        ],
+      },
+      {
+        id: 'b2', played_at_ms: 2, mode: 'X_MATCH', judgement: 'LOSE',
+        team_members: [
+          { myself: true, kills: 4, assists: 1, deaths: 6, specials: 1, paint: 800 },
+          { myself: false, kills: 8, assists: 2, deaths: 3, specials: 3, paint: 1100 },
+          { myself: false, kills: 4, assists: 1, deaths: 4, specials: 2, paint: 900 },
+          { myself: false, kills: 4, assists: 0, deaths: 3, specials: 2, paint: 1200 },
+        ],
+      },
+    ],
+    coop: [],
+  });
+  const summary = analysis.teamContribution(battles);
+  assert.equal(summary.n, 2);
+  const byKey = Object.fromEntries(summary.rows.map((row) => [row.key, row]));
+  assert.equal(byKey.kills.share, (9 + 4) / (20 + 20));
+  assert.equal(byKey.kills.topWins, 1);
+  assert.equal(byKey.kills.topRate, 0.5);
+  assert.equal(byKey.kills.myAvg, 6.5);
+  assert.equal(byKey.kills.mateAvg, 27 / 6);
+  assert.equal(byKey.deaths.share, (2 + 6) / (16 + 16));
+  assert.equal(byKey.deaths.topWins, 1);
+  assert.equal(byKey.deaths.topRate, 0.5);
+  assert.equal(byKey.paint.share, (1200 + 800) / (4000 + 4000));
+});
+
 test('weapon rows use the latest challenge power of that weapon only', () => {
   const rows = analysis.weaponRows([
     battle({ t: 1, mode: 'anarchy', bankara: 'challenge', power: 1900, result: 'win', weaponImage: 'old.png' }),
