@@ -22,7 +22,9 @@ use crate::nintendo_auth::NintendoIdentity;
 pub const SPLATNET_URL: &str = "https://api.lp1.av5ja.srv.nintendo.net";
 pub const NXAPI_F_GENERATION_URL: &str = "https://nxapi-znca-api.fancy.org.uk/api/znca/f";
 pub const NXAPI_CLIENT_ID: &str = "HAAaUoVu38YpKNzTKskBJA";
-pub const NXAPI_CLIENT_VERSION: &str = "d8fAZDPzwimzQ7c6";
+/// nxapi 的兼容版本（X-znca-Client-Version），对应 Nintendo Switch App 3.6.0。
+/// nxapi 要求固定写在代码里；App 更新后换成新版本对应的值。
+pub const NXAPI_CLIENT_VERSION: &str = "2k7EnRvh__pWRtnN";
 const ZNC_URL: &str = "https://api-lp1.znc.srv.nintendo.net";
 const NXAPI_AUTH_URL: &str = "https://nxapi-auth.fancy.org.uk/api/oauth/token";
 const NXAPI_AUTH_SCOPE: &str = "ca:gf ca:er ca:dr";
