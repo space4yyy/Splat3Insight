@@ -127,6 +127,8 @@ struct SavedWindowPlacement {
     offset_y: f64,
     width: f64,
     height: f64,
+    #[serde(default)]
+    maximized: bool,
 }
 
 fn load_app_preferences(path: &Path) -> Result<AppPreferences, String> {
@@ -233,12 +235,15 @@ fn capture_window_placement(window: &WebviewWindow) -> Result<SavedWindowPlaceme
         })
         .unwrap_or((0, 0, None));
 
+    let maximized = window.is_maximized().unwrap_or(false);
+
     Ok(SavedWindowPlacement {
         display,
         offset_x: f64::from(position.x - origin_x) / scale_factor,
         offset_y: f64::from(position.y - origin_y) / scale_factor,
         width: f64::from(size.width) / scale_factor,
         height: f64::from(size.height) / scale_factor,
+        maximized,
     })
 }
 
@@ -321,32 +326,38 @@ fn restore_window_placement(
     );
     window
         .set_position(PhysicalPosition::new(x, y))
-        .map_err(|error| format!("恢复窗口位置失败：{error}"))
+        .map_err(|error| format!("恢复窗口位置失败：{error}"))?;
+    if placement.maximized {
+        window
+            .maximize()
+            .map_err(|error| format!("最大化窗口失败：{error}"))?;
+    }
+    Ok(())
 }
 
-/// First launch: use the default size, shrunk to fit the main display.
+/// First launch: fill the main display work area and maximize by default.
 fn fit_default_window(window: &WebviewWindow) -> Result<(), String> {
-    let Some(monitor) = window
+    if let Some(monitor) = window
         .primary_monitor()
         .map_err(|error| format!("读取主显示器失败：{error}"))?
-    else {
-        return Ok(());
-    };
-    let scale_factor = monitor.scale_factor().max(0.1);
-    let work_area = monitor.work_area();
-    let (width, height) = restored_window_size(
-        None,
-        (
-            f64::from(work_area.size.width) / scale_factor,
-            f64::from(work_area.size.height) / scale_factor,
-        ),
-    );
+    {
+        let scale_factor = monitor.scale_factor().max(0.1);
+        let work_area = monitor.work_area();
+        let work_width = f64::from(work_area.size.width) / scale_factor;
+        let work_height = f64::from(work_area.size.height) / scale_factor;
+        window
+            .set_size(LogicalSize::new(work_width, work_height))
+            .map_err(|error| format!("设置窗口尺寸失败：{error}"))?;
+        window
+            .set_position(PhysicalPosition::new(
+                work_area.position.x,
+                work_area.position.y,
+            ))
+            .map_err(|error| format!("设置窗口位置失败：{error}"))?;
+    }
     window
-        .set_size(LogicalSize::new(width, height))
-        .map_err(|error| format!("设置窗口尺寸失败：{error}"))?;
-    window
-        .center()
-        .map_err(|error| format!("居中窗口失败：{error}"))
+        .maximize()
+        .map_err(|error| format!("最大化窗口失败：{error}"))
 }
 
 fn clamp_window_axis(position: f64, area_start: f64, area_size: f64, window_size: f64) -> i32 {
@@ -2598,6 +2609,7 @@ mod tests {
             offset_y: 80.0,
             width: 560.0,
             height: 680.0,
+            maximized: false,
         };
         store_app_preferences(
             &path,
@@ -2612,6 +2624,15 @@ mod tests {
         assert!(!fs::read_to_string(&path)
             .unwrap()
             .contains("keep_dock_icon"));
+
+        // 旧版本保存的窗口位置没有 maximized 字段时，默认视为非最大化。
+        fs::write(
+            &path,
+            r#"{"window_placement":{"display":null,"offset_x":10.0,"offset_y":20.0,"width":1000.0,"height":700.0}}"#,
+        )
+        .unwrap();
+        let legacy = load_app_preferences(&path).unwrap();
+        assert_eq!(legacy.window_placement.map(|p| p.maximized), Some(false));
     }
 
     #[test]
