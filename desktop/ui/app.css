@@ -13,6 +13,7 @@
    和 SplatNet 3 打工记录里失败波次用橙、通关和击倒头目鲑鱼用绿一致。 */
 :root {
   color-scheme: dark;
+  interpolate-size: allow-keywords;
   --bg: #111117;
   --panel: #1b1a23;
   --panel-raised: #24232d;
@@ -351,6 +352,19 @@ button:focus-visible, [tabindex]:focus-visible, textarea:focus-visible { outline
 .is-salmon [data-card="time"] { grid-column: span 12; }
 .is-salmon [data-card="form"] { grid-column: span 5; }
 .card { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px 18px 18px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); }
+.grid > .card:nth-child(n+3),
+#defeat-card,
+#rotation-list {
+  content-visibility: auto;
+  contain-intrinsic-size: auto none auto 320px;
+}
+@supports not (content-visibility: auto) {
+  .grid > .card:nth-child(n+3),
+  #defeat-card,
+  #rotation-list {
+    contain: layout style paint;
+  }
+}
 .card-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 12px; }
 .card-title { margin: 0; font-size: 17px; letter-spacing: .05em; }
 .card-sub { margin: 2px 0 0; color: var(--ink-3); font-size: 12.5px; }
@@ -372,7 +386,7 @@ button:focus-visible, [tabindex]:focus-visible, textarea:focus-visible { outline
 .rotation-stage { display: inline-flex; align-items: center; gap: 6px; }
 .rotation-ongoing { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--mode-salmon); box-shadow: 0 0 0 3px color-mix(in srgb, var(--mode-salmon) 18%, transparent); }
 table.data { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
-table.data th { position: sticky; top: 0; padding: 6px 8px; border-bottom: 1px solid var(--line-strong); background: var(--panel); color: var(--ink-3); text-align: left; white-space: nowrap; }
+table.data th { position: sticky; top: 0; z-index: 1; padding: 6px 8px; border-bottom: 1px solid var(--line-strong); background: color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter: blur(8px); box-shadow: inset 0 -1px 0 var(--line-strong); color: var(--ink-3); text-align: left; white-space: nowrap; }
 table.data td { padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 table.data tr:last-child td { border-bottom: 0; }
 table.data .num { text-align: right; }
@@ -450,8 +464,10 @@ table.data .num { text-align: right; }
 .tip-row span:last-child { color: var(--ink-2); }
 .tip-key { flex: none; width: 12px; height: 2px; border-radius: 1px; }
 .tip-box { flex: none; width: 10px; height: 10px; border-radius: 3px; }
-.cell { cursor: default; transition: stroke-width .12s ease; }
-.cell:hover, .cell:focus { stroke: var(--ink); stroke-width: 1.5; }
+.cell { cursor: default; transition: opacity .15s ease, stroke-width .12s ease; }
+.cell:hover, .cell:focus-visible { stroke: var(--ink); stroke-width: 1.5; }
+.cell:focus-visible { outline: none; stroke: var(--focus); stroke-width: 2; }
+.chart svg:has(.cell:hover, .cell:focus-visible) .cell:not(:hover, :focus-visible) { opacity: .55; }
 
 /* 其他工具：OBS 数据卡片 */
 .obs-panel { gap: 18px; }
@@ -565,7 +581,9 @@ table.data tr.is-me td { background: var(--panel-raised); color: var(--ink); }
 .award-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .award { padding: 3px 10px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--ink-2); font-size: 12px; }
 .raw-json summary { color: var(--accent-2-text); font-size: 13px; cursor: pointer; }
-.raw-json pre { max-height: 280px; overflow: auto; margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--panel-raised); color: var(--ink-2); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0; white-space: pre; }
+.raw-json::details-content { block-size: 0; overflow: hidden; opacity: 0; transition: block-size .28s cubic-bezier(.22, 1, .36, 1), opacity .22s ease-out, content-visibility .28s; transition-behavior: allow-discrete; }
+.raw-json[open]::details-content { block-size: auto; opacity: 1; }
+.raw-json pre { max-height: 280px; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--panel-raised); color: var(--ink-2); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0; white-space: pre; }
 .drawer-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); }
 
 /* 记录里的图片：武器、副武器和特殊武器、场地、名牌、徽章、装备和能力、鲑鱼 */
@@ -825,19 +843,20 @@ dialog.share-dialog #share-status { margin: 12px 0; overflow-wrap: anywhere; }
 
 .battle-assists { font-size: .8em; }
 
-/* 视图切换：仅交叉淡入淡出，保持非位移的色块与布局过渡。 */
+/* 视图切换：仅交叉淡入淡出与轻微纵向空间感，保持顶栏与侧栏稳定。 */
 @media (prefers-reduced-motion: no-preference) {
   ::view-transition-old(root) { animation: vt-fade-out .22s ease-out both; }
-  ::view-transition-new(root) { animation: vt-fade-in .28s cubic-bezier(.22, 1, .36, 1) both; }
+  ::view-transition-new(root) { animation: vt-slide-in .28s cubic-bezier(.22, 1, .36, 1) both; }
 }
 @keyframes vt-fade-out { to { opacity: 0; } }
-@keyframes vt-fade-in { from { opacity: 0; } }
+@keyframes vt-slide-in { from { opacity: 0; translate: 0 6px; } }
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(*),
   ::view-transition-old(*),
   ::view-transition-new(*) {
     animation: none !important;
   }
+  .raw-json::details-content { transition: none !important; }
   .account-caret, .range-caret, .form-cell, .tip, .meter > span, .king-bar > span, .defeat-bar-fill, .score-bar span { transition: none; }
   .nav button:active, .segmented button:active, .ghost:active:not(:disabled), .button-primary:active:not(:disabled), .button-danger:active:not(:disabled), .rule-tab:active, .obs-option:active, .form-cell:not(.none):hover, .form-cell:not(.none):focus-visible { transform: none; scale: none; }
 }

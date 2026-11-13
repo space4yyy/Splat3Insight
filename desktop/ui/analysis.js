@@ -1092,7 +1092,7 @@
     for (const row of rows) {
       const rate = row.defeated / row.appeared;
       box.append(el('div', { class: 'king-row' }, [
-        row.image ? el('img', { src: row.image, alt: '', width: '48', height: '48' }) : el('span', { class: 'king-placeholder', 'aria-hidden': 'true' }),
+        row.image ? el('img', { src: row.image, alt: '', width: '48', height: '48', loading: 'lazy', decoding: 'async' }) : el('span', { class: 'king-placeholder', 'aria-hidden': 'true' }),
         el('div', { class: 'king-body' }, [
           el('div', { class: 'king-meta' }, [el('strong', { text: row.name ?? '头目鲑鱼' }), el('span', { class: 'font-number', text: pct(rate, 0) })]),
           el('div', { class: 'king-bar', role: 'img', 'aria-label': `击倒 ${row.defeated} 次，出现 ${row.appeared} 次` }, el('span', { style: `width:${(rate * 100).toFixed(1)}%` })),
@@ -1238,7 +1238,7 @@
         group.grade ? gradeText(group.grade.name, group.grade.point) : '—',
         group.king ? el('span', { class: 'icon-name', title: `${group.king.name ?? '头目鲑鱼'} · 击倒 ${group.king.defeated} / 出现 ${group.king.appeared}` }, [
           group.king.image
-            ? el('img', { class: 'enemy-icon', src: group.king.image, alt: group.king.name ?? '头目鲑鱼', loading: 'lazy' })
+            ? el('img', { class: 'enemy-icon', src: group.king.image, alt: group.king.name ?? '头目鲑鱼', loading: 'lazy', decoding: 'async' })
             : document.createTextNode(group.king.name ?? '头目鲑鱼'),
           el('span', { class: 'font-number', text: `${group.king.defeated} / ${group.king.appeared}` }),
         ]) : '—',
@@ -1265,7 +1265,7 @@
   });
   const defeatIcon = (row) => el('span', { class: 'defeat-icon' }, row.image
     ? records.img(row.image, '', row.name)
-    : analysis.KING_IMAGES[row.id] ? el('img', { src: analysis.KING_IMAGES[row.id], alt: row.name ?? '' }) : null);
+    : analysis.KING_IMAGES[row.id] ? el('img', { src: analysis.KING_IMAGES[row.id], alt: row.name ?? '', loading: 'lazy', decoding: 'async' }) : null);
   function defeatGridView(rows) {
     return el('div', { class: 'defeat-grid' }, rows.map((row) => el('div', { class: `defeat-tile${row.count ? '' : ' is-zero'}` }, [
       defeatIcon(row),
