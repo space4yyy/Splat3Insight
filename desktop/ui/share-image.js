@@ -533,18 +533,23 @@
       dialog.focus();
       render(true);
     });
-    // 点在对话框外面（遮罩上）时关闭。按下和松开都在外面才算，从框里拖到外面不会误关。
-    const outside = (event) => {
-      const box = dialog.getBoundingClientRect();
-      return event.target === dialog
-        && (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom);
-    };
-    let pressedOutside = false;
-    dialog.addEventListener('pointerdown', (event) => { pressedOutside = outside(event); });
-    dialog.addEventListener('click', (event) => {
-      if (pressedOutside && outside(event)) dialog.close();
-      pressedOutside = false;
-    });
+    const closeShareDialog = () => (window.Splat3Motion ? window.Splat3Motion.closeDialog(dialog) : dialog.close());
+    if (window.Splat3Motion) {
+      window.Splat3Motion.setupDialog(dialog);
+    } else {
+      // 点在对话框外面（遮罩上）时关闭。按下和松开都在外面才算，从框里拖到外面不会误关。
+      const outside = (event) => {
+        const box = dialog.getBoundingClientRect();
+        return event.target === dialog
+          && (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom);
+      };
+      let pressedOutside = false;
+      dialog.addEventListener('pointerdown', (event) => { pressedOutside = outside(event); });
+      dialog.addEventListener('click', (event) => {
+        if (pressedOutside && outside(event)) dialog.close();
+        pressedOutside = false;
+      });
+    }
     for (const [group, key] of [[content, 'content'], [kind, 'kind']]) {
       group.addEventListener('click', (event) => {
         const button = event.target.closest(`button[data-${key}]`);
@@ -559,7 +564,7 @@
       try { localStorage.setItem('splat3-share', JSON.stringify({ showName: showName.checked })); } catch {}
       render();
     });
-    $('share-cancel').addEventListener('click', () => dialog.close());
+    $('share-cancel').addEventListener('click', closeShareDialog);
     dialog.addEventListener('close', () => {
       revision += 1;
       // 关闭后释放快照引用，避免后续同步更新时仍保留上一批历史记录。
@@ -604,7 +609,7 @@
     const followTheme = () => { if (dialog.open) render(); };
     lightQuery.addEventListener('change', followTheme);
     new MutationObserver(followTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    return { close: () => dialog.close() };
+    return { close: closeShareDialog };
   }
   window.Splat3Share = Object.freeze({ init, buildShare, sharePng });
 })();

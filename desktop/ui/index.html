@@ -54,7 +54,7 @@
       <div class="main">
         <header class="topbar">
           <div>
-            <h1 class="page-title" id="page-title">总览</h1>
+            <h1 class="page-title" id="page-title" tabindex="-1">总览</h1>
             <p class="page-sub" id="page-sub"></p>
           </div>
           <div class="filters" id="filters" aria-label="筛选">
@@ -579,7 +579,7 @@
       </div>
     </dialog>
 
-    <dialog id="share-dialog" class="close-prompt share-dialog" aria-label="分享" tabindex="-1">
+    <dialog id="share-dialog" class="close-prompt share-dialog" closedby="any" aria-label="分享" tabindex="-1">
       <div class="share-dialog-body">
         <div id="share-preview-viewport" class="share-preview-viewport"><div id="share-preview" class="share-preview" aria-label="分享图预览"></div></div>
         <div class="share-fields">
@@ -612,7 +612,7 @@
         </div>
       </div>
     </dialog>
-    <dialog id="background-close-prompt" class="close-prompt" aria-labelledby="background-close-title">
+    <dialog id="background-close-prompt" class="close-prompt" closedby="any" aria-labelledby="background-close-title">
       <h2 id="background-close-title">在后台继续运行？</h2>
       <p>隐藏主窗口后，OBS 服务与后台数据同步将继续运行。后续可通过<span data-windows="系统托盘">Dock</span>图标重新打开主界面，或直接退出应用。</p>
       <div class="close-prompt-actions">
@@ -641,7 +641,7 @@
         <button type="button" class="button-danger" id="delete-account-confirm">删除账号</button>
       </div>
     </dialog>
-    <dialog id="login-consent" class="close-prompt" aria-labelledby="login-consent-title" tabindex="-1">
+    <dialog id="login-consent" class="close-prompt" closedby="any" aria-labelledby="login-consent-title" tabindex="-1">
       <h2 id="login-consent-title">登录前请确认</h2>
       <p>登录 SplatNet 3 需借助第三方服务 nxapi 生成认证参数。继续操作即表示同意将您的 Nintendo 账号 id_token、Nintendo Switch Online 应用接口（Coral）令牌，以及与 Coral 通信的相关数据发送至 nxapi。<a href="https://github.com/samuelthomas2774/nxapi-znca-api" id="login-consent-link">了解 nxapi</a></p>
       <div class="close-prompt-actions">
@@ -655,6 +655,7 @@
 
     <script src="./overlay-card-renderer.js"></script>
     <script src="./game-names.js"></script>
+    <script src="./motion.js"></script>
     <script src="./dashboard-data.js"></script>
     <script src="./dashboard.js"></script>
     <script src="./record-detail.js"></script>

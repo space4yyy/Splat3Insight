@@ -133,6 +133,8 @@
       localStorage.setItem('splat3-close-prompt-acknowledged', 'true');
     } catch {}
   }
+  const motion = window.Splat3Motion;
+  motion.setupDialog(closePrompt);
   tauri.event.listen('main-close-requested', async () => {
     if (closePrompt.open) return;
     if (closePromptAcknowledged) {
@@ -145,14 +147,10 @@
     }
     closePrompt.showModal();
   }).catch((error) => setMessage(`初始化窗口关闭提示失败：${String(error)}`, true));
-  $('#cancel-close').addEventListener('click', () => closePrompt.close());
-  closePrompt.addEventListener('cancel', (event) => {
-    event.preventDefault();
-    closePrompt.close();
-  });
+  $('#cancel-close').addEventListener('click', () => motion.closeDialog(closePrompt));
   $('#hide-to-background').addEventListener('click', async () => {
     acknowledgeClosePrompt();
-    closePrompt.close();
+    await motion.closeDialog(closePrompt);
     try {
       await invoke('hide_main_window');
     } catch (error) {
@@ -161,7 +159,7 @@
   });
   $('#exit-from-close').addEventListener('click', async () => {
     acknowledgeClosePrompt();
-    closePrompt.close();
+    await motion.closeDialog(closePrompt);
     try {
       await invoke('exit_app');
     } catch (error) {
@@ -346,10 +344,8 @@
 
   proxyEnabled.addEventListener('change', updateProxyFormState);
   proxyAddress.addEventListener('input', updateProxyFormState);
-  $('#proxy-dialog-cancel').addEventListener('click', () => proxyDialog.close());
-  proxyDialog.addEventListener('click', (event) => {
-    if (event.target === proxyDialog && !proxyBusy) proxyDialog.close();
-  });
+  motion.setupDialog(proxyDialog, { canClose: () => !proxyBusy });
+  $('#proxy-dialog-cancel').addEventListener('click', () => motion.closeDialog(proxyDialog));
 
   proxyTestButton.addEventListener('click', async () => {
     if (!proxyAddress.reportValidity()) return;
@@ -379,7 +375,7 @@
         settings: { enabled: proxyEnabled.checked, address: proxyAddress.value },
       });
       renderProxySummary(settings);
-      proxyDialog.close();
+      await motion.closeDialog(proxyDialog);
       setSettingsMessage('网络代理设置已保存。', false);
     } catch (error) {
       setProxyDialogStatus(String(error), 'error');
@@ -436,43 +432,56 @@
 
   // 页面切换。每个页面各自记住滚动位置，切回来时回到原处。
   const scrollPositions = {};
+  let hasInitializedView = false;
   function showView(view) {
     // 账号管理并进了设置页，旧的 #accounts 链接也打开设置。
     if (view === 'accounts') view = 'settings';
     if (!VIEWS[view]) view = 'overview';
     const previous = app.view;
+    const isNavigation = hasInitializedView && Boolean(previous && previous !== view);
+    hasInitializedView = true;
     if (previous !== view) scrollPositions[previous] = window.scrollY;
     app.view = view;
     // 重新打开应用时回到这一页。
     try {
       localStorage.setItem(VIEW_KEY, view);
     } catch {}
-    for (const button of document.querySelectorAll('#nav button[data-view]')) {
-      if (button.getAttribute('data-view') === view) button.setAttribute('aria-current', 'page');
-      else button.removeAttribute('aria-current');
+    const commitView = () => {
+      for (const button of document.querySelectorAll('#nav button[data-view]')) {
+        if (button.getAttribute('data-view') === view) button.setAttribute('aria-current', 'page');
+        else button.removeAttribute('aria-current');
+      }
+      for (const section of document.querySelectorAll('.main > .view')) section.hidden = section.id !== `view-${view}`;
+      $('#page-title').textContent = VIEWS[view][0];
+      $('#page-sub').textContent = VIEWS[view][1];
+      dashboard.hideTip();
+      $('#filters').hidden = true;
+      $('#share-button').hidden = !['overview', 'battles', 'weapons', 'stages', 'salmon'].includes(view);
+      dashboard.setModeScope(view === 'salmon' ? 'salmon' : ['battles', 'weapons', 'stages'].includes(view) ? 'battles' : 'all');
+      if (previous !== view) records.close();
+      if (view === 'overview') renderOverview();
+      else if (analysis.VIEWS.includes(view)) renderAnalysis(view);
+      else if (view === 'log') renderLog();
+      else if (view === 'obs') {
+        renderObsPreview();
+        refreshOverlayStates();
+      } else if (view === 'settings') {
+        refreshAutostart();
+        refreshExportDirectory();
+        refreshLogDirectory();
+        refreshNetworkProxySettings();
+        refreshAccounts().catch((error) => setMessage(String(error), true));
+      }
+      if (previous !== view) window.scrollTo(0, scrollPositions[view] ?? 0);
+      motion.applySiblingStagger(document.getElementById(`view-${view}`));
+    };
+    if (isNavigation) {
+      motion.runViewTransition(commitView, () => {
+        $('#page-title')?.focus({ preventScroll: true });
+      });
+    } else {
+      commitView();
     }
-    for (const section of document.querySelectorAll('.main > .view')) section.hidden = section.id !== `view-${view}`;
-    $('#page-title').textContent = VIEWS[view][0];
-    $('#page-sub').textContent = VIEWS[view][1];
-    dashboard.hideTip();
-    $('#filters').hidden = true;
-    $('#share-button').hidden = !['overview', 'battles', 'weapons', 'stages', 'salmon'].includes(view);
-    dashboard.setModeScope(view === 'salmon' ? 'salmon' : ['battles', 'weapons', 'stages'].includes(view) ? 'battles' : 'all');
-    if (previous !== view) records.close();
-    if (view === 'overview') renderOverview();
-    else if (analysis.VIEWS.includes(view)) renderAnalysis(view);
-    else if (view === 'log') renderLog();
-    else if (view === 'obs') {
-      renderObsPreview();
-      refreshOverlayStates();
-    } else if (view === 'settings') {
-      refreshAutostart();
-      refreshExportDirectory();
-      refreshLogDirectory();
-      refreshNetworkProxySettings();
-      refreshAccounts().catch((error) => setMessage(String(error), true));
-    }
-    if (previous !== view) window.scrollTo(0, scrollPositions[view] ?? 0);
   }
   $('#nav').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-view]');
@@ -700,12 +709,13 @@
     ));
   }
   function setAccountMenu(open) {
-    accountMenu.hidden = !open;
+    if (open) motion.showElement(accountMenu);
+    else void motion.hideElement(accountMenu);
     accountButton.setAttribute('aria-expanded', String(open));
     if (open) void loadAccountMenuPlates();
     if (open) (accountMenu.querySelector('[aria-checked="true"]') || accountMenu.querySelector('button'))?.focus();
   }
-  accountButton.addEventListener('click', () => setAccountMenu(accountMenu.hidden));
+  accountButton.addEventListener('click', () => setAccountMenu(accountMenu.hidden || accountMenu.hasAttribute('data-closing')));
   accountMenu.addEventListener('click', (event) => {
     const item = event.target.closest('[data-account]');
     const action = event.target.closest('[data-account-action]');
@@ -917,11 +927,8 @@
       setDeleteStatus(`无法打开所在位置：${String(error)}`, true);
     }
   });
-  $('#delete-account-cancel').addEventListener('click', () => deleteDialog.close());
-  // 正在删除或导出时不能用 Esc 关掉对话框。
-  deleteDialog.addEventListener('cancel', (event) => {
-    if (deleteConfirm.disabled) event.preventDefault();
-  });
+  motion.setupDialog(deleteDialog, { canClose: () => !deleteConfirm.disabled, lightDismiss: false });
+  $('#delete-account-cancel').addEventListener('click', () => motion.closeDialog(deleteDialog));
   deleteDialog.addEventListener('close', () => {
     deleteTarget = null;
   });
@@ -934,7 +941,7 @@
     setDeleteStatus(withData ? '正在删除账号和本地数据…' : '正在删除账号…');
     try {
       await invoke('remove_account', { accountId: target.id, deleteLocalData: withData });
-      deleteDialog.close();
+      await motion.closeDialog(deleteDialog);
       setMessage(withData ? `已删除“${target.name}”及其本地数据。` : `已删除“${target.name}”，本地数据已保留。`);
       await refreshAccounts();
     } catch (error) {
@@ -1009,9 +1016,10 @@
       void openUrl(link.href).catch((error) => setSettingsMessage(`打开链接失败：${String(error)}`));
     });
   });
-  $('#login-consent-cancel').addEventListener('click', () => loginConsent.close());
+  motion.setupDialog(loginConsent);
+  $('#login-consent-cancel').addEventListener('click', () => motion.closeDialog(loginConsent));
   $('#login-consent-accept').addEventListener('click', () => {
-    loginConsent.close();
+    void motion.closeDialog(loginConsent);
     void beginLogin(consentTarget);
   });
   loginButton.addEventListener('click', () => openLoginConsent(null));

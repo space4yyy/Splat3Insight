@@ -1083,7 +1083,9 @@
         item.querySelector('.range-item-from').textContent = `${fmtShortDate(rangeBounds(item.getAttribute('data-range'))[0])} 起`;
       }
     }
-    periodMenu.hidden = !open;
+    if (open) window.Splat3Motion ? window.Splat3Motion.showElement(periodMenu) : (periodMenu.hidden = false);
+    else if (window.Splat3Motion) void window.Splat3Motion.hideElement(periodMenu);
+    else periodMenu.hidden = true;
     periodButton.setAttribute('aria-expanded', String(open));
     if (open) (periodMenu.querySelector('[aria-checked="true"]') || periodMenu.querySelector('button'))?.focus();
   }
@@ -1100,7 +1102,15 @@
   pressRange();
   pressSegmented(modeFilter, 'data-mode', state.mode);
   // 时间范围和模式筛选由总览和对战记录共用，改动后通知当前页面重新绘制。
-  const filtersChanged = () => (filterListener ? filterListener() : render());
+  const filtersChanged = () => {
+    const update = () => {
+      if (filterListener) filterListener();
+      else render();
+      window.Splat3Motion?.applySiblingStagger(document.querySelector('.main > .view:not([hidden])'));
+    };
+    if (window.Splat3Motion?.runViewTransition) window.Splat3Motion.runViewTransition(update);
+    else update();
+  };
   rangeFilter.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-range]');
     if (!button) return;
@@ -1114,7 +1124,7 @@
     saveFilters();
     filtersChanged();
   });
-  periodButton.addEventListener('click', () => setPeriodMenu(periodMenu.hidden));
+  periodButton.addEventListener('click', () => setPeriodMenu(periodMenu.hidden || periodMenu.hasAttribute('data-closing')));
   document.addEventListener('click', (event) => {
     if (!periodMenu.hidden && !event.target.closest('.range-period')) setPeriodMenu(false);
   });

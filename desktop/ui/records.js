@@ -516,9 +516,9 @@
     (target && !target.disabled ? target : drawer.querySelector('[data-drawer-close]'))?.focus();
   }
   function openDrawer(index, origin) {
-    if (drawer.hidden) returnFocus = origin || document.activeElement;
-    drawer.hidden = false;
-    backdrop.hidden = false;
+    if (drawer.hidden || drawer.hasAttribute('data-closing')) returnFocus = origin || document.activeElement;
+    window.Splat3Motion?.showElement(drawer);
+    window.Splat3Motion?.showElement(backdrop);
     select(index, null);
   }
   // 总览里点最近的一场：就在当前页面打开详情。
@@ -538,9 +538,14 @@
     if (index >= 0) openDrawer(index, origin);
   }
   function close() {
-    if (drawer.hidden) return;
-    drawer.hidden = true;
-    backdrop.hidden = true;
+    if (drawer.hidden || drawer.hasAttribute('data-closing')) return;
+    if (window.Splat3Motion) {
+      void window.Splat3Motion.hideElement(drawer);
+      void window.Splat3Motion.hideElement(backdrop);
+    } else {
+      drawer.hidden = true;
+      backdrop.hidden = true;
+    }
     const row = state.selected ? document.querySelector(`#log-table tr[data-record="${CSS.escape(state.selected)}"]`) : null;
     state.selected = null;
     overviewList = null;
