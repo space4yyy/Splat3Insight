@@ -18,8 +18,6 @@ pub mod nintendo_auth;
 pub mod overlay;
 pub mod splatnet_auth;
 
-pub const KEYRING_SERVICE: &str = "ink.space4.Splat3Insight";
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AccountMetadata {
     pub account_id: String,
@@ -60,7 +58,7 @@ pub trait SecretStore {
 }
 
 /// Keeps secrets in process memory after the first access, avoiding repeated
-/// calls into the platform credential store during background sync polling.
+/// disk reads during background sync polling.
 pub struct CachedSecretStore<S> {
     inner: S,
     cache: std::sync::Mutex<HashMap<String, Option<AccountSecret>>>,
@@ -113,86 +111,67 @@ impl<S: SecretStore> SecretStore for CachedSecretStore<S> {
     }
 }
 
-/// Native OS credential storage.
-///
-/// The account id is part of the credential username, so multiple Nintendo
-/// accounts can coexist without overwriting each other.
+/// Per-account JSON files in the application configuration directory.
+/// Account ids are hashed so they cannot escape the credentials directory.
 #[derive(Debug, Clone)]
-pub struct KeyringSecretStore {
-    service: String,
+pub struct FileSecretStore {
+    directory: PathBuf,
 }
 
-impl Default for KeyringSecretStore {
-    fn default() -> Self {
-        Self::new(KEYRING_SERVICE)
-    }
-}
-
-impl KeyringSecretStore {
-    pub fn new(service: impl Into<String>) -> Self {
+impl FileSecretStore {
+    pub fn new(directory: impl Into<PathBuf>) -> Self {
         Self {
-            service: service.into(),
+            directory: directory.into(),
         }
     }
 
-    fn entry(&self, account_id: &str) -> Result<keyring::Entry, String> {
-        let username = format!("nintendo:{account_id}");
-        keyring::Entry::new(&self.service, &username).map_err(|error| error.to_string())
+    fn path(&self, account_id: &str) -> PathBuf {
+        use sha2::{Digest, Sha256};
+        self.directory
+            .join(format!("{:x}.json", Sha256::digest(account_id.as_bytes())))
     }
 }
 
-impl SecretStore for KeyringSecretStore {
+impl SecretStore for FileSecretStore {
     fn put(&self, account_id: &str, secret: &AccountSecret) -> Result<(), String> {
-        let entry = self.entry(account_id)?;
-        entry
-            .set_secret(&encode_secret(secret)?)
-            .map_err(|error| error.to_string())
+        use std::io::Write;
+        fs::create_dir_all(&self.directory).map_err(|_| "无法创建本地凭据目录".to_owned())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&self.directory, fs::Permissions::from_mode(0o700))
+                .map_err(|_| "无法设置本地凭据目录权限".to_owned())?;
+        }
+        // tempfile creates a private file and atomically replaces the destination,
+        // preserving the previous login if writing fails.
+        let mut file = tempfile::NamedTempFile::new_in(&self.directory)
+            .map_err(|_| "无法创建本地凭据文件".to_owned())?;
+        let encoded = serde_json::to_vec(secret).map_err(|_| "无法编码登录信息".to_owned())?;
+        file.write_all(&encoded)
+            .and_then(|()| file.as_file().sync_all())
+            .map_err(|_| "无法保存本地登录信息".to_owned())?;
+        file.persist(self.path(account_id))
+            .map_err(|_| "无法更新本地登录信息".to_owned())?;
+        Ok(())
     }
 
     fn get(&self, account_id: &str) -> Result<Option<AccountSecret>, String> {
-        let entry = self.entry(account_id)?;
-        match entry.get_secret() {
-            Ok(encoded) => decode_secret(&encoded).map(Some),
-            Err(error) if is_missing_credential(&error) => Ok(None),
-            Err(error) => Err(error.to_string()),
+        match fs::read(self.path(account_id)) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .map_err(|_| "本地登录信息已损坏，请重新登录".to_owned()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err("无法读取本地登录信息".to_owned()),
         }
     }
 
     fn delete(&self, account_id: &str) -> Result<(), String> {
-        let entry = self.entry(account_id)?;
-        match entry.delete_credential() {
+        match fs::remove_file(self.path(account_id)) {
             Ok(()) => Ok(()),
-            Err(error) if is_missing_credential(&error) => Ok(()),
-            Err(error) => Err(error.to_string()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err("无法删除本地登录信息".to_owned()),
         }
     }
-}
-
-/// Stores the secret as UTF-8 JSON bytes. `set_password` writes UTF-16 on Windows, twice
-/// the bytes, and the three tokens can then exceed Credential Manager's 2560-byte limit.
-/// The Keychain stores passwords as UTF-8 either way, so macOS entries are unchanged.
-fn encode_secret(secret: &AccountSecret) -> Result<Vec<u8>, String> {
-    serde_json::to_vec(secret).map_err(|error| error.to_string())
-}
-
-/// Reads UTF-8 JSON, or the UTF-16 JSON that `set_password` wrote on Windows before.
-fn decode_secret(encoded: &[u8]) -> Result<AccountSecret, String> {
-    serde_json::from_slice(encoded).or_else(|error| {
-        let units = (encoded.len() % 2 == 0).then(|| {
-            encoded
-                .chunks_exact(2)
-                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-                .collect::<Vec<_>>()
-        });
-        units
-            .and_then(|units| String::from_utf16(&units).ok())
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .ok_or_else(|| error.to_string())
-    })
-}
-
-fn is_missing_credential(error: &keyring::Error) -> bool {
-    matches!(error, keyring::Error::NoEntry)
 }
 
 /// Stores non-sensitive account metadata on disk and delegates all secrets to
@@ -221,8 +200,7 @@ impl<S: SecretStore> AccountRegistry<S> {
     }
 
     /// The secret store, shared so callers can read credentials after
-    /// releasing whatever lock guards the registry: a platform credential
-    /// lookup may wait on a system authorization prompt.
+    /// releasing whatever lock guards the registry.
     pub fn secret_store(&self) -> Arc<S> {
         Arc::clone(&self.secret_store)
     }
@@ -436,11 +414,6 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[test]
-    fn keyring_service_matches_the_configured_bundle_identifier() {
-        assert_eq!(KEYRING_SERVICE, "ink.space4.Splat3Insight");
-    }
-
     fn metadata(id: &str, name: &str) -> AccountMetadata {
         AccountMetadata {
             account_id: id.to_owned(),
@@ -463,20 +436,38 @@ mod tests {
     }
 
     #[test]
-    fn keyring_secrets_are_utf8_json_and_older_utf16_entries_still_read() {
-        let secret = secret("a");
-        let encoded = encode_secret(&secret).unwrap();
-        assert_eq!(encoded, serde_json::to_vec(&secret).unwrap());
-        assert_eq!(decode_secret(&encoded).unwrap(), secret);
-
-        // Windows entries written by `set_password` hold UTF-16LE text.
-        let utf16 = serde_json::to_string(&secret)
-            .unwrap()
-            .encode_utf16()
-            .flat_map(u16::to_le_bytes)
-            .collect::<Vec<_>>();
-        assert_eq!(decode_secret(&utf16).unwrap(), secret);
-        assert!(decode_secret(b"not json").is_err());
+    fn file_secrets_survive_restart_replace_and_delete_independently() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("credentials");
+        let store = FileSecretStore::new(&path);
+        assert_eq!(store.get("a").unwrap(), None);
+        store.put("a", &secret("old")).unwrap();
+        store.put("../b", &secret("b")).unwrap();
+        store.put("a", &secret("new")).unwrap();
+        let reopened = FileSecretStore::new(&path);
+        assert_eq!(reopened.get("a").unwrap(), Some(secret("new")));
+        assert_eq!(reopened.get("../b").unwrap(), Some(secret("b")));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(
+                fs::metadata(store.path("a")).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        reopened.delete("a").unwrap();
+        reopened.delete("a").unwrap();
+        assert_eq!(reopened.get("a").unwrap(), None);
+        assert_eq!(reopened.get("../b").unwrap(), Some(secret("b")));
+        fs::write(store.path("../b"), b"invalid private token").unwrap();
+        assert_eq!(
+            reopened.get("../b").unwrap_err(),
+            "本地登录信息已损坏，请重新登录"
+        );
     }
 
     #[test]

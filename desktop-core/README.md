@@ -1,15 +1,16 @@
 # Splat 3 widget desktop core
 
-This crate owns account metadata, native credential storage, Nintendo/SplatNet
+This crate owns account metadata, local credential file storage, Nintendo/SplatNet
 authentication, the history data client, and the current-battle cursor used by
 the Tauri app.
 
 ## Storage boundary
 
 - `AccountMetadata` is saved as JSON and contains no tokens.
-- `AccountSecret` is stored under a per-account credential entry through the
-  platform's native credential store.
-- macOS uses Keychain Services; Windows uses Windows Credential Manager.
+- `AccountSecret` is stored as a per-account JSON file under `credentials/` in
+  the app configuration directory. Unix directories use mode 0700 and files 0600.
+- No operating-system credential store is accessed. Existing accounts must sign
+  in once after upgrading; old system credentials are left untouched.
 - The `MemorySecretStore` is only for tests and development.
 
 ## History archive
@@ -66,7 +67,7 @@ After the Nintendo identity exchange, the account and long-lived
 repeatable operation: `splatnet_auth` follows the token chain of Coral
 `Account/Login`, Coral `Game/GetWebServiceToken`, and SplatNet
 `/api/bullet_tokens`. The resulting `game_web_token` and `bullet_token` are
-kept with the account secret in the native credential store. A failed
+kept with the account secret in the local credential files. A failed
 f-generation request therefore does not require another Nintendo login.
 If Nintendo rejects the saved session token, the account is marked
 `login_expired` and keeps its history; signing in to the same Nintendo account

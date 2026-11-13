@@ -55,7 +55,7 @@ pub(super) async fn sync_account_inner(
                 "credentials",
                 &metadata.display_name,
                 account_id,
-                "系统凭据库里没有这个账号的登录信息，需要重新获取权限",
+                "本地凭据文件中没有这个账号的登录信息，需要重新获取权限",
             );
             return Err(SyncError::Other("该账号没有保存登录信息".to_owned()));
         }
@@ -66,7 +66,7 @@ pub(super) async fn sync_account_inner(
                 "credentials",
                 &metadata.display_name,
                 account_id,
-                &format!("读取系统凭据库中的登录信息失败，需要重新获取权限：{error}"),
+                &format!("读取本地凭据文件中的登录信息失败，需要重新获取权限：{error}"),
             );
             return Err(SyncError::Other(error));
         }

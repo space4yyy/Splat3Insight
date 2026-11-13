@@ -11,7 +11,7 @@
 #   release-identity                         证书的 SHA-1，codesign 用它找证书
 #
 # 请另外备份这个目录。丢了更新私钥，已安装的版本就收不到后续更新；
-# 换了发布证书，macOS 用户更新后要重新允许一次钥匙串访问。
+# 更换发布证书时需同步更新构建配置。
 set -eu
 
 NAME="Splat3 Insight"

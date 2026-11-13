@@ -15,7 +15,7 @@ use splat3_widget_core::{
     },
     overlay::{OverlayMatchCategory, OverlayState},
     splatnet_auth::{exchange_splatnet_tokens, SplatNetAuthConfig, NXAPI_F_GENERATION_URL},
-    AccountMetadata, AccountRegistry, AccountSecret, CachedSecretStore, KeyringSecretStore,
+    AccountMetadata, AccountRegistry, AccountSecret, CachedSecretStore, FileSecretStore,
     SecretStore,
 };
 #[cfg(not(target_os = "macos"))]
@@ -40,7 +40,7 @@ pub(crate) mod overlay_server;
 mod sync_orchestrator;
 mod sync_schedule;
 
-type Registry = AccountRegistry<CachedSecretStore<KeyringSecretStore>>;
+type Registry = AccountRegistry<CachedSecretStore<FileSecretStore>>;
 
 const AUTOSTART_APP_NAME: &str = "Splat3Insight";
 
@@ -1902,11 +1902,11 @@ async fn refresh_splatnet_tokens_for_account(
             "credentials",
             &metadata.display_name,
             account_id,
-            "系统凭据库里没有这个账号的 Nintendo 登录信息，需要重新登录",
+            "本地凭据文件中没有这个账号的 Nintendo 登录信息，需要重新登录",
         );
         mark_login_expired(registry, account_id);
         return Err(TokenRefreshFailure::NintendoSessionExpired(
-            "系统凭据库中没有登录信息".to_owned(),
+            "本地凭据文件中没有登录信息".to_owned(),
         ));
     };
     let session_token = secret.session_token;
@@ -2311,7 +2311,7 @@ pub fn run() {
             let history_dir = config_dir.join("history");
             let mut registry = AccountRegistry::load(
                 &metadata_path,
-                CachedSecretStore::new(KeyringSecretStore::default()),
+                CachedSecretStore::new(FileSecretStore::new(config_dir.join("credentials"))),
             )
             .map_err(std::io::Error::other)?;
             for account_id in registry.pending_account_deletions().to_vec() {

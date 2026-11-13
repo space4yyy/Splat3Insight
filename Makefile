@@ -6,7 +6,7 @@ install:
 dev:
 	npm --prefix desktop run tauri -- dev
 
-# macOS：创建本机开发签名证书（只需一次），重新编译后不再反复要求钥匙串密码。
+# macOS：创建本机开发签名证书（只需一次）。
 dev-signing:
 	desktop/scripts/dev-signing.sh setup
 
