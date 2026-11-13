@@ -98,6 +98,8 @@ test('defeat count items keep the SplatNet order with official names and bundled
     ['Someone New', null, null],
   ]);
   assert.equal(cards.defeatCountItems({ enemies: [{ id: 4, name: 'Steelhead', count: null }] }).enemies.length, 0);
+  const current = cards.defeatCountItems({ enemies: [{ enemy_id: 4, name: 'Steelhead', image: '/current-image', defeat_count: 8 }] });
+  assert.deepEqual(Array.from(current.enemies, (item) => [item.key, item.image, item.count]), [['enemies:4', '/current-image', 8]]);
 });
 
 test('the defeat count card is one strip with a divider between Boss and King Salmonids', () => {
@@ -131,6 +133,17 @@ test('the defeat count card is one strip with a divider between Boss and King Sa
   cards.updateDefeatCounts(root, record());
   assert.equal(root.children[0], card);
   assert.equal(card.hidden, false);
+
+  const { cards: currentCards, root: currentRoot } = setup();
+  currentCards.updateDefeatCounts(currentRoot, {
+    enemies: [{ enemy_id: 4, name: 'Steelhead', count: 8 }],
+    bosses: [{ enemy_id: 23, name: 'Cohozuna', defeat_count: 1 }],
+  }, undefined, undefined, record());
+  assert.equal(currentRoot.children[0].children.length, 4);
+  const currentCounts = currentRoot.children[0].children
+    .filter((child) => child.tag === 'span' && child.children.length)
+    .map((item) => item.children[1].textContent);
+  assert.deepEqual(currentCounts, ['8', '0', '1']);
 });
 
 test('new defeat counts roll in place and keep their thousands separators', () => {
@@ -165,16 +178,21 @@ test('new defeat counts roll in place and keep their thousands separators', () =
 });
 
 test('the defeat count page polls its own data and the app previews the dashboard record', () => {
-  assert.match(pageHtml, /fetch\('\/api\/defeat-counts'/);
+  assert.match(pageHtml, /fetch\('__DEFEAT_API_PATH__'/);
   // 显示哪些鲑鱼跟着数据一起轮询，不从地址里读。
   assert.match(pageHtml, /Splat3OverlayCard\.updateDefeatCounts\(root, record, undefined, record\?\.show\)/);
   assert.doesNotMatch(pageHtml, /location\.search/);
   assert.ok(pageHtml.indexOf('/game-names.js') < pageHtml.indexOf('/overlay-card-renderer.js'));
-  assert.match(appJs, /cards\?\.updateDefeatCounts\(scale, dashboard\.coopRecord\(\), records\.imageSrc\)/);
+  assert.match(appJs, /dashboard\.coopRecord\(\)/);
+  assert.match(appJs, /states\?\.overlay\?\.salmon_run\?\.defeat_counts/);
+  assert.match(appJs, /cards\?\.updateDefeatCounts\(scale, source, records\.imageSrc, undefined, roster\)/);
   // 应用预览保留逻辑尺寸，OBS 使用高分辨率。
   const { width, height } = catalog.find((card) => card.id === 'defeat-counts');
   assert.equal(width, 3072);
   assert.equal(height, 256);
+  const current = catalog.find((card) => card.id === 'current-defeat-counts');
+  assert.equal(current.route, '/current-defeat-counts');
+  assert.deepEqual([current.width, current.height], [width, height]);
   assert.ok(previewCss.includes(`.overlay-preview__scale > .defeat-count-card { --obs-card-width: 768px; --obs-card-height: 64px; }`));
 });
 
@@ -196,6 +214,7 @@ test('defeat selections keep the SplatNet order and unknown selections retain al
 test('picking Salmonids in the preview saves the choice instead of changing the OBS address', () => {
   // 地址固定是目录里的 /defeat-counts，选择存进应用设置，OBS 页面轮询时一起取。
   assert.equal(catalog.find((card) => card.id === 'defeat-counts').route, '/defeat-counts');
+  assert.equal(catalog.find((card) => card.id === 'current-defeat-counts').route, '/current-defeat-counts');
   assert.doesNotMatch(appJs, /defeat-counts\?|URLSearchParams\(\{ show/);
   assert.doesNotMatch(appJs, /splat3-obs-defeat-selection/);
   assert.match(appJs, /invoke\('get_obs_defeat_selection'\)/);

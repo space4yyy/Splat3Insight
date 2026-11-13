@@ -36,7 +36,7 @@
       // 显示哪些鲑鱼（show）跟着数据一起取：应用里点预览换了选择，下一轮就换，地址不用变。
       async function update() {
         try {
-          const response = await fetch('/api/defeat-counts', { cache: 'no-store' });
+          const response = await fetch('__DEFEAT_API_PATH__', { cache: 'no-store' });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const record = await response.json();
           if (record?.error) throw new Error(record.error);

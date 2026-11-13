@@ -456,9 +456,10 @@ ${SALMON_TOTALS_HTML}
   // image 交给 imageSrc 换成能显示的地址；头目鲑鱼没有图片时用卡片自带的彩色图。名称只放在提示里。
   function defeatCountItems(record, imageSrc = (url) => url) {
     const items = (group) => (Array.isArray(record?.[group]) ? record[group] : [])
-      .filter((row) => isNumber(row?.count))
+      .filter((row) => isNumber(row?.count ?? row?.defeat_count))
       .map((row) => {
-        const id = isNumber(row.id) ? Number(row.id) : null;
+        const rawId = row.id ?? row.enemy_id;
+        const id = isNumber(rawId) ? Number(rawId) : null;
         const name = String(row.name ?? '').trim();
         const bundled = group === 'bosses' && salmonBossIcons[id] ? `./images/${salmonBossIcons[id].color}` : null;
         return {
@@ -466,7 +467,7 @@ ${SALMON_TOTALS_HTML}
           name: officialName('bosses', name) || name,
           image: (row.image && imageSrc(row.image)) || bundled,
           fallback: bundled,
-          count: Number(row.count),
+          count: Number(row.count ?? row.defeat_count),
         };
       });
     return { enemies: items('enemies'), bosses: items('bosses') };
@@ -524,9 +525,21 @@ ${SALMON_TOTALS_HTML}
 
   // 每次刷新只改数字（变化时滚动并发亮）；显示的种类或图片变了才重建。
   // selectedKeys 是要显示的鲑鱼，OBS 页面用接口里的 show；不给时全部显示（应用预览）。
-  function updateDefeatCounts(root, record, imageSrc, selectedKeys) {
+  function updateDefeatCounts(root, record, imageSrc, selectedKeys, rosterRecord) {
     prepareCardType(root, 'defeat-counts');
-    const all = defeatCountItems(record, imageSrc);
+    const current = defeatCountItems(record, imageSrc);
+    const roster = rosterRecord ? defeatCountItems(rosterRecord, imageSrc) : current;
+    // Only the current rotation's King belongs on the right side.
+    if (rosterRecord) roster.bosses = current.bosses;
+    const all = rosterRecord
+      ? Object.fromEntries(['enemies', 'bosses'].map((group) => {
+        const currentByKey = new Map(current[group].map((item) => [item.key, item]));
+        const rosterKeys = new Set(roster[group].map((item) => item.key));
+        const merged = roster[group].map((item) => ({ ...item, count: currentByKey.get(item.key)?.count ?? 0 }));
+        merged.push(...current[group].filter((item) => !rosterKeys.has(item.key)));
+        return [group, merged];
+      }))
+      : current;
     const items = selectedDefeatItems(all, selectedKeys);
     const list = [...items.enemies, ...items.bosses];
     let refs = mountedDefeatCards.get(root);

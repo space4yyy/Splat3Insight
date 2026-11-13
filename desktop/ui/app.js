@@ -48,7 +48,8 @@
     'bankara-match': '同步蛮颓开放或挑战记录后显示最近比赛。',
     'x-match': '同步 X 比赛记录后显示最近比赛。',
     'salmon-run': '同步打工历史后显示鲑鱼跑卡片。',
-    'defeat-counts': '同步打工历史后显示击倒数量。',
+    'defeat-counts': '同步鲑鱼跑记录后显示累计击倒数。',
+    'current-defeat-counts': '同步打工历史后显示本期击倒数。',
   };
 
   const app = {
@@ -554,7 +555,7 @@
       if (app.view === 'overview') renderOverview();
       else if (analysis.VIEWS.includes(app.view)) renderAnalysis(app.view);
       else if (app.view === 'log') renderLog();
-      // 击倒数量卡片的预览用数据面板的数据，读到新数据时一起刷新。
+      // 击倒数卡片的预览用数据面板的数据，读到新数据时一起刷新。
       else if (app.view === 'obs') renderObsPreview();
     });
   }
@@ -1250,11 +1251,12 @@
 
   // OBS 数据卡片
   const obsCardOf = (id) => app.obs.catalog.find((card) => card.id === id);
+  const isDefeatCountCard = (id) => id === 'defeat-counts' || id === 'current-defeat-counts';
   const obsOrdered = (ids) => app.obs.catalog.map((card) => card.id).filter((id) => ids.includes(id));
   // 地址带参数的数据卡片能合进同一个地址；自动、时钟这类地址独立的卡片只能单选。
   const obsStandalone = (id) => !obsCardOf(id)?.route.includes('?');
 
-  // 击倒数量卡片显示哪些鲑鱼（item.key 的列表，null 表示全部）存在应用设置里，OBS 页面轮询数据时一起取：
+  // 击倒数卡片显示哪些鲑鱼（item.key 的列表，null 表示全部）存在应用设置里，OBS 页面轮询数据时一起取：
   // 在预览里点鲑鱼切换后，OBS 里同一个地址几秒内就更新，不用重新复制地址。
   let obsDefeatSelection = null;
   let obsDefeatVersion = 0;
@@ -1269,7 +1271,7 @@
       if (version !== obsDefeatVersion) return;
       obsDefeatSelection = Array.isArray(saved) ? saved : null;
     } catch (error) {
-      setMessage(`读取击倒数量卡片设置失败：${String(error)}`, true);
+      setMessage(`读取击倒数卡片设置失败：${String(error)}`, true);
     }
     renderObsUrl();
     renderObsPreview();
@@ -1280,7 +1282,7 @@
     renderObsUrl();
     renderObsPreview();
     invoke('save_obs_defeat_selection', { selection: keys }).catch((error) => {
-      setMessage(`保存击倒数量卡片设置失败：${String(error)}`, true);
+      setMessage(`保存击倒数卡片设置失败：${String(error)}`, true);
       // 换回实际存着的选择，和 OBS 里显示的一致。
       loadObsDefeatSelection();
     });
@@ -1365,11 +1367,11 @@
       .flatMap((id) => Array.from(new URL(obsCardOf(id).route, 'http://localhost').searchParams.keys()));
     return `/overlay?${keys.join('&')}`;
   }
-  // 建议尺寸是卡片目录里的高分辨率尺寸。击倒数量的宽度按全部鲑鱼都显示时算（和卡片逻辑尺寸高 64 同样放大），
+  // 建议尺寸是卡片目录里的高分辨率尺寸。击倒数卡片的宽度按全部鲑鱼都显示时算（和卡片逻辑尺寸高 64 同样放大），
   // OBS 页面也按这个宽度缩放：在预览里隐藏或显示鲑鱼时，来源尺寸不用改，卡片高度也不变。
   const DEFEAT_CARD_HEIGHT = 64;
   function obsSourceSize(card) {
-    const all = card.id === 'defeat-counts' && cards ? obsDefeatItems() : null;
+    const all = isDefeatCountCard(card.id) && cards ? obsDefeatItems() : null;
     if (!all || !(all.enemies.length || all.bosses.length)) return [card.width, card.height];
     return [cards.defeatCountWidth(all) * card.height / DEFEAT_CARD_HEIGHT, card.height];
   }
@@ -1390,7 +1392,7 @@
     box.replaceChildren(el('code', { text: url }), copy);
     const [width, height] = obsSourceSize(card);
     $('#obs-size-hint').textContent = `建议将浏览器来源宽高设为 ${width} × ${height}。`
-      + (card.id === 'defeat-counts' ? '增减显示项后自动同步，无需修改地址或尺寸。' : '');
+      + (isDefeatCountCard(card.id) ? '增减显示项后自动同步，无需修改地址或尺寸。' : '');
   }
   async function copyText(text, button, failure) {
     try {
@@ -1501,7 +1503,7 @@
       box.replaceChildren();
       return;
     }
-    $('#obs-preview-title').textContent = card.id === 'defeat-counts' ? '预览：击倒数量（点击图标可显示或隐藏）' : `预览：${card.optionLabel}`;
+    $('#obs-preview-title').textContent = isDefeatCountCard(card.id) ? `预览：${card.optionLabel}（点击图标可显示或隐藏）` : `预览：${card.optionLabel}`;
     const [width, height] = obsSourceSize(card);
     $('#obs-preview-size').textContent = `建议 ${width} × ${height}`;
     let preview = box.querySelector('.overlay-preview');
@@ -1515,10 +1517,16 @@
     if (card.id === 'clock') {
       // 时钟不需要账号数据，直接显示本机时间。
       hasData = Boolean(cards?.updateClock(scale));
-    } else if (card.id === 'defeat-counts') {
-      // 击倒数量用数据面板读到的「鲑鱼跑记录」，图片走本地图片缓存；换账号后等新账号的数据读完再显示。
+    } else if (isDefeatCountCard(card.id)) {
+      // 累计击倒数用「鲑鱼跑记录」；本期击倒数沿用鲑鱼跑卡片对最近一期的分组。
+      // 图片走本地图片缓存；换账号后等新账号的数据读完再显示。
       const factsReady = app.facts.status === 'ready' && app.facts.accountId === app.activeAccountId;
-      hasData = Boolean(factsReady && cards?.updateDefeatCounts(scale, dashboard.coopRecord(), records.imageSrc));
+      const source = card.id === 'defeat-counts'
+        ? dashboard.coopRecord()
+        : states?.overlay?.salmon_run?.defeat_counts;
+      const roster = card.id === 'current-defeat-counts' ? dashboard.coopRecord() : null;
+      hasData = Boolean((card.id === 'defeat-counts' ? factsReady : source)
+        && cards?.updateDefeatCounts(scale, source, records.imageSrc, undefined, roster));
     } else if (cards && states) {
       if (card.id === 'overlay') {
         const type = cards.updateAuto(scale, states.overlay);
@@ -1543,7 +1551,7 @@
     }
     empty?.remove();
     preview.hidden = false;
-    if (card.id === 'defeat-counts') {
+    if (isDefeatCountCard(card.id)) {
       // 预览显示全部鲑鱼，OBS 里不显示的调暗；点一下（或按回车、空格）切换。
       const keys = new Set(defeatKeys(obsSelectedDefeats()));
       for (const cell of scale.querySelectorAll('[data-defeat-key]')) {

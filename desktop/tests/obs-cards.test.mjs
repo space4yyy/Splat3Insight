@@ -55,9 +55,9 @@ test('OBS card selection always keeps one option and defaults to automatic', () 
 });
 
 test('cards with their own page are picked alone instead of joining the combined overlay address', () => {
-  // 只有 /overlay?参数 形式的数据卡片能组合；自动、击倒数量和时钟的地址各自独立。
+  // 只有 /overlay?参数 形式的数据卡片能组合；自动、击倒数和时钟的地址各自独立。
   const standalone = cards.filter((card) => !card.route.includes('?')).map((card) => card.id);
-  assert.deepEqual(standalone, ['overlay', 'defeat-counts', 'clock']);
+  assert.deepEqual(standalone, ['overlay', 'defeat-counts', 'current-defeat-counts', 'clock']);
   assert.match(appJs, /const obsStandalone = \(id\) => !obsCardOf\(id\)\?\.route\.includes\('\?'\);/);
   assert.match(appJs, /if \(standalone\) return obsCardOf\(standalone\)\.route;/);
   assert.match(appJs, /obsStandalone\(id\) \? \[id\] :/);
@@ -193,8 +193,12 @@ test('rescue icons alone get a thin outline for bright backgrounds', () => {
 test('clock and defeat count sources recommend four times their logical layout sizes', () => {
   const clock = cards.find((card) => card.id === 'clock');
   const defeats = cards.find((card) => card.id === 'defeat-counts');
+  const currentDefeats = cards.find((card) => card.id === 'current-defeat-counts');
   assert.deepEqual([clock.width, clock.height], [640, 240]);
   assert.deepEqual([defeats.width, defeats.height], [3072, 256]);
+  assert.deepEqual([currentDefeats.width, currentDefeats.height], [3072, 256]);
+  assert.equal(defeats.optionLabel, '击倒数');
+  assert.equal(currentDefeats.optionLabel, '本期击倒数');
   assert.match(clockHtml, /#root > \.clock-card \{ --obs-card-width: 160px; --obs-card-height: 60px; \}/);
   assert.match(defeatCountsHtml, /#root > \.defeat-count-card \{ --obs-card-width: 768px; --obs-card-height: 64px; \}/);
 });

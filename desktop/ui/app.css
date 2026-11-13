@@ -509,8 +509,10 @@ table.data .num { text-align: right; }
 .overlay-preview[data-card="clock"] .overlay-preview__scale { display: flex; align-items: center; justify-content: center; width: 320px; height: 80px; }
 /* 击倒数量是长条，缩到预览宽度后在同样高的画布里上下居中。 */
 .overlay-preview__scale > .defeat-count-card { --obs-card-width: 768px; --obs-card-height: 64px; }
-.overlay-preview[data-card="defeat-counts"] .overlay-preview__viewport { align-items: center; min-height: 80px; }
-.overlay-preview[data-card="defeat-counts"] .overlay-preview__scale { transform-origin: center; }
+.overlay-preview[data-card="defeat-counts"] .overlay-preview__viewport,
+.overlay-preview[data-card="current-defeat-counts"] .overlay-preview__viewport { align-items: center; min-height: 80px; }
+.overlay-preview[data-card="defeat-counts"] .overlay-preview__scale,
+.overlay-preview[data-card="current-defeat-counts"] .overlay-preview__scale { transform-origin: center; }
 
 /* 对战记录 */
 .log-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }

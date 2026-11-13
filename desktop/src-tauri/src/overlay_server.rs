@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use splat3_widget_core::dashboard::CoopDefeatFact;
+use splat3_widget_core::dashboard::{CoopDefeatFact, CoopDefeatFacts};
 use splat3_widget_core::overlay::{OverlayMatchCategory, OverlayState};
 
 pub const OVERLAY_HOST: &str = "127.0.0.1";
@@ -23,7 +23,7 @@ const DEFEAT_COUNTS_HTML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../ui/defeat-counts.html"
 ));
-/// 击倒数量卡片的鲑鱼图片，后面接 coopEnemyId。
+/// 击倒数卡片的鲑鱼图片，后面接 coopEnemyId。
 const COOP_ENEMY_IMAGE_ROUTE: &str = "/images/coop-enemy/";
 const OVERLAY_CARD_CSS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -118,7 +118,7 @@ const APP_ICON: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ico
 const MAX_CONCURRENT_CONNECTIONS: usize = 16;
 const MAX_REQUEST_HEADER_BYTES: usize = 8 * 1024;
 
-/// 击倒数量卡片显示哪些鲑鱼：`enemies:4`、`bosses:23` 这样的键（分组加 coopEnemyId），
+/// 击倒数卡片显示哪些鲑鱼：`enemies:4`、`bosses:23` 这样的键（分组加 coopEnemyId），
 /// None 表示全部显示。应用里点预览换了选择就改这里，OBS 页面下一次轮询时按新选择显示，地址不变。
 pub(crate) type DefeatSelection = Arc<RwLock<Option<Vec<String>>>>;
 
@@ -126,7 +126,7 @@ const DEFEAT_SELECTION_GROUPS: [&str; 2] = ["enemies:", "bosses:"];
 const MAX_DEFEAT_SELECTION_KEYS: usize = 64;
 const MAX_DEFEAT_SELECTION_KEY_BYTES: usize = 128;
 
-/// 只留下击倒数量卡片认得的键，去掉重复；一个都不剩时为 None，全部显示。
+/// 只留下击倒数卡片认得的键，去掉重复；一个都不剩时为 None，全部显示。
 pub(crate) fn normalize_defeat_selection(selection: Option<Vec<String>>) -> Option<Vec<String>> {
     let mut keys: Vec<String> = Vec::new();
     for key in selection? {
@@ -176,9 +176,14 @@ fn render_card_page(card: &ObsCardDefinition) -> HttpResponse {
         "defeat-counts" => DEFEAT_COUNTS_HTML,
         _ => return not_found(),
     };
+    let defeat_api = match card.id.as_str() {
+        "current-defeat-counts" => "/api/current-defeat-counts",
+        _ => "/api/defeat-counts",
+    };
     let body = template
         .replace("__OBS_CARD_WIDTH__", &card.width.to_string())
-        .replace("__OBS_CARD_HEIGHT__", &card.height.to_string());
+        .replace("__OBS_CARD_HEIGHT__", &card.height.to_string())
+        .replace("__DEFEAT_API_PATH__", defeat_api);
     HttpResponse {
         status: "200 OK",
         content_type: "text/html; charset=utf-8",
@@ -762,7 +767,11 @@ fn route_request(
         }
         "/api/defeat-counts" => {
             config.activity.record_request(crate::now_ms());
-            card_data_response(config, "击倒数量数据", load_defeat_counts(config))
+            card_data_response(config, "击倒数数据", load_defeat_counts(config))
+        }
+        "/api/current-defeat-counts" => {
+            config.activity.record_request(crate::now_ms());
+            card_data_response(config, "本期击倒数数据", load_current_defeat_counts(config))
         }
         "/healthz" => Ok(HttpResponse {
             status: "200 OK",
@@ -860,7 +869,7 @@ fn active_account(config: &OverlayServerConfig) -> Result<Option<String>, String
     Ok(Some(account_id))
 }
 
-/// 击倒数量卡片的数据：巨大鲑鱼（enemies）和头目鲑鱼（bosses），按 SplatNet 的顺序。
+/// 击倒数卡片的数据：巨大鲑鱼（enemies）和头目鲑鱼（bosses），按 SplatNet 的顺序。
 /// 图片换成本地服务的地址，OBS 不直接请求任天堂的链接。
 #[derive(Debug, Serialize)]
 struct DefeatCountCard {
@@ -887,6 +896,77 @@ fn load_defeat_counts(config: &OverlayServerConfig) -> Result<Option<DefeatCount
     else {
         return Ok(None);
     };
+    defeat_count_card(config, facts)
+}
+
+fn load_current_defeat_counts(
+    config: &OverlayServerConfig,
+) -> Result<Option<DefeatCountCard>, String> {
+    let Some(account_id) = active_account(config)? else {
+        return Ok(None);
+    };
+    let state = crate::history_store::load_overlay_state(&config.history_dir, &account_id)?;
+    let Some(salmon_run) = state.salmon_run else {
+        return Ok(None);
+    };
+    if salmon_run.defeat_counts.enemies.is_empty() && salmon_run.defeat_counts.bosses.is_empty() {
+        return Ok(None);
+    }
+    let facts = crate::dashboard_store::load_coop_defeats(&config.history_dir, &account_id)?
+        .map(|roster| merge_defeat_facts(roster, salmon_run.defeat_counts.clone()))
+        .unwrap_or(salmon_run.defeat_counts);
+    defeat_count_card(config, facts)
+}
+
+/// Keep the lifetime card's Salmonid list and order, filling unencountered species with zero.
+fn merge_defeat_facts(mut roster: CoopDefeatFacts, current: CoopDefeatFacts) -> CoopDefeatFacts {
+    fn merge_group(
+        roster: Vec<CoopDefeatFact>,
+        current: Vec<CoopDefeatFact>,
+    ) -> Vec<CoopDefeatFact> {
+        let mut merged = Vec::with_capacity(roster.len().max(current.len()));
+        for mut fact in roster {
+            let current_match =
+                current
+                    .iter()
+                    .find(|candidate| match (fact.enemy_id, candidate.enemy_id) {
+                        (Some(left), Some(right)) => left == right,
+                        _ => fact.name == candidate.name,
+                    });
+            fact.defeat_count = current_match.map_or(0, |candidate| candidate.defeat_count);
+            merged.push(fact);
+        }
+        for fact in current {
+            if !merged
+                .iter()
+                .any(|candidate| match (candidate.enemy_id, fact.enemy_id) {
+                    (Some(left), Some(right)) => left == right,
+                    _ => candidate.name == fact.name,
+                })
+            {
+                merged.push(fact);
+            }
+        }
+        merged
+    }
+
+    // The right side contains only this rotation's King, including a zero before defeat.
+    roster.bosses.retain(|fact| {
+        current
+            .bosses
+            .iter()
+            .any(|boss| boss.enemy_id == fact.enemy_id)
+    });
+    CoopDefeatFacts {
+        enemies: merge_group(roster.enemies, current.enemies),
+        bosses: merge_group(roster.bosses, current.bosses),
+    }
+}
+
+fn defeat_count_card(
+    config: &OverlayServerConfig,
+    facts: splat3_widget_core::dashboard::CoopDefeatFacts,
+) -> Result<Option<DefeatCountCard>, String> {
     let items = |list: Vec<CoopDefeatFact>| -> Vec<DefeatCountItem> {
         list.into_iter()
             .map(|fact| DefeatCountItem {
@@ -903,7 +983,7 @@ fn load_defeat_counts(config: &OverlayServerConfig) -> Result<Option<DefeatCount
     let show = config
         .defeat_selection
         .read()
-        .map_err(|_| "击倒数量卡片的显示设置被占用".to_owned())?
+        .map_err(|_| "击倒数卡片的显示设置被占用".to_owned())?
         .clone();
     Ok(Some(DefeatCountCard {
         enemies: items(facts.enemies),
@@ -912,19 +992,35 @@ fn load_defeat_counts(config: &OverlayServerConfig) -> Result<Option<DefeatCount
     }))
 }
 
-/// 击倒数量卡片里的鲑鱼图片：按活动账号「鲑鱼跑记录」里的原链接读本地图片缓存，没有缓存时下载后存下。
+/// 击倒数卡片里的鲑鱼图片：按活动账号「鲑鱼跑记录」里的原链接读本地图片缓存，没有缓存时下载后存下。
 /// 只给记录里有的鲑鱼，其他一律 404。
 fn coop_enemy_image(config: &OverlayServerConfig, enemy_id: i64) -> Option<HttpResponse> {
     let cache = config.image_cache.as_ref()?;
     let account_id = active_account(config).ok()??;
-    let facts =
-        crate::dashboard_store::load_coop_defeats(&config.history_dir, &account_id).ok()??;
-    let source = facts
-        .enemies
-        .into_iter()
-        .chain(facts.bosses)
-        .find(|fact| fact.enemy_id == Some(enemy_id))?
-        .image?;
+    let current = crate::history_store::load_overlay_state(&config.history_dir, &account_id)
+        .ok()
+        .and_then(|state| state.salmon_run)
+        .and_then(|salmon_run| {
+            salmon_run
+                .defeat_counts
+                .enemies
+                .into_iter()
+                .chain(salmon_run.defeat_counts.bosses)
+                .find(|fact| fact.enemy_id == Some(enemy_id))
+        })
+        .and_then(|fact| fact.image);
+    let all_time = crate::dashboard_store::load_coop_defeats(&config.history_dir, &account_id)
+        .ok()
+        .flatten()
+        .and_then(|facts| {
+            facts
+                .enemies
+                .into_iter()
+                .chain(facts.bosses)
+                .find(|fact| fact.enemy_id == Some(enemy_id))
+        })
+        .and_then(|fact| fact.image);
+    let source = current.or(all_time)?;
     let (content_type, body) =
         tauri::async_runtime::block_on(crate::image_cache::load(cache, &source))?;
     Some(HttpResponse {
@@ -962,7 +1058,9 @@ fn is_safe_account_id(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use splat3_widget_core::history::{ArchivedBattle, BattleRecord, HistoryCache};
+    use splat3_widget_core::history::{
+        ArchivedBattle, ArchivedCoop, BattleRecord, CoopRecord, HistoryCache, HistoryFetchedRecord,
+    };
     use std::collections::VecDeque;
     use std::io::{self, Cursor};
     use tempfile::tempdir;
@@ -1161,6 +1259,61 @@ mod tests {
     }
 
     #[test]
+    fn current_defeat_count_api_uses_the_latest_regular_rotation() {
+        let directory = tempdir().unwrap();
+        let config = active_account_config(directory.path(), None);
+        assert_eq!(
+            route_request("GET", "/api/current-defeat-counts", &config)
+                .unwrap()
+                .body,
+            b"null"
+        );
+        crate::dashboard_store::save_coop_record(&config.history_dir, "account", 1, &coop_record())
+            .unwrap();
+
+        let record: CoopRecord = serde_json::from_value(json!({
+            "id": "coop-current",
+            "played_time": "2026-11-13T01:00:00Z",
+            "rule": "REGULAR",
+            "stage": "Gone Fission Hydroplant",
+            "rotation_start_time": "2026-11-12T16:00:00Z",
+            "rotation_end_time": "2026-11-14T08:00:00Z"
+        }))
+        .unwrap();
+        let raw = json!({
+            "coopStage": { "id": "stage-current" },
+            "weapons": [{ "name": "Splattershot" }],
+            "enemyResults": [
+                { "enemy": { "id": "Q29vcEVuZW15LTQ=", "name": "Steelhead", "image": { "url": "https://example.test/steelhead.png" } }, "defeatCount": 8 },
+                { "enemy": { "id": "Q29vcEVuZW15LTE1", "name": "Goldie" }, "defeatCount": 9 }
+            ],
+            "bossResult": { "boss": { "id": "Q29vcEVuZW15LTIz", "name": "Cohozuna" }, "hasDefeatBoss": true }
+        });
+        let mut writer =
+            crate::history_store::HistoryRecordWriter::open(&config.history_dir).unwrap();
+        writer
+            .save(
+                "account",
+                1,
+                HistoryFetchedRecord::Coop(ArchivedCoop { record, raw }),
+            )
+            .unwrap();
+
+        let response = route_request("GET", "/api/current-defeat-counts", &config).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(
+            body,
+            json!({
+                "enemies": [{ "id": 4, "name": "Steelhead", "image": "/images/coop-enemy/4", "count": 8 }],
+                "bosses": [
+                    { "id": 23, "name": "Cohozuna", "image": "/images/coop-enemy/23", "count": 1 }
+                ],
+                "show": null
+            })
+        );
+    }
+
+    #[test]
     fn defeat_selection_keeps_known_keys_once_and_falls_back_to_all() {
         assert_eq!(normalize_defeat_selection(None), None);
         assert_eq!(normalize_defeat_selection(Some(Vec::new())), None);
@@ -1240,6 +1393,10 @@ mod tests {
             (
                 "/defeat-counts",
                 ["/api/defeat-counts", "/api/defeat-counts"],
+            ),
+            (
+                "/current-defeat-counts",
+                ["/api/current-defeat-counts", "/api/current-defeat-counts"],
             ),
         ] {
             let starts = Arc::new(AtomicUsize::new(0));
@@ -1468,6 +1625,13 @@ mod tests {
             );
             assert!(!page.contains("__OBS_CARD_WIDTH__"));
             assert!(!page.contains("__OBS_CARD_HEIGHT__"));
+            assert!(!page.contains("__DEFEAT_API_PATH__"));
+            if card.id == "current-defeat-counts" {
+                assert!(page.contains("fetch('/api/current-defeat-counts'"));
+            }
+            if card.id == "defeat-counts" {
+                assert!(page.contains("fetch('/api/defeat-counts'"));
+            }
         }
     }
 

@@ -4,6 +4,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
+use crate::dashboard::CoopDefeatFacts;
 use crate::history::{ArchivedBattle, BattleRecord, HistoryCache};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -29,6 +30,9 @@ pub struct SalmonRunCard {
     pub boss_encounter_count: Option<usize>,
     #[serde(default)]
     pub boss_undefeated_count: Option<usize>,
+    /// Salmonid defeats across the latest regular Salmon Run rotation.
+    #[serde(default)]
+    pub defeat_counts: CoopDefeatFacts,
     pub gold_scale: Option<i64>,
     pub silver_scale: Option<i64>,
     pub bronze_scale: Option<i64>,

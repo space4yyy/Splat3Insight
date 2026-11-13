@@ -4,13 +4,15 @@
 //! They are a disposable index: the archive keeps the raw JSON untouched, and
 //! the facts can be rebuilt whenever this extraction changes.
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::history::{BattleRecord, CoopRecord};
 
 /// Bump when the extraction below changes so stored facts are rebuilt.
-pub const DASHBOARD_FACTS_VERSION: i64 = 6;
+pub const DASHBOARD_FACTS_VERSION: i64 = 7;
 
 /// 对战里一把武器的标识、名称和图片（名称跟着账号语言，图片是带签名的原链接）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -314,22 +316,7 @@ pub fn coop_fact(record: &CoopRecord, raw: &Value) -> CoopFact {
         rescue_count: my_count(&["rescueCount", "rescuedByOthers"]).or(record.rescued_by_others),
         rescued_count: my_count(&["rescuedCount", "rescued"]).or(record.rescued),
         defeat_enemy_count: my_count(&["defeatEnemyCount"]),
-        enemy_defeats: raw
-            .get("enemyResults")
-            .and_then(Value::as_array)
-            .map(|rows| {
-                rows.iter()
-                    .filter_map(|row| {
-                        Some(CoopDefeatFact {
-                            enemy_id: integer(row, "/enemy/coopEnemyId"),
-                            name: text(row, "/enemy/name"),
-                            image: text(row, "/enemy/image/url"),
-                            defeat_count: integer(row, "/defeatCount")?,
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
+        enemy_defeats: coop_enemy_defeats(raw),
         scale_gold: scale_count("gold"),
         scale_silver: scale_count("silver"),
         scale_bronze: scale_count("bronze"),
@@ -350,6 +337,37 @@ pub fn coop_fact(record: &CoopRecord, raw: &Value) -> CoopFact {
         rotation_start_time: record.rotation_start_time.clone(),
         rotation_end_time: record.rotation_end_time.clone(),
     }
+}
+
+/// This shift's Salmonid defeat counts, in the order returned by SplatNet.
+pub fn coop_enemy_defeats(raw: &Value) -> Vec<CoopDefeatFact> {
+    raw.get("enemyResults")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| {
+                    Some(CoopDefeatFact {
+                        enemy_id: row.get("enemy").and_then(coop_enemy_id),
+                        name: text(row, "/enemy/name"),
+                        image: text(row, "/enemy/image/url"),
+                        defeat_count: integer(row, "/defeatCount")?,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Detail responses use a Relay id; cumulative records also provide coopEnemyId.
+pub fn coop_enemy_id(enemy: &Value) -> Option<i64> {
+    integer(enemy, "/coopEnemyId").or_else(|| {
+        let decoded = STANDARD.decode(enemy.get("id")?.as_str()?).ok()?;
+        std::str::from_utf8(&decoded)
+            .ok()?
+            .strip_prefix("CoopEnemy-")?
+            .parse()
+            .ok()
+    })
 }
 
 fn coop_waves(
@@ -666,6 +684,17 @@ mod tests {
         assert_eq!(fact.golden_assists, None);
         assert!(fact.supplied_weapons.is_empty());
         assert_eq!(fact.rotation_start_time, None);
+    }
+
+    #[test]
+    fn shift_enemy_ids_match_the_cumulative_record_ids() {
+        let facts = coop_enemy_defeats(&json!({ "enemyResults": [
+            { "enemy": { "id": "Q29vcEVuZW15LTQ=", "name": "Steelhead" }, "defeatCount": 8 },
+            { "enemy": { "coopEnemyId": 5, "name": "Flyfish" }, "defeatCount": 2 }
+        ] }));
+        assert_eq!(facts[0].enemy_id, Some(4));
+        assert_eq!(facts[1].enemy_id, Some(5));
+        assert_eq!(coop_enemy_id(&json!({ "id": "not-base64" })), None);
     }
 
     #[test]

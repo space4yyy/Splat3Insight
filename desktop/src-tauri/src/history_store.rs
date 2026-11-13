@@ -6,6 +6,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use splat3_widget_core::dashboard::{
+    coop_enemy_defeats, coop_enemy_id, CoopDefeatFact, CoopDefeatFacts,
+};
 #[cfg(test)]
 use splat3_widget_core::history::ArchivedCoop;
 use splat3_widget_core::history::{
@@ -524,9 +527,11 @@ fn load_salmon_run_card(
         return Ok(None);
     };
     let latest_raw = decode_raw_json(&latest_raw_bytes, &latest_encoding).unwrap_or(Value::Null);
-    let boss_enemy_id = latest_raw
-        .pointer("/boss/coopEnemyId")
-        .and_then(Value::as_i64)
+    let scheduled_boss = latest_raw
+        .get("boss")
+        .or_else(|| latest_raw.pointer("/bossResult/boss"));
+    let boss_enemy_id = scheduled_boss
+        .and_then(coop_enemy_id)
         .filter(|id| matches!(id, 23 | 24 | 25 | 30));
     let boss_progress = boss_enemy_id.and_then(|_| {
         if latest_raw
@@ -561,6 +566,7 @@ fn load_salmon_run_card(
     let mut failure_count = 0;
     let mut boss_encounter_count = 0;
     let mut boss_undefeated_count = 0;
+    let mut defeat_counts = CoopDefeatFacts::default();
 
     let mut accumulate_record = |record: &Value, raw: &Value| {
         // 掉线（resultWave 为 -1）没有结果，和无效对战一样不算进场次。
@@ -578,6 +584,86 @@ fn load_salmon_run_card(
             add_scale(scale, "gold", &mut gold_scale, &mut has_gold_scale);
             add_scale(scale, "silver", &mut silver_scale, &mut has_silver_scale);
             add_scale(scale, "bronze", &mut bronze_scale, &mut has_bronze_scale);
+        }
+        // Match the cumulative card's eleven Boss Salmonids. Special-wave enemies
+        // such as Goldie, Griller and Mudmouth are outside that card's catalog.
+        let mut facts: Vec<_> = coop_enemy_defeats(raw)
+            .into_iter()
+            .filter(|fact| matches!(fact.enemy_id, Some(4..=14)))
+            .collect();
+        let results = raw
+            .get("bossResults")
+            .and_then(Value::as_array)
+            .filter(|rows| !rows.is_empty());
+        let results: Vec<&Value> = match results {
+            Some(rows) => rows.iter().collect(),
+            None => raw
+                .get("bossResult")
+                .filter(|value| value.is_object())
+                .into_iter()
+                .collect(),
+        };
+        for result in results {
+            if let Some(defeated) = result.get("hasDefeatBoss").and_then(Value::as_bool) {
+                if let Some(boss) = result
+                    .get("boss")
+                    .filter(|value| value.is_object())
+                    .or_else(|| raw.get("boss"))
+                {
+                    let id = coop_enemy_id(boss);
+                    // Triumvirate's group result cannot substitute for individual results.
+                    if matches!(id, Some(23 | 24 | 25)) {
+                        facts.push(CoopDefeatFact {
+                            enemy_id: id,
+                            name: boss.get("name").and_then(Value::as_str).map(str::to_owned),
+                            image: boss
+                                .pointer("/image/url")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned),
+                            defeat_count: i64::from(defeated),
+                        });
+                    }
+                }
+            }
+        }
+        if raw.get("boss").and_then(coop_enemy_id) == Some(30) {
+            if let Some(defeated) = raw
+                .pointer("/bossResult/hasDefeatBoss")
+                .and_then(Value::as_bool)
+            {
+                facts.push(CoopDefeatFact {
+                    enemy_id: Some(30),
+                    name: Some("Triumvirate".to_owned()),
+                    image: raw
+                        .pointer("/boss/image/url")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    defeat_count: i64::from(defeated),
+                });
+            }
+        }
+        for fact in facts {
+            let kings = matches!(fact.enemy_id, Some(23 | 24 | 25 | 30));
+            let group = if kings {
+                &mut defeat_counts.bosses
+            } else {
+                &mut defeat_counts.enemies
+            };
+            let existing =
+                group
+                    .iter_mut()
+                    .find(|existing| match (existing.enemy_id, fact.enemy_id) {
+                        (Some(left), Some(right)) => left == right,
+                        _ => existing.name == fact.name,
+                    });
+            if let Some(existing) = existing {
+                existing.defeat_count = existing.defeat_count.saturating_add(fact.defeat_count);
+                if existing.image.is_none() {
+                    existing.image = fact.image;
+                }
+            } else {
+                group.push(fact);
+            }
         }
         if let Some(boss_enemy_id) = boss_enemy_id {
             let matching_boss =
@@ -632,6 +718,36 @@ fn load_salmon_run_card(
         }
     }
 
+    let current_kings: Vec<i64> = match boss_enemy_id {
+        Some(30) => vec![23, 24, 25, 30],
+        Some(id) => vec![id],
+        None => Vec::new(),
+    };
+    defeat_counts
+        .bosses
+        .retain(|fact| fact.enemy_id.is_some_and(|id| current_kings.contains(&id)));
+    for id in current_kings {
+        if !defeat_counts
+            .bosses
+            .iter()
+            .any(|fact| fact.enemy_id == Some(id))
+        {
+            let name = match id {
+                23 => "Cohozuna",
+                24 => "Horrorboros",
+                25 => "Megalodontia",
+                30 => "Triumvirate",
+                _ => "",
+            };
+            defeat_counts.bosses.push(CoopDefeatFact {
+                enemy_id: Some(id),
+                name: Some(name.to_owned()),
+                image: None,
+                defeat_count: 0,
+            });
+        }
+    }
+    defeat_counts.bosses.sort_by_key(|fact| fact.enemy_id);
     let my_result = latest_raw.get("myResult").unwrap_or(&Value::Null);
     let species = latest_raw
         .pointer("/myResult/player/species")
@@ -665,6 +781,7 @@ fn load_salmon_run_card(
         boss_progress,
         boss_encounter_count: boss_enemy_id.map(|_| boss_encounter_count),
         boss_undefeated_count: boss_enemy_id.map(|_| boss_undefeated_count),
+        defeat_counts,
         gold_scale: scale_count("gold", gold_scale, has_gold_scale),
         silver_scale: scale_count("silver", silver_scale, has_silver_scale),
         bronze_scale: scale_count("bronze", bronze_scale, has_bronze_scale),
@@ -3086,6 +3203,12 @@ mod tests {
         latest.record.danger_rate = Some(2.49);
         latest.raw = json!({
             "scale": { "gold": 1, "silver": 2, "bronze": 3 },
+            "enemyResults": [
+                { "enemy": { "id": "Q29vcEVuZW15LTQ=", "name": "Steelhead" }, "defeatCount": 2 },
+                { "enemy": { "id": "Q29vcEVuZW15LTE1", "name": "Goldie" }, "defeatCount": 9 },
+                { "enemy": { "id": "Q29vcEVuZW15LTIw", "name": "Mudmouth" }, "defeatCount": 4 }
+            ],
+            "bossResult": { "boss": { "id": "Q29vcEVuZW15LTIz", "name": "Cohozuna" }, "hasDefeatBoss": true },
             "myResult": {
                 "defeatEnemyCount": 29,
                 "goldenDeliverCount": 27,
@@ -3098,12 +3221,19 @@ mod tests {
         let mut earlier_clear = sample_coop("coop-clear", "2026-09-22T01:00:00Z".to_owned());
         earlier_clear.record.stage = Some("Gone Fission Hydroplant".to_owned());
         earlier_clear.record.clear_waves = Some(3);
-        earlier_clear.raw = json!({ "scale": { "gold": 2, "silver": 0, "bronze": 5 } });
+        earlier_clear.raw = json!({
+            "scale": { "gold": 2, "silver": 0, "bronze": 5 },
+            "bossResult": { "boss": { "id": "Q29vcEVuZW15LTIz", "name": "Cohozuna" }, "hasDefeatBoss": false },
+            "enemyResults": [{ "enemy": { "coopEnemyId": 4, "name": "Steelhead" }, "defeatCount": 3 }]
+        });
 
         let mut earlier_failure = sample_coop("coop-failure", "2026-09-22T00:00:00Z".to_owned());
         earlier_failure.record.stage = Some("Gone Fission Hydroplant".to_owned());
         earlier_failure.record.clear_waves = Some(2);
-        earlier_failure.raw = json!({ "scale": { "gold": 0, "silver": 4, "bronze": 7 } });
+        earlier_failure.raw = json!({
+            "scale": { "gold": 0, "silver": 4, "bronze": 7 },
+            "enemyResults": [{ "enemy": { "coopEnemyId": 4, "name": "Steelhead" }, "defeatCount": 5 }]
+        });
 
         // 掉线的场次 resultWave 为 -1，解析后 clear_waves 是 -2，不算通关也不算失败。
         let mut disconnected = sample_coop("coop-disconnected", "2026-09-21T23:00:00Z".to_owned());
@@ -3144,8 +3274,51 @@ mod tests {
         assert_eq!(salmon.rescue_count, Some(1));
         assert_eq!(salmon.clear_count, 2);
         assert_eq!(salmon.failure_count, 1);
+        assert_eq!(salmon.defeat_counts.enemies.len(), 1);
+        assert_eq!(salmon.defeat_counts.enemies[0].enemy_id, Some(4));
+        assert_eq!(salmon.defeat_counts.enemies[0].defeat_count, 10);
+        assert_eq!(salmon.defeat_counts.bosses[0].enemy_id, Some(23));
+        assert_eq!(salmon.defeat_counts.bosses[0].defeat_count, 1);
         assert_eq!(salmon.grade_point, Some(440));
         assert_eq!(salmon.danger_rate, Some(2.49));
+    }
+
+    #[test]
+    fn current_triumvirate_counts_each_king_including_partial_defeats() {
+        let directory = tempdir().unwrap();
+        let mut cache = sample_cache();
+        for (id, time, defeated) in [
+            ("partial", "2026-09-22T02:00:00Z", [false, true, true]),
+            ("complete", "2026-09-22T01:00:00Z", [true, true, true]),
+        ] {
+            let mut coop = sample_coop(id, time.to_owned());
+            coop.record.stage = Some("Spawning Grounds".to_owned());
+            coop.raw = json!({
+                "boss": { "coopEnemyId": 30, "name": "Triumvirate" },
+                "bossResult": { "boss": { "coopEnemyId": 30 }, "hasDefeatBoss": defeated.iter().all(|value| *value) },
+                "bossResults": [
+                    { "boss": { "id": "Q29vcEVuZW15LTIz", "name": "Cohozuna" }, "hasDefeatBoss": defeated[0] },
+                    { "boss": { "id": "Q29vcEVuZW15LTI0", "name": "Horrorboros" }, "hasDefeatBoss": defeated[1] },
+                    { "boss": { "id": "Q29vcEVuZW15LTI1", "name": "Megalodontia" }, "hasDefeatBoss": defeated[2] }
+                ]
+            });
+            cache.coop.push(coop);
+        }
+        save_cache(directory.path(), "account", &cache).unwrap();
+        let salmon = load_overlay_state(directory.path(), "account")
+            .unwrap()
+            .salmon_run
+            .unwrap();
+        let counts: Vec<_> = salmon
+            .defeat_counts
+            .bosses
+            .iter()
+            .map(|fact| (fact.enemy_id, fact.defeat_count))
+            .collect();
+        assert_eq!(
+            counts,
+            vec![(Some(23), 1), (Some(24), 2), (Some(25), 2), (Some(30), 1)]
+        );
     }
 
     #[test]
@@ -3166,6 +3339,7 @@ mod tests {
             coop.raw = json!({
                 "coopStage": { "id": "Q29vcFN0YWdlLTE=" },
                 "weapons": weapons,
+                "enemyResults": [{ "enemy": { "coopEnemyId": 4, "name": "Steelhead" }, "defeatCount": gold }],
                 "scale": { "gold": gold, "silver": 0, "bronze": 0 }
             });
             coop
@@ -3226,6 +3400,8 @@ mod tests {
         assert_eq!(salmon.gold_scale, Some(7));
         assert_eq!(salmon.clear_count, 3);
         assert_eq!(salmon.failure_count, 0);
+        assert_eq!(salmon.defeat_counts.enemies.len(), 1);
+        assert_eq!(salmon.defeat_counts.enemies[0].defeat_count, 7);
     }
 
     #[test]

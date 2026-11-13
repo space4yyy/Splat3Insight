@@ -47,9 +47,20 @@
     "id": "defeat-counts",
     "route": "/defeat-counts",
     "page": "defeat-counts",
-    "name": "击倒数量卡片",
-    "optionLabel": "击倒数量",
-    "description": "单行展示鲑鱼跑记录中巨大鲑鱼与头目鲑鱼的累计击倒数量。",
+    "name": "击倒数卡片",
+    "optionLabel": "击倒数",
+    "description": "单行展示鲑鱼跑记录中巨大鲑鱼与头目鲑鱼的累计击倒数。",
+    "sizeLabel": "OBS 尺寸推荐",
+    "width": 3072,
+    "height": 256
+  },
+  {
+    "id": "current-defeat-counts",
+    "route": "/current-defeat-counts",
+    "page": "defeat-counts",
+    "name": "本期击倒数卡片",
+    "optionLabel": "本期击倒数",
+    "description": "单行展示当前鲑鱼跑期间巨大鲑鱼与头目鲑鱼的击倒数。",
     "sizeLabel": "OBS 尺寸推荐",
     "width": 3072,
     "height": 256
