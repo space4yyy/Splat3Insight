@@ -44,6 +44,17 @@
     "height": 320
   },
   {
+    "id": "clock",
+    "route": "/clock",
+    "page": "clock",
+    "name": "时钟卡片",
+    "optionLabel": "时钟",
+    "description": "显示本机时区的当前时间。",
+    "sizeLabel": "OBS 尺寸推荐",
+    "width": 640,
+    "height": 240
+  },
+  {
     "id": "defeat-counts",
     "route": "/defeat-counts",
     "page": "defeat-counts",
@@ -64,16 +75,5 @@
     "sizeLabel": "OBS 尺寸推荐",
     "width": 3072,
     "height": 256
-  },
-  {
-    "id": "clock",
-    "route": "/clock",
-    "page": "clock",
-    "name": "时钟卡片",
-    "optionLabel": "时钟",
-    "description": "显示本机时区的当前时间。",
-    "sizeLabel": "OBS 尺寸推荐",
-    "width": 640,
-    "height": 240
   }
 ]

@@ -57,7 +57,7 @@ test('OBS card selection always keeps one option and defaults to automatic', () 
 test('cards with their own page are picked alone instead of joining the combined overlay address', () => {
   // 只有 /overlay?参数 形式的数据卡片能组合；自动、击倒数和时钟的地址各自独立。
   const standalone = cards.filter((card) => !card.route.includes('?')).map((card) => card.id);
-  assert.deepEqual(standalone, ['overlay', 'defeat-counts', 'current-defeat-counts', 'clock']);
+  assert.deepEqual(standalone, ['overlay', 'clock', 'defeat-counts', 'current-defeat-counts']);
   assert.match(appJs, /const obsStandalone = \(id\) => !obsCardOf\(id\)\?\.route\.includes\('\?'\);/);
   assert.match(appJs, /if \(standalone\) return obsCardOf\(standalone\)\.route;/);
   assert.match(appJs, /obsStandalone\(id\) \? \[id\] :/);
