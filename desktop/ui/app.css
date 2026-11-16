@@ -628,10 +628,38 @@ table.data tr.is-me td { background: var(--panel-raised); color: var(--ink); }
 .paste-panel p { margin: 0; color: var(--ink-2); font-size: 13px; }
 .paste-panel textarea { width: 100%; min-height: 92px; resize: vertical; padding: 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel); color: var(--ink); font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .paste-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.app-message { min-width: 0; margin: 0; padding: 12px 16px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); color: var(--ink-2); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
-.app-message.is-error { border-color: var(--danger-text); background: var(--danger-wash); color: var(--danger-text); }
+.app-message { min-width: 0; margin: 0; padding: 12px 16px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); color: var(--ink-2); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; scroll-margin-top: 96px; }
+.app-message.is-error { position: relative; padding-right: 40px; border-color: var(--danger-text); background: var(--danger-wash); color: var(--danger-text); }
 .app-message .ghost { margin-left: 8px; }
-.main:has(#view-settings:not([hidden])) > .app-message, .settings-stack { max-width: 880px; }
+.app-message .message-close { position: absolute; top: 8px; right: 8px; }
+.message-close { flex: none; display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: inherit; font-size: 17px; line-height: 1; opacity: .7; cursor: pointer; transition: opacity .14s ease, background-color .14s ease; }
+.message-close:hover { opacity: 1; background: var(--hover-wash); }
+.message-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; opacity: 1; }
+/* 账号提醒和登录失败提示：标题、原因和下一步、可展开的原始错误，右侧是处理按钮。 */
+.account-alert, .login-status { --alert-tone: var(--danger-text); --alert-wash: var(--danger-wash); display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 14px; padding: 14px 12px 14px 16px; border: 1px solid var(--alert-tone); border-left-width: 4px; border-radius: 12px; background: linear-gradient(var(--alert-wash), var(--alert-wash)) var(--panel); color: var(--ink); scroll-margin-top: 96px; }
+.account-alert.is-warning { --alert-tone: #d08a00; --alert-wash: rgba(208, 138, 0, .1); }
+.account-alert[hidden], .login-status[hidden] { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .account-alert:not([hidden]), .login-status:not([hidden]) { animation: card-enter .3s cubic-bezier(.22, 1, .36, 1); }
+}
+.alert-icon { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; background: var(--alert-tone); color: #fff; font-size: 14px; font-weight: 700; line-height: 1; }
+.alert-text { display: grid; flex: 1 1 280px; gap: 4px; min-width: 0; }
+.alert-title { color: var(--alert-tone); font-size: 15px; }
+.alert-body { color: var(--ink-2); font-size: 13px; line-height: 1.6; }
+.alert-detail summary { width: fit-content; color: var(--ink-3); font-size: 12px; cursor: pointer; }
+.alert-detail code { display: block; margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: var(--panel-raised); color: var(--ink-2); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.alert-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.account-alert .message-close { color: var(--ink-3); }
+.paste-panel textarea[aria-invalid="true"] { border-color: var(--danger-text); box-shadow: 0 0 0 3px var(--danger-wash); }
+.paste-panel:has(textarea[aria-invalid="true"]) #paste-hint { color: var(--danger-text); }
+.account-row.has-problem { border-color: color-mix(in srgb, var(--danger-text) 55%, var(--line-strong)); }
+.account-text small.account-problem { color: var(--danger-text); }
+/* 当前账号需要重新登录或授权失败：账号按钮和「设置」上的红点。 */
+.account-current.needs-attention, .nav button.needs-attention { position: relative; }
+.account-current.needs-attention::after, .nav button.needs-attention::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--danger-text); box-shadow: 0 0 0 2px var(--panel); }
+.account-current.needs-attention::after { position: absolute; top: -3px; right: -3px; }
+#sidebar-sync.is-error { margin: -3px -6px; padding: 3px 6px; border-radius: 7px; background: var(--danger-wash); }
+.main:has(#view-settings:not([hidden])) > .app-message, .main:has(#view-settings:not([hidden])) > .account-alert, .settings-stack { max-width: 880px; }
 .settings-stack { display: grid; gap: 16px; }
 .settings-panel { gap: 4px; }
 .settings-list { display: grid; }
