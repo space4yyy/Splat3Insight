@@ -33,6 +33,7 @@ use tauri_plugin_opener::OpenerExt;
 use tokio::sync::watch;
 
 mod app_update;
+mod auth_notifications;
 pub(crate) mod dashboard_store;
 pub(crate) mod history_store;
 pub(crate) mod image_cache;
@@ -834,6 +835,7 @@ fn active_account_sync_state<S: SecretStore>(
 }
 
 async fn sync_account(
+    app: AppHandle,
     account_id: String,
     registry: Arc<Mutex<Registry>>,
     history_dir: PathBuf,
@@ -926,6 +928,7 @@ async fn sync_account(
                             log_console_error("token-refresh", &error);
                         }
                     }
+                    notify_token_refresh_failure(&app, &refresh_error);
                     Err(format_token_refresh_error(&refresh_error))
                 }
             }
@@ -972,6 +975,21 @@ enum TokenRefreshFailure {
     Failed(String),
 }
 
+impl TokenRefreshFailure {
+    fn notification_kind(&self) -> auth_notifications::AuthFailure {
+        match self {
+            Self::NintendoSessionExpired(_) => {
+                auth_notifications::AuthFailure::NintendoSessionExpired
+            }
+            Self::Failed(_) => auth_notifications::AuthFailure::SplatNetAuthorization,
+        }
+    }
+}
+
+fn notify_token_refresh_failure(app: &AppHandle, error: &TokenRefreshFailure) {
+    auth_notifications::notify(app, error.notification_kind());
+}
+
 impl From<String> for TokenRefreshFailure {
     fn from(error: String) -> Self {
         Self::Failed(error)
@@ -996,6 +1014,7 @@ fn format_token_refresh_error(error: &TokenRefreshFailure) -> String {
 }
 
 fn start_background_sync(
+    app: AppHandle,
     registry: Arc<Mutex<Registry>>,
     history_dir: PathBuf,
     auth_log_path: PathBuf,
@@ -1014,6 +1033,7 @@ fn start_background_sync(
             match active_account_sync_state(&registry) {
                 Ok(Some((account_id, true))) => {
                     let _ = sync_account(
+                        app.clone(),
                         account_id,
                         Arc::clone(&registry),
                         history_dir.clone(),
@@ -1787,6 +1807,19 @@ fn save_nintendo_login<S: SecretStore>(
 #[tauri::command]
 async fn complete_nintendo_login(
     callback_url: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    complete_nintendo_login_inner(callback_url, state)
+        .await
+        .map_err(|error| {
+            auth_notifications::notify(&app, auth_notifications::AuthFailure::NintendoLogin);
+            error
+        })
+}
+
+async fn complete_nintendo_login_inner(
+    callback_url: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let auth_log_path = state.auth_log_path.clone();
@@ -1998,6 +2031,7 @@ async fn refresh_splatnet_tokens_for_account(
 #[tauri::command]
 async fn refresh_splatnet_tokens(
     account_id: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let proxy_address = current_proxy_address(&state.network_proxy)?;
@@ -2009,7 +2043,10 @@ async fn refresh_splatnet_tokens(
         proxy_address.as_deref(),
     )
     .await
-    .map_err(|error| format_token_refresh_error(&error))?;
+    .map_err(|error| {
+        notify_token_refresh_failure(&app, &error);
+        format_token_refresh_error(&error)
+    })?;
     state
         .sync_trigger
         .request(sync_schedule::SyncReason::Permission);
@@ -2026,9 +2063,11 @@ fn request_sync(reason: sync_schedule::SyncReason, state: State<'_, AppState>) {
 #[tauri::command]
 async fn sync_history(
     account_id: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<HistorySyncSummary, String> {
     sync_account(
+        app,
         account_id,
         Arc::clone(&state.registry),
         state.history_dir.clone(),
@@ -2268,6 +2307,7 @@ pub fn run() {
             },
         )
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
@@ -2423,6 +2463,7 @@ pub fn run() {
                 main_window.show()?;
             }
             start_background_sync(
+                app.handle().clone(),
                 registry,
                 history_dir,
                 config_dir.join("auth.log"),
@@ -3129,6 +3170,21 @@ mod tests {
         ));
         assert!(message.contains("稍后重试"));
         assert!(!message.contains("请重新登录"));
+    }
+
+    #[test]
+    fn token_refresh_notifications_distinguish_expired_login_from_other_failures() {
+        use super::auth_notifications::AuthFailure;
+
+        assert_eq!(
+            TokenRefreshFailure::NintendoSessionExpired("private details".to_owned())
+                .notification_kind(),
+            AuthFailure::NintendoSessionExpired
+        );
+        assert_eq!(
+            TokenRefreshFailure::Failed("private details".to_owned()).notification_kind(),
+            AuthFailure::SplatNetAuthorization
+        );
     }
 
     #[test]

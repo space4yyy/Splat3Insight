@@ -28,6 +28,7 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
 # 2.8 起要求 Tauri 2.12；先用支持当前 Tauri 2.11 的 2.7 系列。
 tauri-plugin-dialog = "~2.7"
+tauri-plugin-notification = "~2.3"
 tauri-plugin-opener = "2"
 # 2.13 起要求 Tauri 2.12；先用支持当前 Tauri 2.11 的 2.12 系列。
 tauri-plugin-updater = "~2.12"
