@@ -174,7 +174,7 @@
       if (column.sort) {
         const active = sort.key === column.sort;
         th.setAttribute('aria-sort', active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none');
-        const button = el('button', { type: 'button', class: 'sort-button', 'aria-pressed': String(active), text: `${column.label}${active ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}` });
+        const button = el('button', { type: 'button', class: 'sort-button', 'aria-pressed': String(active), text: column.label });
         button.addEventListener('click', () => onSort(active ? { key: column.sort, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key: column.sort, dir: 'desc' }));
         th.append(button);
       } else {

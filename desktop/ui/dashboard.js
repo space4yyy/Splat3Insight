@@ -3,7 +3,27 @@
 
   const NS = 'http://www.w3.org/2000/svg';
   const DAY = 86400000;
-  const token = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const isLightTheme = () => {
+    const theme = document.documentElement.getAttribute('data-theme');
+    if (theme === 'light') return true;
+    if (theme === 'dark') return false;
+    return window.matchMedia?.('(prefers-color-scheme: light)').matches ?? false;
+  };
+  function resolveLightDark(value) {
+    if (!value.startsWith('light-dark(') || !value.endsWith(')')) return value;
+    const inner = value.slice('light-dark('.length, -1);
+    let depth = 0;
+    for (let i = 0; i < inner.length; i += 1) {
+      const ch = inner[i];
+      if (ch === '(') depth += 1;
+      else if (ch === ')') depth -= 1;
+      else if (ch === ',' && depth === 0) {
+        return (isLightTheme() ? inner.slice(0, i) : inner.slice(i + 1)).trim();
+      }
+    }
+    return value;
+  }
+  const token = (name) => resolveLightDark(getComputedStyle(document.documentElement).getPropertyValue(name).trim());
   const readColors = () => ({
     ink: token('--ink'), ink2: token('--ink-2'), ink3: token('--ink-3'),
     line: token('--line'), lineStrong: token('--line-strong'), panel: token('--panel'),

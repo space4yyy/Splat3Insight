@@ -197,7 +197,7 @@
     }
     const active = state.sort.key === column.sort;
     th.setAttribute('aria-sort', active ? (state.sort.dir === 'asc' ? 'ascending' : 'descending') : 'none');
-    const button = el('button', { type: 'button', class: 'sort-button', 'aria-pressed': String(active), text: active ? `${column.label} ${state.sort.dir === 'asc' ? '↑' : '↓'}` : column.label });
+    const button = el('button', { type: 'button', class: 'sort-button', 'aria-pressed': String(active), text: column.label });
     button.addEventListener('click', () => {
       state.sort = active ? { key: column.sort, dir: state.sort.dir === 'asc' ? 'desc' : 'asc' } : { key: column.sort, dir: 'desc' };
       state.page = 0;
