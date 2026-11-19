@@ -17,8 +17,22 @@
   </head>
   <body>
     <div class="app">
-      <aside class="sidebar" aria-label="主导航">
-        <div class="brand"><img class="brand-mark" src="./images/brand-splat.svg" alt="" /><span class="brand-name">Splat3 Insight</span><small>斯普拉遁 3 数据面板</small></div>
+      <div class="mobile-bar" id="mobile-bar">
+        <button type="button" class="nav-toggle" id="nav-drawer-open" aria-label="打开导航菜单" aria-expanded="false" aria-controls="sidebar">
+          <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2.5 4.5h13M2.5 9h13M2.5 13.5h13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+        <div class="mobile-brand"><img class="brand-mark" src="./images/brand-splat.svg" alt="" /><span class="brand-name">Splat3 Insight</span></div>
+        <div class="mobile-actions">
+          <button type="button" class="mobile-sync" id="mobile-sync" hidden></button>
+          <button type="button" class="mobile-account" id="mobile-account" aria-label="打开账号与导航"></button>
+        </div>
+      </div>
+      <div class="nav-backdrop" id="nav-backdrop" hidden></div>
+      <aside class="sidebar" id="sidebar" aria-label="主导航">
+        <div class="sidebar-top">
+          <div class="brand"><img class="brand-mark" src="./images/brand-splat.svg" alt="" /><span class="brand-name">Splat3 Insight</span><small>斯普拉遁 3 数据面板</small></div>
+          <button type="button" class="ghost sidebar-close" id="nav-drawer-close" aria-label="关闭导航菜单">关闭</button>
+        </div>
         <div class="account-switcher">
           <button type="button" class="account-current" id="account-button" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu"></button>
           <div class="account-menu" id="account-menu" role="menu" aria-label="切换账号" hidden></div>
@@ -43,6 +57,7 @@
             <button type="button" data-theme-choice="dark" aria-pressed="false">深色</button>
           </div>
         </div>
+        <button type="button" class="theme-cycle" id="theme-cycle" aria-label="切换外观"></button>
         <div class="sidebar-foot">
           <div class="sidebar-sync-row">
             <div id="sidebar-sync"></div>

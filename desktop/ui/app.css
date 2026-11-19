@@ -113,7 +113,7 @@ body {
   letter-spacing: .02em;
 }
 * { box-sizing: border-box; }
-[hidden]:not(.drawer, .drawer-backdrop, .account-menu, .range-menu, .tip, .app-message, .paste-panel) { display: none !important; }
+[hidden]:not(.drawer, .drawer-backdrop, .nav-backdrop, .account-menu, .range-menu, .tip, .app-message, .paste-panel) { display: none !important; }
 button { font: inherit; letter-spacing: inherit; }
 h1, h2, h3, strong, b, th { font-weight: 400; }
 .font-number, .brand, .kpi-value, .kpi-meta, .rule-value, .delta-up, .delta-down, .delta-flat, table.data td.num, .tip-title, .tip-row strong, .mini-stat strong, .form-summary strong { font-family: var(--font-number); }
@@ -125,7 +125,12 @@ button:focus-visible, [tabindex]:focus-visible, textarea:focus-visible { outline
 
 .app { display: grid; grid-template-columns: 212px minmax(0, 1fr); gap: 20px; max-width: 1440px; margin: 0 auto; align-items: start; }
 .sidebar { position: sticky; top: 16px; max-height: calc(100vh - 48px); max-height: calc(100dvh - 48px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; display: flex; flex-direction: column; gap: 14px; padding: 18px 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: var(--card-shadow); }
-/* 品牌：左边是官方黄、蓝两团墨渍（images/brand-splat.svg），右边品牌名用正文色，深浅主题下都清楚。 */
+.mobile-bar, .theme-cycle, .sidebar-close, .nav-backdrop { display: none; }
+.sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.obs-short { display: none; }
+.obs-pill-button { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel-raised); color: var(--ink-2); font: inherit; font-size: 12px; letter-spacing: inherit; white-space: nowrap; cursor: pointer; transition: border-color .14s ease, color .14s ease; }
+.obs-pill-button:hover { border-color: var(--accent-2-text); color: var(--ink); }
+.obs-pill-button .status-dot { margin-right: 0; }
 .brand { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px; align-items: center; padding: 0 2px; font-size: 20px; line-height: 1.15; }
 .brand-mark { grid-row: 1 / 3; width: 42px; height: 42px; }
 .brand-name { white-space: nowrap; }
@@ -777,27 +782,81 @@ table.data.sticky-first th:first-child { z-index: 2; }
   .weapon-detail { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 900px) {
-  .app { grid-template-columns: minmax(0, 1fr); }
-  .sidebar { position: static; max-height: none; overflow: visible; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 10px 12px; }
-  .brand { flex: 1 1 auto; column-gap: 8px; margin-right: 8px; font-size: 19px; }
-  .brand-mark { grid-row: auto; width: 32px; height: 32px; }
+  .app { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  /* 641–900px（方案 A）：两层紧凑顶栏，状态和外观切换融入第一行，导航独立一行。 */
+  .sidebar { position: static; max-height: none; overflow: visible; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 12px 8px; }
+  .sidebar-top { order: 1; margin-right: auto; }
+  .brand { column-gap: 8px; padding: 0; font-size: 18px; }
+  .brand-mark { grid-row: auto; width: 30px; height: 30px; }
   .brand small { display: none; }
-  /* 顶上一行放品牌、外观和账号，导航单独占一行，免得被外观切换挤得只剩两三个。 */
-  .nav { order: 5; flex: 1 1 100%; flex-direction: row; flex-wrap: nowrap; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-  .nav::-webkit-scrollbar { display: none; }
-  .nav button { flex: none; width: auto; padding: 6px 10px; white-space: nowrap; }
-  .nav-label { display: none; }
-  .sidebar-foot { order: 6; flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin-top: 0; padding: 8px 4px 2px; border-top: 1px solid var(--line); }
-  .sidebar-sync-row { gap: 10px; }
-  .sidebar-theme { order: 3; padding: 0; border: 0; }
-  .sidebar-theme .segmented { margin: 0; }
-  .sidebar-theme .segmented button { padding-inline: 10px; }
+  .sidebar-foot { order: 2; display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; border: 0; }
+  .sidebar-sync-row { gap: 6px; }
+  .obs-full { display: none; }
+  .obs-short { display: inline-flex; }
+  .sidebar-theme { display: none; }
+  .theme-cycle { order: 3; display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel-raised); color: var(--ink-2); font-size: 12px; white-space: nowrap; cursor: pointer; transition: border-color .14s ease, color .14s ease, scale .12s ease-out; }
+  .theme-cycle:hover { border-color: var(--accent-2-text); color: var(--ink); }
+  @media (prefers-reduced-motion: no-preference) {
+    .theme-cycle:active { scale: .97; }
+  }
   .account-switcher { order: 4; }
   .account-current { grid-template-columns: auto auto; gap: 6px; width: auto; padding: 3px 10px 3px 3px; border-radius: 999px; }
-  .account-current.has-nameplate { width: 184px; }
+  .account-current.has-nameplate { width: 152px; padding: 2px 6px 2px 2px; gap: 4px; border-radius: 8px; background: var(--panel-raised); }
+  .account-current.has-nameplate .nameplate { border-radius: 6px; font-size: 13px; }
+  .account-current.has-nameplate .badge-icon { width: 14px; height: 14px; }
   .account-current .account-text { display: none; }
-  .account-current .avatar { width: 30px; height: 30px; font-size: 13px; }
-  .account-menu { left: auto; right: 0; width: 100%; transform-origin: top right; }
+  .account-current .avatar { width: 28px; height: 28px; font-size: 13px; }
+  .account-menu { left: auto; right: 0; width: 212px; transform-origin: top right; }
+  .nav { order: 5; flex: 1 1 100%; flex-direction: row; flex-wrap: nowrap; gap: 2px; min-width: 0; padding-top: 8px; border-top: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+  .nav::-webkit-scrollbar { display: none; }
+  .nav button { flex: none; width: auto; padding: 5px 10px; font-size: 13px; white-space: nowrap; }
+  .nav-label { display: none; }
+}
+@media (max-width: 640px) {
+  /* ≤ 640px（方案 B）：单行极简顶栏 + 左侧滑出抽屉导航。 */
+  .mobile-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: var(--card-shadow); }
+  .nav-toggle { display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--panel-raised); color: var(--ink); cursor: pointer; transition: border-color .14s ease, color .14s ease, scale .12s ease-out; }
+  .nav-toggle:hover { border-color: var(--accent-2-text); color: var(--accent-2-text); }
+  .mobile-brand { display: inline-flex; align-items: center; gap: 7px; min-width: 0; margin-right: auto; font-family: var(--font-number); font-size: 17px; line-height: 1.1; }
+  .mobile-brand .brand-mark { width: 28px; height: 28px; flex: none; }
+  .mobile-brand .brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-actions { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+  .mobile-sync { display: inline-flex; align-items: center; gap: 2px; height: 32px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel-raised); color: var(--ink-2); font-size: 12px; white-space: nowrap; cursor: pointer; transition: border-color .14s ease, color .14s ease; }
+  .mobile-sync:hover { border-color: var(--accent-2-text); color: var(--ink); }
+  .mobile-sync.is-error { border-color: var(--danger-text); background: var(--danger-wash); color: var(--danger-text); }
+  .mobile-account { display: inline-flex; align-items: center; justify-content: center; flex: none; padding: 0; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel-raised); color: var(--ink); cursor: pointer; overflow: hidden; transition: border-color .14s ease; }
+  .mobile-account:hover { border-color: var(--ink-3); }
+  .mobile-account.has-nameplate { width: 112px; padding: 2px; }
+  .mobile-account .nameplate { width: 100%; height: auto; aspect-ratio: 32 / 9; min-width: 0; border-radius: 5px; font-size: 12px; }
+  .mobile-account .badge-icon { width: 12px; height: 12px; }
+  .mobile-account .avatar { width: 30px; height: 30px; border: 0; border-radius: 6px; font-size: 13px; }
+  .nav-backdrop { position: fixed; inset: 0; z-index: 30; display: block; background: var(--scrim); backdrop-filter: blur(2px); opacity: 1; transition: opacity .2s ease-out, display .2s; transition-behavior: allow-discrete; }
+  @starting-style { .nav-backdrop { opacity: 0; } }
+  .nav-backdrop:where([hidden], [data-closing]) { opacity: 0; pointer-events: none; }
+  .nav-backdrop[hidden] { display: none; }
+  .sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 31; width: min(272px, 84vw); max-height: none; overflow-y: auto; overscroll-behavior: contain; flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 14px; padding: 16px 12px 14px; border: 0; border-right: 1px solid var(--line-strong); border-radius: 0; box-shadow: 16px 0 40px var(--shadow); visibility: hidden; pointer-events: none; transform: translateX(-100%); opacity: 0; transition: transform .22s cubic-bezier(.22, 1, .36, 1), opacity .18s ease-out, visibility .22s; }
+  .sidebar.is-drawer-open { visibility: visible; pointer-events: auto; transform: translateX(0); opacity: 1; }
+  @media (prefers-reduced-motion: reduce) {
+    .sidebar { transform: none; transition: opacity .12s ease-out, visibility .12s; }
+  }
+  .sidebar-top { order: 0; margin-right: 0; }
+  .sidebar-close { display: inline-flex; }
+  .theme-cycle { display: none; }
+  .account-switcher { order: 0; }
+  .account-current { grid-template-columns: auto minmax(0, 1fr) auto; width: 100%; padding: 8px 10px; border-radius: 12px; }
+  .account-current .account-text { display: grid; }
+  .account-current.has-nameplate { grid-template-columns: minmax(0, 1fr) auto; width: 100%; padding: 0; gap: 5px; border-radius: 7px; background: transparent; }
+  .account-current.has-nameplate .nameplate { font-size: 15px; }
+  .account-current.has-nameplate .badge-icon { width: 17px; height: 17px; }
+  .account-menu { left: 0; right: auto; width: 100%; transform-origin: top left; }
+  .nav { order: 0; flex: none; flex-direction: column; gap: 2px; padding-top: 0; border-top: 0; overflow: visible; }
+  .nav-label { display: block; }
+  .nav button { width: 100%; padding: 8px 10px; font-size: 14px; }
+  .sidebar-theme { display: grid; order: 0; padding-top: 12px; border-top: 1px solid var(--line); }
+  .sidebar-theme .segmented { margin: 0 8px; }
+  .sidebar-foot { order: 0; display: grid; gap: 6px; margin-top: auto; padding: 12px 10px 2px; border-top: 1px solid var(--line); }
+  .obs-full { display: inline; }
+  .obs-short { display: none; }
 }
 @media (max-width: 760px) {
   .span-6 { grid-column: span 12; }

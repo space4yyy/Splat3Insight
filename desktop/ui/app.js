@@ -243,10 +243,27 @@
 
   // 外观
   const themeSwitch = $('#theme-switch');
+  const themeCycle = $('#theme-cycle');
+  const THEME_CHOICES = ['system', 'light', 'dark'];
+  const THEME_LABELS = { system: '外观：系统', light: '外观：浅色', dark: '外观：深色' };
+  const THEME_SHORT = { system: '系统', light: '浅色', dark: '深色' };
+  function applyThemeChoice(choice) {
+    try {
+      if (choice === 'system') localStorage.removeItem('splat3-theme');
+      else localStorage.setItem('splat3-theme', choice);
+    } catch {}
+    if (choice === 'system') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', choice);
+  }
   function syncThemeSwitch() {
     const choice = document.documentElement.getAttribute('data-theme') || 'system';
     for (const button of themeSwitch.querySelectorAll('button[data-theme-choice]')) {
       button.setAttribute('aria-pressed', String(button.getAttribute('data-theme-choice') === choice));
+    }
+    if (themeCycle) {
+      themeCycle.textContent = THEME_SHORT[choice] || '系统';
+      themeCycle.title = `${THEME_LABELS[choice] || '外观：系统'}（点击切换）`;
+      themeCycle.setAttribute('aria-label', `${THEME_LABELS[choice] || '外观：系统'}，点击切换`);
     }
   }
   function onThemeChange() {
@@ -257,17 +274,49 @@
   themeSwitch.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-theme-choice]');
     if (!button) return;
-    const choice = button.getAttribute('data-theme-choice');
-    try {
-      if (choice === 'system') localStorage.removeItem('splat3-theme');
-      else localStorage.setItem('splat3-theme', choice);
-    } catch {}
-    if (choice === 'system') document.documentElement.removeAttribute('data-theme');
-    else document.documentElement.setAttribute('data-theme', choice);
+    applyThemeChoice(button.getAttribute('data-theme-choice'));
+  });
+  themeCycle?.addEventListener('click', () => {
+    const current = document.documentElement.getAttribute('data-theme') || 'system';
+    const next = THEME_CHOICES[(THEME_CHOICES.indexOf(current) + 1) % THEME_CHOICES.length];
+    applyThemeChoice(next);
   });
   new MutationObserver(onThemeChange).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   matchMedia('(prefers-color-scheme: light)').addEventListener('change', onThemeChange);
   syncThemeSwitch();
+
+  // 极窄窗口（≤ 640px）左侧导航抽屉
+  const sidebarEl = $('#sidebar');
+  const navBackdrop = $('#nav-backdrop');
+  const navDrawerOpen = $('#nav-drawer-open');
+  const navDrawerClose = $('#nav-drawer-close');
+  function setNavDrawer(open) {
+    if (!sidebarEl) return;
+    const active = Boolean(open);
+    sidebarEl.classList.toggle('is-drawer-open', active);
+    navDrawerOpen?.setAttribute('aria-expanded', String(active));
+    if (navBackdrop) {
+      if (active) motion.showElement(navBackdrop);
+      else void motion.hideElement(navBackdrop);
+    }
+    if (active) {
+      requestAnimationFrame(() => motion.syncSegmentedIndicators?.(sidebarEl, { immediate: true }));
+      navDrawerClose?.focus();
+    }
+  }
+  navDrawerOpen?.addEventListener('click', () => setNavDrawer(!sidebarEl.classList.contains('is-drawer-open')));
+  navDrawerClose?.addEventListener('click', () => { setNavDrawer(false); navDrawerOpen?.focus(); });
+  navBackdrop?.addEventListener('click', () => { setNavDrawer(false); navDrawerOpen?.focus(); });
+  $('#mobile-account')?.addEventListener('click', () => setNavDrawer(true));
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && sidebarEl?.classList.contains('is-drawer-open')) {
+      setNavDrawer(false);
+      navDrawerOpen?.focus();
+    }
+  });
+  matchMedia('(max-width: 640px)').addEventListener('change', (event) => {
+    if (!event.matches && sidebarEl?.classList.contains('is-drawer-open')) setNavDrawer(false);
+  });
 
   // 开机启动：开关的状态以系统登录项为准，每次打开设置页时重新读取。
   const autostartToggle = $('#autostart');
@@ -567,6 +616,7 @@
   $('#nav').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-view]');
     if (!button) return;
+    if (sidebarEl?.classList.contains('is-drawer-open')) setNavDrawer(false);
     const view = button.getAttribute('data-view');
     if (location.hash !== `#${view}`) location.hash = view;
     else showView(view);
@@ -766,6 +816,14 @@
       el('span', { class: 'account-caret', 'aria-hidden': 'true' }),
     )));
     accountButton.setAttribute('aria-label', active ? `当前账号 ${name}，切换账号` : '添加账号');
+    const mobileAccount = $('#mobile-account');
+    if (mobileAccount) {
+      mobileAccount.classList.toggle('has-nameplate', Boolean(active));
+      mobileAccount.replaceChildren(active
+        ? records.nameplate(name, player?.nameplate)
+        : el('span', { class: 'avatar is-idle', 'aria-hidden': 'true', text: '+' }));
+      mobileAccount.setAttribute('aria-label', active ? `当前账号 ${name}，打开菜单` : '添加账号，打开菜单');
+    }
   }
 
   function renderAccountSwitcher() {
@@ -1276,7 +1334,30 @@
     foot.classList.toggle('is-error', summary.tone === 'is-error');
     // 有账号、已获取权限、当前没在同步时，可以立即同步一次。
     const busy = ['preparing', 'syncing', 'refreshing'].includes(status?.state);
-    $('#sync-now').hidden = !status?.account_id || busy || Boolean(summary.relogin) || Boolean(status?.message?.includes('权限'));
+    const canSyncNow = Boolean(status?.account_id) && !busy && !summary.relogin && !status?.message?.includes('权限');
+    $('#sync-now').hidden = !canSyncNow;
+    const mobileSync = $('#mobile-sync');
+    if (mobileSync) {
+      const mobileHidden = !status?.account_id && !summary.relogin && !summary.authorize;
+      mobileSync.hidden = mobileHidden;
+      mobileSync.classList.toggle('is-error', summary.tone === 'is-error');
+      const mobileText = summary.relogin ? '重新登录' : summary.authorize ? '授权' : busy ? '同步中' : '同步';
+      const mobileSig = `${mobileText}|${summary.tone}|${canSyncNow ? 1 : 0}`;
+      if (mobileSync.dataset.signature !== mobileSig) {
+        mobileSync.dataset.signature = mobileSig;
+        mobileSync.replaceChildren(
+          el('span', { class: `status-dot ${summary.tone}`.trim(), 'aria-hidden': 'true' }),
+          document.createTextNode(mobileText),
+        );
+      }
+      mobileSync.disabled = busy;
+      mobileSync.title = foot.title || summary.text;
+      mobileSync.onclick = () => {
+        if (summary.relogin) startRelogin(status.account_id);
+        else if (summary.authorize) void refreshPermission(status.account_id, mobileSync);
+        else if (canSyncNow) void requestSync('manual');
+      };
+    }
     renderAccountAlert();
   }
 
@@ -1426,8 +1507,20 @@
     const tone = running ? '' : starting ? 'is-busy' : failed ? 'is-error' : 'is-idle';
 
     const foot = $('#sidebar-obs');
-    foot.replaceChildren(document.createTextNode(running ? 'OBS 服务运行中' : starting ? 'OBS 服务启动中…' : failed ? 'OBS 服务出错' : 'OBS 服务已停止'));
-    if (running && host) foot.append(document.createTextNode(' · '), el('span', { class: 'font-number', text: host }));
+    const fullText = running ? 'OBS 服务运行中' : starting ? 'OBS 服务启动中…' : failed ? 'OBS 服务出错' : 'OBS 服务已停止';
+    const fullNodes = [document.createTextNode(fullText)];
+    if (running && host) fullNodes.push(document.createTextNode(' · '), el('span', { class: 'font-number', text: host }));
+    const shortButton = el('button', {
+      type: 'button',
+      class: 'obs-pill-button obs-short',
+      title: running && host ? `${fullText} · ${host}（点击查看）` : `${fullText}（点击查看）`,
+      'aria-label': running && host ? `${fullText} ${host}，前往其他工具` : `${fullText}，前往其他工具`,
+    }, [
+      el('span', { class: `status-dot ${tone}`.trim(), 'aria-hidden': 'true' }),
+      document.createTextNode('OBS'),
+    ]);
+    shortButton.addEventListener('click', () => goTo('obs'));
+    foot.replaceChildren(el('span', { class: 'obs-full' }, fullNodes), shortButton);
     foot.classList.toggle('is-error', failed);
 
     $('#obs-service-state').replaceChildren(...present(

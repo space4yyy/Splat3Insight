@@ -165,7 +165,7 @@ fn should_show_main_window_on_reopen(has_visible_windows: bool) -> bool {
 
 const DEFAULT_WINDOW_WIDTH: f64 = 1240.0;
 const DEFAULT_WINDOW_HEIGHT: f64 = 800.0;
-const MIN_WINDOW_WIDTH: f64 = 720.0;
+const MIN_WINDOW_WIDTH: f64 = 520.0;
 const MIN_WINDOW_HEIGHT: f64 = 560.0;
 
 /// Logical window size to restore. Sizes saved by the old compact window are
@@ -2766,7 +2766,7 @@ mod tests {
             (1400.0, 900.0)
         );
         assert_eq!(
-            restored_window_size(Some((560.0, 570.0)), screen),
+            restored_window_size(Some((480.0, 570.0)), screen),
             (DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
         );
         assert_eq!(restored_window_size(None, (1280.0, 700.0)), (1240.0, 700.0));
