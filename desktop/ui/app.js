@@ -111,7 +111,15 @@
     message.setAttribute('aria-live', error ? 'assertive' : 'polite');
     messageText.textContent = value;
     message.title = value;
-    message.hidden = !value;
+    const motionHelper = typeof window !== 'undefined' ? window.Splat3Motion : null;
+    if (value) {
+      if (motionHelper) motionHelper.showElement(message);
+      else message.hidden = false;
+    } else if (motionHelper) {
+      void motionHelper.hideElement(message);
+    } else {
+      message.hidden = true;
+    }
     message.classList.toggle('is-error', error);
     messagePath = path;
     messageReveal.hidden = !path;
@@ -517,7 +525,17 @@
         if (button.getAttribute('data-view') === view) button.setAttribute('aria-current', 'page');
         else button.removeAttribute('aria-current');
       }
-      for (const section of document.querySelectorAll('.main > .view')) section.hidden = section.id !== `view-${view}`;
+      for (const section of document.querySelectorAll('.main > .view')) {
+        section.hidden = section.id !== `view-${view}`;
+        section.classList.remove('is-entering', 'is-view-entering');
+      }
+      const activeViewEl = document.getElementById(`view-${view}`);
+      if (!isNavigation) {
+        activeViewEl?.classList.add('is-entering');
+      } else if (activeViewEl) {
+        activeViewEl.classList.add('is-view-entering');
+        activeViewEl.addEventListener('animationend', () => activeViewEl.classList.remove('is-view-entering'), { once: true });
+      }
       $('#page-title').textContent = VIEWS[view][0];
       $('#page-sub').textContent = VIEWS[view][1];
       dashboard.hideTip();
@@ -541,12 +559,9 @@
       if (previous !== view) window.scrollTo(0, scrollPositions[view] ?? 0);
       motion.applySiblingStagger(document.getElementById(`view-${view}`));
     };
+    commitView();
     if (isNavigation) {
-      motion.runViewTransition(commitView, () => {
-        $('#page-title')?.focus({ preventScroll: true });
-      });
-    } else {
-      commitView();
+      $('#page-title')?.focus({ preventScroll: true });
     }
   }
   $('#nav').addEventListener('click', (event) => {
@@ -1142,7 +1157,7 @@
       await openUrl(url);
       const who = target ? `“${target.name}”` : '';
       pasteHint.textContent = `在浏览器中完成登录${who}后，右键点击“选择此人”按钮，复制链接地址并粘贴至下方。`;
-      pastePanel.hidden = false;
+      motion.showElement(pastePanel);
       loginLink.focus();
       setMessage(`请在浏览器中登录${who}，并复制“选择此人”按钮的链接地址。`);
     } catch (error) {
@@ -1152,7 +1167,7 @@
     }
   }
   function closePastePanel() {
-    pastePanel.hidden = true;
+    void motion.hideElement(pastePanel);
     loginLink.value = '';
     loginLink.removeAttribute('aria-invalid');
     loginTarget = null;
@@ -1581,17 +1596,18 @@
     }
     const route = selectedObsRoute();
     const url = app.serviceOrigin ? new URL(route, app.serviceOrigin).href : route;
-    const copy = el('button', { type: 'button', class: 'button-primary', 'data-copy-overlay-url': '', text: app.obs.copiedUrl === url ? '已复制' : '复制' });
+    const copy = el('button', { type: 'button', class: `button-primary${app.obs.copiedUrl === url ? ' is-copied' : ''}`, 'data-copy-overlay-url': '', text: app.obs.copiedUrl === url ? '已复制' : '复制' });
     copy.disabled = !app.serviceOrigin;
     copy.addEventListener('click', async () => {
-      if (await copyText(url, copy, '复制 OBS 地址失败')) app.obs.copiedUrl = url;
+      if (await copyText(url, copy, '复制 OBS 地址失败', () => { if (app.obs.copiedUrl === url) app.obs.copiedUrl = null; })) app.obs.copiedUrl = url;
     });
     box.replaceChildren(el('code', { text: url }), copy);
     const [width, height] = obsSourceSize(card);
     $('#obs-size-hint').textContent = `建议将浏览器来源宽高设为 ${width} × ${height}。`
       + (isDefeatCountCard(card.id) ? '增减显示项后自动同步，无需修改地址或尺寸。' : '');
   }
-  async function copyText(text, button, failure) {
+  const copyTimers = new WeakMap();
+  async function copyText(text, button, failure, onReset) {
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
@@ -1607,9 +1623,17 @@
         input.remove();
       }
       button.textContent = '已复制';
+      button.classList.add('is-copied');
+      clearTimeout(copyTimers.get(button));
+      copyTimers.set(button, setTimeout(() => {
+        button.classList.remove('is-copied');
+        if (button.textContent === '已复制') button.textContent = '复制';
+        onReset?.();
+      }, 2000));
       return true;
     } catch (error) {
       button.textContent = '复制失败';
+      button.classList.remove('is-copied');
       setMessage(`${failure}：${String(error)}`, true);
       return false;
     }
@@ -1631,9 +1655,9 @@
     $('#obs-transparency').value = String(value);
     $('#obs-transparency-value').textContent = `${value}%`;
     $('#obs-preview').style.setProperty('--obs-card-background', obsBackground(value));
-    const copy = el('button', { type: 'button', class: 'button-primary', 'data-copy-overlay-css': '', text: app.obs.copiedCss === css ? '已复制' : '复制' });
+    const copy = el('button', { type: 'button', class: `button-primary${app.obs.copiedCss === css ? ' is-copied' : ''}`, 'data-copy-overlay-css': '', text: app.obs.copiedCss === css ? '已复制' : '复制' });
     copy.addEventListener('click', async () => {
-      if (await copyText(css, copy, '复制 CSS 失败')) app.obs.copiedCss = css;
+      if (await copyText(css, copy, '复制 CSS 失败', () => { if (app.obs.copiedCss === css) app.obs.copiedCss = null; })) app.obs.copiedCss = css;
     });
     $('#obs-css').replaceChildren(el('code', { text: css }), copy);
   }

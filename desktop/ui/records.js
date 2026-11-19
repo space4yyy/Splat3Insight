@@ -318,7 +318,11 @@
     const node = el('span', { class: `nameplate${background ? '' : ' is-plain'}`, title: label }, [
       plate?.title ? el('span', { ...plateText('nameplate-title', plate.title), title: plate.title }) : null,
       el('span', plateText('nameplate-name', label)),
-      plate?.badges?.length ? el('span', { class: 'nameplate-badges' }, plate.badges.map((badge) => img(badge, 'badge-icon', '徽章'))) : null,
+      plate?.badges?.length ? el('span', { class: 'nameplate-badges' }, plate.badges.map((badge) => {
+        const url = typeof badge === 'string' ? badge : badge?.image;
+        const label = (typeof badge === 'object' && badge?.description) || '徽章';
+        return img(url, 'badge-icon', label);
+      })) : null,
     ]);
     if (background) node.style.backgroundImage = `url("${background}")`;
     if (background && plate.textColor) node.style.color = plate.textColor;
@@ -466,7 +470,19 @@
     next.addEventListener('click', () => select(index + 1, 'next'));
     return el('div', { class: 'drawer-nav' }, [previous, el('span', { class: 'muted font-number', text: index < 0 ? '' : `${index + 1} / ${drawerRows().length}` }), next]);
   }
+  function drawerSkeleton() {
+    return el('div', { class: 'drawer-skeleton', role: 'status', 'aria-label': '正在读取详情' }, [
+      el('div', { class: 'skeleton-block is-bar' }),
+      el('div', { class: 'drawer-skeleton-row' }, [
+        el('div', { class: 'skeleton-block' }),
+        el('div', { class: 'skeleton-block' }),
+        el('div', { class: 'skeleton-block' }),
+      ]),
+      el('div', { class: 'skeleton-block is-tall' }),
+    ]);
+  }
   function fillDrawer(banner, body, item, kind, raw) {
+    banner.classList.remove('is-loading');
     body.textContent = '';
     if (raw == null) {
       body.append(el('p', { class: 'muted', text: '本地归档中未找到该记录的原始数据。' }));
@@ -492,7 +508,8 @@
       fillDrawer(banner, body, item, kind, rawCache.get(key));
       return;
     }
-    body.append(el('p', { class: 'muted', text: '正在读取详情…' }));
+    banner.classList.add('is-loading');
+    body.append(drawerSkeleton());
     invoke('get_history_record', { recordType: kind, recordId: item.id })
       .then((raw) => {
         rawCache.set(key, raw ?? null);
@@ -500,7 +517,10 @@
         if (state.selected === item.id && body.isConnected) fillDrawer(banner, body, item, kind, raw ?? null);
       })
       .catch((error) => {
-        if (state.selected === item.id && body.isConnected) body.replaceChildren(el('p', { class: 'drawer-error', text: `读取详情失败：${String(error)}` }));
+        if (state.selected === item.id && body.isConnected) {
+          banner.classList.remove('is-loading');
+          body.replaceChildren(el('p', { class: 'drawer-error', text: `读取详情失败：${String(error)}` }));
+        }
       });
   }
   function select(index, focusNav) {
@@ -556,11 +576,24 @@
   }
   backdrop.addEventListener('click', close);
   document.addEventListener('keydown', (event) => {
-    if (drawer.hidden) return;
+    if (drawer.hidden || drawer.hasAttribute('data-closing')) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       close();
       return;
+    }
+    if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const tag = document.activeElement?.tagName;
+      if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+        const index = selectedIndex();
+        const delta = event.key === 'ArrowLeft' ? -1 : 1;
+        const targetIndex = index + delta;
+        if (index >= 0 && targetIndex >= 0 && targetIndex < drawerRows().length) {
+          event.preventDefault();
+          select(targetIndex, delta < 0 ? 'previous' : 'next');
+          return;
+        }
+      }
     }
     if (event.key !== 'Tab') return;
     // 焦点留在抽屉里。

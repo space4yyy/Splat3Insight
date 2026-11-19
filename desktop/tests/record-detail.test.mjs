@@ -109,7 +109,7 @@ test('battle details carry stage, weapon, nameplate, team color and my gear imag
       players: [{
         name: '我', isMyself: true, byname: ' 溫泉花大峽谷的廣域標記槍操作者 ',
         weapon: { name: '斯普拉射擊槍', image: { url: image('weapon_illust/shot') }, subWeapon: { name: 'Curling Bomb', image: { url: image('sub_img/curling') } }, specialWeapon: { name: 'Ultra Stamp', image: { url: image('special_img/stamp') } } },
-        nameplate: { background: { image: { url: image('npl_img/plate') }, textColor: { r: 1, g: 1, b: 1, a: 1 } }, badges: [{ image: { url: image('badge_img/one') } }, null] },
+        nameplate: { background: { image: { url: image('npl_img/plate') }, textColor: { r: 1, g: 1, b: 1, a: 1 } }, badges: [{ id: 'QmFkZ2UtMzEwMTEwMQ==', image: { url: image('badge_img/one') } }, { id: 'QmFkZ2UtMTAwMjUwMQ==', image: { url: image('badge_img/two') } }, { image: { url: image('badge_img/three') } }, null] },
         result: { kill: 1, assist: 0, death: 0, special: 1 }, paint: 500,
       }],
     },
@@ -125,7 +125,16 @@ test('battle details carry stage, weapon, nameplate, team color and my gear imag
   assert.equal(me.sub.name, '冰壶炸弹');
   assert.equal(me.special.name, '终极印章');
   assert.equal(me.special.image, image('special_img/stamp'));
-  assert.deepEqual(me.nameplate, { title: '温泉花大峡谷的广域标记枪操作者', background: image('npl_img/plate'), textColor: 'rgba(255, 255, 255, 1)', badges: [image('badge_img/one')] });
+  assert.deepEqual(me.nameplate, {
+    title: '温泉花大峡谷的广域标记枪操作者',
+    background: image('npl_img/plate'),
+    textColor: 'rgba(255, 255, 255, 1)',
+    badges: [
+      { image: image('badge_img/one'), description: 'X战力达到2000以上' },
+      { image: image('badge_img/two'), description: '快速爆破枪 精英的熟练度达到★5' },
+      { image: image('badge_img/three'), description: null },
+    ],
+  });
   assert.equal(battle.gear.length, 1);
   assert.equal(battle.gear[0].slot, '头部');
   assert.equal(battle.gear[0].image, image('gear_img/beret'));

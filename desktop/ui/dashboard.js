@@ -243,26 +243,40 @@
   }
 
   const tip = document.getElementById('tip');
+  let lastTipKey = '';
+  let tipSize = { width: 0, height: 0 };
+  function tipContentKey(title, rows) {
+    return `${title || ''}\n${rows.map((row) => `${row.color || ''}|${row.box ? 1 : 0}|${row.value ?? ''}|${row.label ?? ''}`).join('\n')}`;
+  }
   function showTip(point, title, rows) {
-    tip.textContent = '';
-    if (title) tip.append(el('div', { class: 'tip-title', text: title }));
-    for (const row of rows) {
-      const line = el('div', { class: 'tip-row' });
-      if (row.color) line.append(el('span', { class: row.box ? 'tip-box' : 'tip-key', style: `background:${row.color}` }));
-      line.append(el('strong', { text: row.value }));
-      if (row.label) line.append(el('span', { text: row.label }));
-      tip.append(line);
+    const key = tipContentKey(title, rows);
+    const wasHidden = tip.hidden;
+    if (wasHidden || key !== lastTipKey) {
+      lastTipKey = key;
+      tip.textContent = '';
+      if (title) tip.append(el('div', { class: 'tip-title', text: title }));
+      for (const row of rows) {
+        const line = el('div', { class: 'tip-row' });
+        if (row.color) line.append(el('span', { class: row.box ? 'tip-box' : 'tip-key', style: `background:${row.color}` }));
+        line.append(el('strong', { text: row.value }));
+        if (row.label) line.append(el('span', { text: row.label }));
+        tip.append(line);
+      }
+      tip.hidden = false;
+      const rect = tip.getBoundingClientRect();
+      tipSize = { width: rect.width, height: rect.height };
     }
-    tip.hidden = false;
-    const rect = tip.getBoundingClientRect();
     let left = point.clientX + 14;
     let top = point.clientY + 14;
-    if (left + rect.width > window.innerWidth - 8) left = point.clientX - rect.width - 14;
-    if (top + rect.height > window.innerHeight - 8) top = point.clientY - rect.height - 14;
-    tip.style.left = `${Math.max(8, left)}px`;
-    tip.style.top = `${Math.max(8, top)}px`;
+    if (left + tipSize.width > window.innerWidth - 8) left = point.clientX - tipSize.width - 14;
+    if (top + tipSize.height > window.innerHeight - 8) top = point.clientY - tipSize.height - 14;
+    tip.style.setProperty('--tip-x', `${Math.max(8, Math.round(left))}px`);
+    tip.style.setProperty('--tip-y', `${Math.max(8, Math.round(top))}px`);
   }
-  function hideTip() { tip.hidden = true; }
+  function hideTip() {
+    tip.hidden = true;
+    lastTipKey = '';
+  }
   function bindTip(node, content) {
     node.addEventListener('pointermove', (event) => { const [title, rows] = content(); showTip(event, title, rows); });
     node.addEventListener('pointerleave', hideTip);
@@ -305,7 +319,6 @@
 
   function renderKpis() {
     const container = document.getElementById('kpis');
-    container.textContent = '';
     const [start, end] = rangeBounds(state.range);
     const previous = previousBounds(state.range);
     const buckets = bucketEdges(start, end);
@@ -345,11 +358,17 @@
       tiles.push({ label: '胜率', value: pct(current.wr), meta: [versus && deltaNode(before && before.wr != null && current.wr != null ? (current.wr - before.wr) * 100 : null, 1, ' pt'), el('span', { text: versus || '整个归档' })], spark: bucketStats.map((s) => s.wr) });
       tiles.push({ label: 'K/D', value: fixed(current.kd, 2), meta: [versus && deltaNode(before && before.kd != null && current.kd != null ? current.kd - before.kd : null, 2, ''), el('span', { text: `场均 ${fixed(current.avgK)} 击倒 / ${fixed(current.avgD)} 死亡` })], spark: bucketStats.map((s) => s.kd) });
     }
-    const placed = tiles.map((tile) => {
+    // 复用已有的 KPI 容器节点，避免切换筛选时重建 DOM 反复触发入场动画闪烁。
+    const reuse = container.children.length === tiles.length && [...container.children].every((child) => child.classList.contains('kpi'));
+    if (!reuse) container.textContent = '';
+    const placed = tiles.map((tile, index) => {
       const value = el('div', { class: tile.value === '—' ? 'kpi-value placeholder' : 'kpi-value', text: tile.value });
       if (tile.valueSmall) value.append(el('small', { text: tile.valueSmall }));
-      const node = el('div', { class: 'kpi' }, [el('div', { class: 'kpi-label', text: tile.label }), value, el('div', { class: 'kpi-meta' }, tile.meta.filter(Boolean))]);
-      container.append(node);
+      const meta = el('div', { class: 'kpi-meta' }, tile.meta.filter(Boolean));
+      const label = el('div', { class: 'kpi-label', text: tile.label });
+      const node = reuse ? container.children[index] : el('div', { class: 'kpi' });
+      node.replaceChildren(label, value, meta);
+      if (!reuse) container.append(node);
       return [node, tile];
     });
     for (const [node, tile] of placed) {
@@ -438,6 +457,7 @@
     }
     const marks = series.flatMap((item) => item.points.map((point) => point.t)).sort((a, b) => a - b);
     const crosshair = svgEl('line', { y1: margin.top, y2: height - margin.bottom, stroke: COLOR.ink3, 'stroke-width': 1, visibility: 'hidden' }, svg);
+    const dot = svgEl('circle', { r: 5, fill: COLOR.modes.x, stroke: COLOR.panel, 'stroke-width': 2, visibility: 'hidden' }, svg);
     const overlay = svgEl('rect', { x: margin.left, y: margin.top, width: width - margin.left - margin.right, height: height - margin.top - margin.bottom, fill: 'transparent' }, svg);
     overlay.addEventListener('pointermove', (event) => {
       if (!marks.length) return;
@@ -447,12 +467,24 @@
       crosshair.setAttribute('x1', x(nearest));
       crosshair.setAttribute('x2', x(nearest));
       crosshair.setAttribute('visibility', 'visible');
+      const selectedVal = xValueAt(state.rule, nearest);
+      if (selectedVal != null) {
+        dot.setAttribute('cx', x(nearest));
+        dot.setAttribute('cy', y(selectedVal));
+        dot.setAttribute('visibility', 'visible');
+      } else {
+        dot.setAttribute('visibility', 'hidden');
+      }
       showTip(event, fmtDateTime(nearest), RANKED_RULES.map((rule) => {
         const value = xValueAt(rule, nearest);
         return { value: value == null ? '未定级' : value.toFixed(1), label: RULE_LABEL[rule], color: rule === state.rule ? COLOR.modes.x : COLOR.context };
       }));
     });
-    overlay.addEventListener('pointerleave', () => { crosshair.setAttribute('visibility', 'hidden'); hideTip(); });
+    overlay.addEventListener('pointerleave', () => {
+      crosshair.setAttribute('visibility', 'hidden');
+      dot.setAttribute('visibility', 'hidden');
+      hideTip();
+    });
   }
 
   function renderForm() {
@@ -530,6 +562,7 @@
     svgEl('circle', { cx: x(lastPoint.index), cy: y(lastPoint.wr), r: 4, fill: rateColor, stroke: COLOR.panel, 'stroke-width': 2 }, svg);
     svgText(svg, x(lastPoint.index) + 8, y(lastPoint.wr) + 5, pct(lastPoint.wr, 0), { fill: COLOR.ink, 'font-size': 14, class: 'font-number' });
     const crosshair = svgEl('line', { y1: margin.top, y2: height - margin.bottom, stroke: COLOR.ink3, 'stroke-width': 1, visibility: 'hidden' }, svg);
+    const dot = svgEl('circle', { r: 4.5, fill: rateColor, stroke: COLOR.panel, 'stroke-width': 2, visibility: 'hidden' }, svg);
     const overlay = svgEl('rect', { x: margin.left, y: margin.top, width: width - margin.left - margin.right, height: height - margin.top - margin.bottom, fill: 'transparent' }, svg);
     overlay.addEventListener('pointermove', (event) => {
       const bounds = svg.getBoundingClientRect();
@@ -538,12 +571,19 @@
       crosshair.setAttribute('x1', x(point.index));
       crosshair.setAttribute('x2', x(point.index));
       crosshair.setAttribute('visibility', 'visible');
+      dot.setAttribute('cx', x(point.index));
+      dot.setAttribute('cy', y(point.wr));
+      dot.setAttribute('visibility', 'visible');
       showTip(event, `第 ${point.index} 场 · ${fmtDateTime(point.t)}`, [
         { value: pct(point.wr, 0), label: `20 场滚动${word.rate}`, color: rateColor },
         { value: point.win ? word.win : word.lose, label: '本场结果' },
       ]);
     });
-    overlay.addEventListener('pointerleave', () => { crosshair.setAttribute('visibility', 'hidden'); hideTip(); });
+    overlay.addEventListener('pointerleave', () => {
+      crosshair.setAttribute('visibility', 'hidden');
+      dot.setAttribute('visibility', 'hidden');
+      hideTip();
+    });
   }
 
   function renderPlaytime() {
@@ -1103,13 +1143,8 @@
   pressSegmented(modeFilter, 'data-mode', state.mode);
   // 时间范围和模式筛选由总览和对战记录共用，改动后通知当前页面重新绘制。
   const filtersChanged = () => {
-    const update = () => {
-      if (filterListener) filterListener();
-      else render();
-      window.Splat3Motion?.applySiblingStagger(document.querySelector('.main > .view:not([hidden])'));
-    };
-    if (window.Splat3Motion?.runViewTransition) window.Splat3Motion.runViewTransition(update);
-    else update();
+    if (filterListener) filterListener();
+    else render();
   };
   rangeFilter.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-range]');

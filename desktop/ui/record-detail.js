@@ -47,7 +47,14 @@
       title,
       background: imageOf(plate?.background),
       textColor: colorOf(plate?.background?.textColor),
-      badges: list(plate?.badges).map((badge) => imageOf(badge)).filter(Boolean),
+      badges: list(plate?.badges).map((badge) => {
+        const url = imageOf(badge);
+        if (!url) return null;
+        return {
+          image: url,
+          description: window.Splat3GameNames?.badgeDescription?.(badge?.id) ?? null,
+        };
+      }).filter(Boolean),
     };
   }
   const named = (kind, node) => (node ? { name: official(kind, node.name), image: imageOf(node) } : null);
