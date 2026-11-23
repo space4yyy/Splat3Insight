@@ -3889,7 +3889,7 @@ dependencies = [
 
 [[package]]
 name = "splat3-insight"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "chrono",
  "flate2",
@@ -3912,7 +3912,7 @@ dependencies = [
 
 [[package]]
 name = "splat3-widget-core"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.4.3",
