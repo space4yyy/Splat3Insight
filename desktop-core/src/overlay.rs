@@ -62,6 +62,8 @@ pub struct OverlayBattle {
     /// Set while the selected battle is placing its power.
     #[serde(default)]
     pub power_placement: Option<PowerPlacement>,
+    pub weapon_name: Option<String>,
+    pub weapon_image: Option<String>,
     pub kills: Option<i64>,
     pub assists: Option<i64>,
     pub deaths: Option<i64>,
@@ -698,6 +700,8 @@ fn to_overlay_battle(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> Overla
             }
             _ => None,
         },
+        weapon_name: item.record.weapon.clone(),
+        weapon_image: None,
         kills: item.record.kills,
         assists: item.record.assists,
         deaths: item.record.deaths,

@@ -773,8 +773,25 @@ fn route_request(
             card_data_response(
                 config,
                 "Overlay 数据",
-                load_overlay_state(config, overlay_match_category(request_target)),
+                load_overlay_state(config, overlay_match_category(request_target)).map(
+                    |mut state| {
+                        if let Some(battle) = state.selected.as_mut() {
+                            battle.weapon_image = battle.weapon_image.take().and_then(|source| {
+                                splat3_widget_core::images::image_key(&source)?;
+                                let mut url =
+                                    tauri::Url::parse("http://localhost/api/overlay-weapon")
+                                        .ok()?;
+                                url.query_pairs_mut().append_pair("record", &battle.id);
+                                Some(format!("{}?{}", url.path(), url.query()?))
+                            });
+                        }
+                        state
+                    },
+                ),
             )
+        }
+        "/api/overlay-weapon" => {
+            Ok(overlay_weapon_image(config, request_target).unwrap_or_else(not_found))
         }
         "/api/defeat-counts" => {
             config.activity.record_request(crate::now_ms());
@@ -1016,6 +1033,20 @@ fn defeat_count_card(
     }))
 }
 
+fn overlay_weapon_image(
+    config: &OverlayServerConfig,
+    request_target: &str,
+) -> Option<HttpResponse> {
+    let cache = config.image_cache.as_ref()?;
+    let account_id = active_account(config).ok()??;
+    let url = tauri::Url::parse(&format!("http://localhost{request_target}")).ok()?;
+    let (_, record_id) = url.query_pairs().find(|(key, _)| key == "record")?;
+    let (_, source) =
+        crate::history_store::load_battle_weapon(&config.history_dir, &account_id, &record_id)
+            .ok()??;
+    cached_image_response(cache, &source?)
+}
+
 /// 击倒数卡片里的鲑鱼图片：按活动账号「鲑鱼跑记录」里的原链接读本地图片缓存，没有缓存时下载后存下。
 /// 只给记录里有的鲑鱼，其他一律 404。
 fn coop_enemy_image(config: &OverlayServerConfig, enemy_id: i64) -> Option<HttpResponse> {
@@ -1044,9 +1075,15 @@ fn coop_enemy_image(config: &OverlayServerConfig, enemy_id: i64) -> Option<HttpR
                 .find(|fact| fact.enemy_id == Some(enemy_id))
         })
         .and_then(|fact| fact.image);
-    let source = current.or(all_time)?;
+    cached_image_response(cache, &current.or(all_time)?)
+}
+
+fn cached_image_response(
+    cache: &crate::image_cache::ImageCache,
+    source: &str,
+) -> Option<HttpResponse> {
     let (content_type, body) =
-        tauri::async_runtime::block_on(crate::image_cache::load(cache, &source))?;
+        tauri::async_runtime::block_on(crate::image_cache::load(cache, source))?;
     Some(HttpResponse {
         status: "200 OK",
         content_type,
@@ -1170,6 +1207,48 @@ mod tests {
         assert!(String::from_utf8(response.body)
             .unwrap()
             .contains("\"selected\""));
+    }
+
+    #[test]
+    fn overlay_serves_the_selected_battles_weapon_from_the_image_cache() {
+        let directory = tempdir().unwrap();
+        let cache_dir = directory.path().join("image-cache");
+        let key = "v3/weapon_illust/sample_0.png";
+        crate::image_cache::store(&cache_dir, key, b"weapon icon").unwrap();
+        let config = active_account_config(
+            directory.path(),
+            Some(Arc::new(crate::image_cache::ImageCache {
+                dir: cache_dir,
+                client: RwLock::new(splat3_widget_core::images::ImageClient::new().unwrap()),
+            })),
+        );
+        let mut history = sample_cache();
+        let battle = &mut history.battles[0];
+        battle.record.id = "battle+/=".to_owned();
+        battle.record.weapon = Some("Sample weapon".to_owned());
+        battle.raw["myTeam"] = json!({ "players": [
+            { "weapon": { "name": "Teammate weapon" } },
+            { "isMyself": true, "weapon": { "image": { "url": format!(
+                "https://api.lp1.av5ja.srv.nintendo.net/resources/prod/{key}?Expires=1"
+            ) } } }
+        ] });
+        crate::history_store::save_cache(&config.history_dir, "account", &history).unwrap();
+
+        let response = route_request("GET", "/api/overlay?xmatch", &config).unwrap();
+        let state: OverlayState = serde_json::from_slice(&response.body).unwrap();
+        let battle = state.selected.unwrap();
+        assert_eq!(battle.weapon_name.as_deref(), Some("Sample weapon"));
+        let route = battle.weapon_image.unwrap();
+        assert_eq!(route, "/api/overlay-weapon?record=battle%2B%2F%3D");
+        let response = route_request("GET", &route, &config).unwrap();
+        assert_eq!(response.content_type, "image/png");
+        assert_eq!(response.body, b"weapon icon");
+        assert_eq!(
+            route_request("GET", "/api/overlay-weapon?record=unknown", &config)
+                .unwrap()
+                .status,
+            "404 Not Found"
+        );
     }
 
     #[test]

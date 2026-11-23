@@ -1859,14 +1859,14 @@
         && cards?.updateDefeatCounts(scale, source, records.imageSrc, undefined, roster));
     } else if (!dataError && cards && states) {
       if (card.id === 'overlay') {
-        const type = cards.updateAuto(scale, states.overlay);
+        const type = cards.updateAuto(scale, states.overlay, records.imageSrc);
         hasData = type === 'salmon-run' ? Boolean(states.overlay?.salmon_run) : Boolean(states.overlay?.selected);
       } else if (card.id === 'salmon-run') {
         hasData = cards.updateSalmonRun(scale, states.overlay);
       } else if (card.id === 'x-match') {
-        hasData = cards.update(scale, states.xMatch);
+        hasData = cards.update(scale, states.xMatch, records.imageSrc);
       } else if (card.id === 'bankara-match') {
-        hasData = cards.update(scale, states.bankaraMatch);
+        hasData = cards.update(scale, states.bankaraMatch, records.imageSrc);
       }
     }
     let empty = box.querySelector('.obs-empty');

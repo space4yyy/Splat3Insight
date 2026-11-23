@@ -401,7 +401,7 @@ fn coop_waves(
         .collect()
 }
 
-fn my_battle_player(raw: &Value) -> Option<&Value> {
+pub fn my_battle_player(raw: &Value) -> Option<&Value> {
     let players = raw.pointer("/myTeam/players")?.as_array()?;
     players
         .iter()

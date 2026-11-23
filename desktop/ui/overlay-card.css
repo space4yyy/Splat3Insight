@@ -479,6 +479,13 @@
   min-width: max-content;
 }
 
+.overlay-card__weapon {
+  flex: none;
+  margin-inline-end: 5px;
+  object-fit: contain;
+  transform: translateY(5px);
+}
+
 .overlay-card__kad {
   display: flex;
   flex: 0 0 auto;

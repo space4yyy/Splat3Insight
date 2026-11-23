@@ -7,7 +7,7 @@ use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use splat3_widget_core::dashboard::{
-    coop_enemy_defeats, coop_enemy_id, CoopDefeatFact, CoopDefeatFacts,
+    coop_enemy_defeats, coop_enemy_id, my_battle_player, CoopDefeatFact, CoopDefeatFacts,
 };
 #[cfg(test)]
 use splat3_widget_core::history::ArchivedCoop;
@@ -1046,7 +1046,7 @@ fn load_card_state(
                 .map_err(|error| format!("保存卡片数据版本失败：{error}"))?;
         }
         drop(connection);
-        return attach_salmon_run_card(history_dir, account_id, snapshot.into_state(category));
+        return attach_card_details(history_dir, account_id, snapshot.into_state(category));
     }
     let column = match category {
         None => "state_json",
@@ -1068,7 +1068,7 @@ fn load_card_state(
         Some(state) => state,
         None => rebuild_overlay_snapshot(history_dir, account_id)?.into_state(category),
     };
-    attach_salmon_run_card(history_dir, account_id, state)
+    attach_card_details(history_dir, account_id, state)
 }
 
 fn overlay_migration_pending(connection: &Connection, account_id: &str) -> Result<bool, String> {
@@ -1089,13 +1089,60 @@ fn overlay_migration_pending(connection: &Connection, account_id: &str) -> Resul
     Ok(false)
 }
 
-fn attach_salmon_run_card(
+fn attach_card_details(
     history_dir: &Path,
     account_id: &str,
     mut state: OverlayState,
 ) -> Result<OverlayState, String> {
+    if let Some(battle) = state
+        .selected
+        .as_mut()
+        .filter(|battle| matches!(battle.mode.as_str(), "BANKARA" | "EVENT_MATCH" | "X_MATCH"))
+    {
+        if let Ok(Some((name, image))) = load_battle_weapon(history_dir, account_id, &battle.id) {
+            if name.is_some() {
+                battle.weapon_name = name;
+            }
+            battle.weapon_image = image;
+        }
+    }
     state.salmon_run = load_salmon_run_card(history_dir, account_id)?;
     Ok(state)
+}
+
+pub(crate) fn load_battle_weapon(
+    history_dir: &Path,
+    account_id: &str,
+    record_id: &str,
+) -> Result<Option<(Option<String>, Option<String>)>, String> {
+    let connection = open_database(history_dir)?;
+    let indexed_weapon = connection
+        .query_row(
+            "SELECT weapon_name, weapon_image FROM extension_dashboard_battles
+             WHERE account_id = ?1 AND record_id = ?2",
+            params![account_id, record_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| format!("读取卡片武器失败：{error}"))?;
+    if indexed_weapon.is_some() {
+        return Ok(indexed_weapon);
+    }
+
+    // Legacy archives can be used before their dashboard facts are backfilled.
+    let raw = load_record_raw(history_dir, account_id, "battle", record_id)?;
+    Ok(raw.as_ref().and_then(my_battle_player).and_then(|player| {
+        let weapon = player.get("weapon")?;
+        let name = weapon
+            .get("name")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+        let image = weapon
+            .pointer("/image/url")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+        Some((name, image))
+    }))
 }
 
 fn empty_overlay_state() -> OverlayState {

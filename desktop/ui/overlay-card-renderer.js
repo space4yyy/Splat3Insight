@@ -156,6 +156,7 @@
             <span class="overlay-card__power-delta" data-field="placement-record" title="胜利数／失败数" hidden><span class="overlay-card__summary-win" data-field="placement-wins"></span>/<span class="overlay-card__summary-lose" data-field="placement-losses"></span></span>
           </div>
           <div class="overlay-card__stats">
+            <img class="overlay-card__weapon" data-field="weapon" alt="" width="26" height="26" hidden>
             <div class="overlay-card__kad">
               <span data-field="kills">—<small data-field="assists"></small></span>
               <span data-field="deaths">—<small>d</small></span>
@@ -181,6 +182,7 @@
       placementRecord: field('placement-record'),
       placementWins: field('placement-wins'),
       placementLosses: field('placement-losses'),
+      weapon: field('weapon'),
       kills: field('kills'),
       assists: field('assists'),
       deaths: field('deaths'),
@@ -189,6 +191,8 @@
       deathValue: field('deaths').firstChild,
       kdValue: field('kd').firstChild
     };
+    refs.weapon.addEventListener('load', () => { refs.weapon.hidden = false; });
+    refs.weapon.addEventListener('error', () => { refs.weapon.hidden = true; });
     mountedCards.set(root, refs);
     return refs;
   }
@@ -197,7 +201,7 @@
     element.classList.toggle('is-placeholder', !isNumber(value));
   }
 
-  function update(root, state) {
+  function update(root, state, imageSrc) {
     prepareCardType(root, 'overlay');
     const battle = state?.selected;
     let refs = mountedCards.get(root);
@@ -254,6 +258,17 @@
       refs.delta.classList.toggle('positive', battle.power_delta > 0);
       refs.delta.classList.toggle('negative', battle.power_delta < 0);
       setPlaceholder(refs.delta, battle.power_delta);
+    }
+
+    const weaponSrc = battle.weapon_image && (imageSrc ? imageSrc(battle.weapon_image) : battle.weapon_image);
+    refs.weapon.alt = battle.weapon_name || '当前武器';
+    refs.weapon.title = battle.weapon_name || '';
+    if (!weaponSrc) {
+      refs.weapon.hidden = true;
+      refs.weapon.removeAttribute('src');
+    } else if (refs.weapon.getAttribute('src') !== weaponSrc) {
+      refs.weapon.hidden = true;
+      refs.weapon.src = weaponSrc;
     }
 
     showNumber(refs.killValue, displayNumber(battle.kills));
@@ -434,12 +449,12 @@ ${SALMON_TOTALS_HTML}
     return true;
   }
 
-  function updateAuto(root, state) {
+  function updateAuto(root, state, imageSrc) {
     const type = autoCardType(state);
     if (type === 'salmon-run') {
       updateSalmonRun(root, state);
     } else {
-      update(root, state);
+      update(root, state, imageSrc);
     }
     return type;
   }
