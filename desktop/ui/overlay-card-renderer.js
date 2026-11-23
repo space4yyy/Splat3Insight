@@ -153,6 +153,7 @@
           <div class="overlay-card__power">
             <span class="overlay-card__power-value" data-field="power"></span>
             <span class="overlay-card__power-delta" data-field="delta"></span>
+            <span class="overlay-card__power-delta" data-field="placement-record" title="胜利数／失败数" hidden><span class="overlay-card__summary-win" data-field="placement-wins"></span>/<span class="overlay-card__summary-lose" data-field="placement-losses"></span></span>
           </div>
           <div class="overlay-card__stats">
             <div class="overlay-card__kad">
@@ -177,6 +178,9 @@
       powerArea: card.querySelector('.overlay-card__power'),
       power: field('power'),
       delta: field('delta'),
+      placementRecord: field('placement-record'),
+      placementWins: field('placement-wins'),
+      placementLosses: field('placement-losses'),
       kills: field('kills'),
       assists: field('assists'),
       deaths: field('deaths'),
@@ -231,17 +235,18 @@
     showNumber(refs.losses, `Lose ${displayNumber(summary.lose)}`);
     showNumber(refs.winRate, `${displayNumber(summary.win_rate)}%`);
 
-    // 蛮颓开放组队定分中：战力的位置写「定分中」，变化值的位置写打了几场定分。
     const placement = battle.power_placement;
+    const placementRecord = placement?.record;
     refs.powerArea.classList.toggle('is-placement', Boolean(placement));
+    refs.delta.hidden = Boolean(placement);
+    refs.placementRecord.hidden = !placementRecord;
     if (placement) {
-      const progress = isNumber(placement.played) && isNumber(placement.required)
-        ? `${placement.played}/${placement.required}`
-        : '';
       showNumber(refs.power, '定分中');
       refs.power.classList.remove('is-placeholder');
-      showNumber(refs.delta, progress);
-      refs.delta.classList.remove('positive', 'negative', 'is-placeholder');
+      if (placementRecord) {
+        showNumber(refs.placementWins, displayNumber(placementRecord.wins));
+        showNumber(refs.placementLosses, displayNumber(placementRecord.losses));
+      }
     } else {
       showNumber(refs.power, displayNumber(battle.power, 1));
       setPlaceholder(refs.power, battle.power);

@@ -186,7 +186,7 @@
   margin-bottom: 15px;
 }
 
-/* 蛮颓开放组队定分中：「定分中」用中文字体，后面的小字是打了几场定分。 */
+/* 定分状态使用卡片的中文字体。 */
 .overlay-card__power.is-placement .overlay-card__power-value {
   font-family: "DFP GBZY7", sans-serif;
   font-size: 26px;

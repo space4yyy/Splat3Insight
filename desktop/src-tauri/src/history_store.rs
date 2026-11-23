@@ -38,13 +38,15 @@ const EVENT_POWER_MIGRATION: &str = "event-power-fields-v1";
 const MODE_DELTA_MIGRATION: &str = "mode-level-deltas-v1";
 const RATING_RUN_MIGRATION: &str = "rating-run-deltas-v1";
 const OPEN_PLACEMENT_MIGRATION: &str = "open-placement-v1";
+const PLACEMENT_RECORD_MIGRATION: &str = "placement-record-v1";
 /// 卡片数据的升级：缺任何一项时，重新解析活动比赛记录、重建蛮颓开放的卡片索引并重建
 /// 卡片缓存，然后全部标记完成。
-const OVERLAY_MIGRATIONS: [&str; 4] = [
+const OVERLAY_MIGRATIONS: [&str; 5] = [
     EVENT_POWER_MIGRATION,
     MODE_DELTA_MIGRATION,
     RATING_RUN_MIGRATION,
     OPEN_PLACEMENT_MIGRATION,
+    PLACEMENT_RECORD_MIGRATION,
 ];
 /// 一般打工每期 40 小时。往前找同一期工时只看这个范围，既能覆盖整期，
 /// 又不会把隔了几周、恰好场地和武器都相同的另一期算进来。
@@ -2832,8 +2834,8 @@ mod tests {
 
         let refreshed = load_overlay_state(directory.path(), "account").unwrap();
         let placement = refreshed.selected.unwrap().power_placement.unwrap();
-        assert_eq!(placement.played, Some(2));
-        assert_eq!(placement.required, 5);
+        let record = placement.record.unwrap();
+        assert_eq!((record.wins, record.losses), (2, 0));
     }
 
     #[test]

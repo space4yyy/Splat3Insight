@@ -59,7 +59,7 @@ pub struct OverlayBattle {
     pub power: Option<f64>,
     pub power_kind: Option<String>,
     pub power_delta: Option<f64>,
-    /// Set while an Anarchy Open group places its power (see `open_power_placement`).
+    /// Set while the selected battle is placing its power.
     #[serde(default)]
     pub power_placement: Option<PowerPlacement>,
     pub kills: Option<i64>,
@@ -68,12 +68,32 @@ pub struct OverlayBattle {
     pub specials: Option<i64>,
 }
 
-/// Placement progress: the games counted so far; the power arrives with game `required`.
-/// `played` is unknown when this placement's first game cannot be told apart.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PowerPlacement {
-    pub played: Option<u32>,
-    pub required: u32,
+    /// Unknown when the start of the current placement cannot be inferred.
+    pub record: Option<PlacementRecord>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PlacementRecord {
+    pub wins: u32,
+    pub losses: u32,
+}
+
+impl PlacementRecord {
+    fn count(&mut self, battle: &BattleRecord) {
+        match battle.judgement.as_deref() {
+            Some("WIN") => self.wins += 1,
+            Some("LOSE" | "DEEMED_LOSE") => self.losses += 1,
+            _ => {}
+        }
+    }
+
+    fn placement(self) -> PowerPlacement {
+        PowerPlacement {
+            record: (self.wins + self.losses < PLACEMENT_BATTLES).then_some(self),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -508,6 +528,7 @@ fn event_power_is_placed(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> bo
     1 + older
         .iter()
         .filter(|candidate| power_track(candidate).as_ref() == Some(&track))
+        .take(4)
         .count()
         >= 5
 }
@@ -528,7 +549,8 @@ fn open_power_placement(
 ) -> Option<PowerPlacement> {
     let mut group = open_placement_teammates(item)?;
     let rotation = schedule_rotation(item.record.played_time.as_deref());
-    let mut played = counts_toward_placement(&item.record);
+    let mut results = PlacementRecord::default();
+    results.count(&item.record);
     for candidate in older
         .iter()
         .filter(|candidate| mode_level_delta_track(candidate).is_some())
@@ -545,12 +567,9 @@ fn open_power_placement(
         if group.is_empty() {
             break;
         }
-        played += counts_toward_placement(&candidate.record);
+        results.count(&candidate.record);
     }
-    Some(PowerPlacement {
-        played: (played < PLACEMENT_BATTLES).then_some(played),
-        required: PLACEMENT_BATTLES,
-    })
+    Some(results.placement())
 }
 
 fn open_placement_teammates(item: &ArchivedBattle) -> Option<Vec<String>> {
@@ -564,11 +583,47 @@ fn open_placement_teammates(item: &ArchivedBattle) -> Option<Vec<String>> {
     }
 }
 
-fn counts_toward_placement(record: &BattleRecord) -> u32 {
-    u32::from(!matches!(
-        record.judgement.as_deref(),
-        Some("EXEMPTED_LOSE") | Some("DRAW")
-    ))
+fn challenge_season(played_time: Option<&str>) -> Option<u32> {
+    let time = played_time?;
+    let year = time.get(..4)?.parse::<u32>().ok()?;
+    let month = time.get(5..7)?.parse::<u32>().ok()?;
+    // Seasons begin in March, June, September and December.
+    (1..=12).contains(&month).then_some(year * 4 + month / 3)
+}
+
+fn tracked_power_placement(
+    item: &ArchivedBattle,
+    older: &[&ArchivedBattle],
+    track: Option<&PowerTrack>,
+) -> PowerPlacement {
+    let Some(track) = track else {
+        return PowerPlacement { record: None };
+    };
+    let challenge = matches!(track, PowerTrack::AnarchyChallenge { .. });
+    let season = challenge_season(item.record.played_time.as_deref());
+    let mut results = PlacementRecord::default();
+    results.count(&item.record);
+    for (index, candidate) in older.iter().enumerate() {
+        if challenge
+            && (season.is_none()
+                || challenge_season(candidate.record.played_time.as_deref()) != season)
+        {
+            break;
+        }
+        if power_track(candidate).as_ref() != Some(track) {
+            continue;
+        }
+        if candidate.record.power.is_some()
+            && (challenge || event_power_is_placed(candidate, &older[index + 1..]))
+        {
+            break;
+        }
+        results.count(&candidate.record);
+        if results.wins + results.losses >= PLACEMENT_BATTLES {
+            break;
+        }
+    }
+    results.placement()
 }
 
 /// Schedules rotate every two hours from even UTC hours; SplatNet's battle times are UTC (`…Z`).
@@ -633,7 +688,16 @@ fn to_overlay_battle(item: &ArchivedBattle, older: &[&ArchivedBattle]) -> Overla
             .then(|| item.record.power_kind.clone())
             .flatten(),
         power_delta,
-        power_placement: open_power_placement(item, older),
+        power_placement: match (
+            item.record.mode.as_str(),
+            item.record.bankara_mode.as_deref(),
+        ) {
+            ("BANKARA", Some("OPEN")) => open_power_placement(item, older),
+            ("BANKARA", Some("CHALLENGE")) | ("EVENT_MATCH", _) if power.is_none() => {
+                Some(tracked_power_placement(item, older, current_track.as_ref()))
+            }
+            _ => None,
+        },
         kills: item.record.kills,
         assists: item.record.assists,
         deaths: item.record.deaths,
@@ -878,8 +942,7 @@ mod tests {
         assert_eq!(
             selected(battles.clone()).power_placement,
             Some(PowerPlacement {
-                played: Some(1),
-                required: 5
+                record: Some(PlacementRecord { wins: 1, losses: 0 })
             })
         );
 
@@ -895,8 +958,7 @@ mod tests {
         assert_eq!(
             card.power_placement,
             Some(PowerPlacement {
-                played: Some(2),
-                required: 5
+                record: Some(PlacementRecord { wins: 2, losses: 0 })
             })
         );
     }
@@ -920,7 +982,12 @@ mod tests {
     #[test]
     fn open_placement_restarts_for_another_group() {
         let placing = serde_json::json!({ "power": null });
-        let played = |battles: Vec<ArchivedBattle>| selected(battles).power_placement?.played;
+        let played = |battles: Vec<ArchivedBattle>| {
+            selected(battles)
+                .power_placement?
+                .record
+                .map(|record| record.wins)
+        };
 
         // A rated game ends a placement; placing again means the group changed.
         let battles = vec![
@@ -965,7 +1032,10 @@ mod tests {
             void,
             splatnet_open_battle("second", "02:35", placing, &["friend", "d"]),
         ];
-        assert_eq!(selected(battles).power_placement.unwrap().played, Some(2));
+        assert_eq!(
+            selected(battles).power_placement.unwrap().record,
+            Some(PlacementRecord { wins: 2, losses: 0 })
+        );
     }
 
     #[test]
@@ -983,10 +1053,7 @@ mod tests {
             .collect();
         assert_eq!(
             selected(battles).power_placement,
-            Some(PowerPlacement {
-                played: None,
-                required: 5
-            })
+            Some(PowerPlacement { record: None })
         );
     }
 
@@ -1059,10 +1126,30 @@ mod tests {
     }
 
     #[test]
+    fn challenge_placement_counts_only_the_current_weapons_matches_in_the_season() {
+        let mut other_weapon = challenge_battle("other-weapon", "02:15", 0.0, "other");
+        other_weapon.record.power = None;
+        let mut win = challenge_battle("win", "02:05", 0.0, "weapon");
+        win.record.power = None;
+        let mut loss = challenge_battle("loss", "02:25", 0.0, "weapon");
+        loss.record.power = None;
+        loss.record.judgement = Some("LOSE".to_owned());
+        let mut last_season = win.clone();
+        last_season.record.id = "last-season".to_owned();
+        last_season.record.played_time = Some("2026-08-31T23:55:00Z".to_owned());
+
+        let card = selected(vec![last_season, win, other_weapon, loss]);
+        assert_eq!(
+            card.power_placement.unwrap().record,
+            Some(PlacementRecord { wins: 1, losses: 1 })
+        );
+    }
+
+    #[test]
     fn event_match_power_is_hidden_until_five_matches_are_placed() {
         let battles = (1..=4)
             .map(|index| {
-                event_battle(
+                let mut item = event_battle(
                     &format!("solo-{index}"),
                     &format!("2026-09-22T00:0{index}:00Z"),
                     Some(1800.0 + f64::from(index)),
@@ -1070,7 +1157,11 @@ mod tests {
                     "slot-1",
                     true,
                     None,
-                )
+                );
+                if index == 4 {
+                    item.record.judgement = Some("LOSE".to_owned());
+                }
+                item
             })
             .collect();
         let state = OverlayState::from_history(&HistoryCache {
@@ -1083,6 +1174,10 @@ mod tests {
         assert_eq!(selected.mode, "EVENT_MATCH");
         assert_eq!(selected.power, None);
         assert_eq!(selected.power_delta, None);
+        assert_eq!(
+            selected.power_placement.unwrap().record,
+            Some(PlacementRecord { wins: 3, losses: 1 })
+        );
     }
 
     #[test]
