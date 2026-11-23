@@ -29,9 +29,13 @@ function setup() {
       replaceChildren(...nodes) { this.children = nodes; },
       addEventListener(type, listener) { this.listeners[type] = listener; },
       // OBS 页面用到的：按类名找直接子节点；卡片的宽度取内联样式，高度是样式表里的 64。
-      querySelector(selector) { return this.children.find((child) => `.${child.className}` === selector) ?? null; },
-      get offsetWidth() { return this.hidden ? 0 : parseFloat(this.style.width) || 0; },
-      get offsetHeight() { return this.hidden || this.className !== 'defeat-count-card' ? 0 : 64; },
+      get firstElementChild() { return this.children[0] ?? null; },
+      querySelector(selector) {
+        const classes = selector.split(', ').map((name) => name.slice(1));
+        return this.children.find((child) => child.className.split(' ').some((name) => classes.includes(name))) ?? null;
+      },
+      get offsetWidth() { return this.hidden ? 0 : parseFloat(this.style.width) || (this.className.includes('overlay-card--data-error') ? 768 : 0); },
+      get offsetHeight() { return this.hidden || !this.className ? 0 : 64; },
       classList: {
         add: (name) => classes.add(name),
         remove: (name) => classes.delete(name),
@@ -263,4 +267,23 @@ test('the app recommends one OBS source size for every Salmonid selection', () =
   assert.match(sizeFn, /obsDefeatItems\(\)/);
   assert.doesNotMatch(sizeFn, /obsSelectedDefeats/);
   assert.match(pageHtml, /card\.dataset\.fullWidth/);
+});
+
+test('the OBS page shows a generic message on failure and restores the data on recovery', async () => {
+  let data = record();
+  const { root, update } = openPage({ width: 3072, height: 256, data: () => data });
+  await update();
+  assert.equal(root.firstElementChild.className, 'defeat-count-card');
+
+  data = { error: 'private failure details' };
+  await update();
+  const notice = root.firstElementChild;
+  assert.equal(notice.textContent, '数据异常，进入app查看');
+  assert.equal(root.style.height, '256px');
+  await update();
+  assert.equal(root.firstElementChild, notice);
+
+  data = record();
+  await update();
+  assert.equal(root.firstElementChild.className, 'defeat-count-card');
 });

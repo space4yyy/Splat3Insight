@@ -596,9 +596,22 @@ ${SALMON_TOTALS_HTML}
     return true;
   }
 
+  const dataErrorText = '数据异常，进入app查看';
+
+  function updateDataError(root) {
+    prepareCardType(root, 'data-error');
+    if (root.firstElementChild) return;
+    const card = document.createElement('div');
+    card.className = 'overlay-card overlay-card--data-error';
+    card.textContent = dataErrorText;
+    root.append(card);
+  }
+
   window.Splat3OverlayCard = Object.freeze({
     update,
     updateAuto,
+    updateDataError,
+    dataErrorText,
     updateSalmonRun,
     updateSalmonTotals,
     newestCardType,

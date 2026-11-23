@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="/overlay-card.css" />
     <style>
       :root { --obs-card-width: __OBS_CARD_WIDTH__px; --obs-card-height: __OBS_CARD_HEIGHT__px; }
-      #root > .defeat-count-card { --obs-card-width: 768px; --obs-card-height: 64px; }
+      #root > .defeat-count-card, #root > .overlay-card--data-error { --obs-card-width: 768px; --obs-card-height: 64px; }
       html, body { margin: 0; background: transparent; overflow: hidden; }
       #root { width: var(--obs-card-width); height: var(--obs-card-height); }
     </style>
@@ -20,7 +20,7 @@
     <script>
       const root = document.querySelector('#root');
       function fitOverlay() {
-        const card = root.querySelector('.defeat-count-card');
+        const card = root.querySelector('.defeat-count-card, .overlay-card--data-error');
         if (!card) return;
         // 按浏览器来源的宽高等比放大或缩小：来源设大，卡片就按那个分辨率绘制，不会糊。
         // 宽度按全部鲑鱼都显示时算，应用里隐藏或显示鲑鱼不会改变缩放：高度不变，卡片靠左变短或变长。
@@ -42,8 +42,9 @@
           if (record?.error) throw new Error(record.error);
           window.Splat3OverlayCard.updateDefeatCounts(root, record, undefined, record?.show);
           fitOverlay();
-        } catch (_) {
-          // 保留上一次有效卡片，等待下一轮轮询恢复。
+        } catch {
+          window.Splat3OverlayCard.updateDataError(root);
+          fitOverlay();
         }
       }
       document.fonts.load('16px "BlitzMain"').catch(() => {});

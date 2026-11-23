@@ -8,6 +8,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use serde_json::json;
 use splat3_widget_core::dashboard::{CoopDefeatFact, CoopDefeatFacts};
 use splat3_widget_core::overlay::{OverlayMatchCategory, OverlayState};
@@ -225,6 +226,7 @@ pub struct OverlayServerConfig {
     pub history_dir: PathBuf,
     /// Card data requests tell the background sync that OBS is showing the cards.
     pub(crate) activity: crate::sync_schedule::ObsActivity,
+    pub(crate) sync_runtime: Option<Arc<crate::SyncRuntime>>,
     /// The app's SplatNet image cache, for the Salmonid icons on the defeat count card.
     pub(crate) image_cache: Option<Arc<crate::image_cache::ImageCache>>,
     /// Which Salmonids the defeat count card shows, picked in the app's OBS preview.
@@ -273,6 +275,15 @@ struct RegistrySnapshot {
     active_account_id: Option<String>,
     #[serde(default)]
     pending_account_deletions: Vec<String>,
+    #[serde(default)]
+    accounts: Vec<AccountSnapshot>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AccountSnapshot {
+    account_id: String,
+    #[serde(default)]
+    login_expired: bool,
 }
 
 impl OverlayServiceController {
@@ -818,17 +829,17 @@ fn overlay_match_category(request_target: &str) -> Option<OverlayMatchCategory> 
     }
 }
 
-/// 卡片数据接口的响应：成功时是数据本身，失败时记日志并返回 `{"error": …}`。
+/// 卡片数据接口只返回通用错误标记，详细原因写入本地日志。
 fn card_data_response<T: Serialize>(
     config: &OverlayServerConfig,
     label: &str,
     result: Result<T, String>,
 ) -> Result<HttpResponse, String> {
-    match result {
-        Ok(data) => Ok(HttpResponse {
+    match result.and_then(|data| serde_json::to_vec(&data).map_err(|error| error.to_string())) {
+        Ok(body) => Ok(HttpResponse {
             status: "200 OK",
             content_type: "application/json; charset=utf-8",
-            body: serde_json::to_vec(&data).map_err(|error| error.to_string())?,
+            body,
         }),
         Err(error) => {
             let message = format!("{label}请求失败: {error}");
@@ -837,8 +848,7 @@ fn card_data_response<T: Serialize>(
             Ok(HttpResponse {
                 status: "500 Internal Server Error",
                 content_type: "application/json; charset=utf-8",
-                body: serde_json::to_vec(&json!({ "error": error }))
-                    .map_err(|error| error.to_string())?,
+                body: br#"{"error":true}"#.to_vec(),
             })
         }
     }
@@ -865,6 +875,20 @@ fn active_account(config: &OverlayServerConfig) -> Result<Option<String>, String
         .any(|pending| pending == &account_id)
     {
         return Ok(None);
+    }
+    if snapshot
+        .accounts
+        .iter()
+        .any(|account| account.account_id == account_id && account.login_expired)
+    {
+        return Err("活动账号登录已失效".to_owned());
+    }
+    if config
+        .sync_runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.get(Some(&account_id)).state == "error")
+    {
+        return Err("活动账号同步失败".to_owned());
     }
     Ok(Some(account_id))
 }
@@ -1137,6 +1161,7 @@ mod tests {
                 history_dir,
                 activity: Default::default(),
                 image_cache: None,
+                sync_runtime: None,
                 defeat_selection: Default::default(),
             },
         )
@@ -1167,6 +1192,7 @@ mod tests {
                 history_dir,
                 activity: Default::default(),
                 image_cache: None,
+                sync_runtime: None,
                 defeat_selection: Default::default(),
             },
         )
@@ -1208,6 +1234,7 @@ mod tests {
             history_dir: directory.join("history"),
             activity: Default::default(),
             image_cache,
+            sync_runtime: None,
             defeat_selection: Default::default(),
         }
     }
@@ -1408,6 +1435,7 @@ mod tests {
                     counter.fetch_add(1, Ordering::Relaxed);
                 }),
                 image_cache: None,
+                sync_runtime: None,
                 defeat_selection: Default::default(),
             };
 
@@ -1435,6 +1463,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                sync_runtime: None,
                 defeat_selection: Default::default(),
             },
         )
@@ -1458,14 +1487,57 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                sync_runtime: None,
                 defeat_selection: Default::default(),
             },
         )
         .unwrap();
         assert_eq!(response.status, "500 Internal Server Error");
-        assert!(String::from_utf8(response.body)
-            .unwrap()
-            .contains("读取账号配置失败"));
+        assert_eq!(response.body, br#"{"error":true}"#);
+    }
+
+    #[test]
+    fn data_cards_report_active_account_failures_and_recover() {
+        let directory = tempdir().unwrap();
+        let accounts_path = directory.path().join("accounts.json");
+        let runtime = Arc::new(crate::SyncRuntime::new());
+        let config = OverlayServerConfig {
+            accounts_path: accounts_path.clone(),
+            history_dir: directory.path().join("history"),
+            activity: Default::default(),
+            image_cache: None,
+            sync_runtime: Some(Arc::clone(&runtime)),
+            defeat_selection: Default::default(),
+        };
+        let paths = [
+            "/api/overlay?xmatch",
+            "/api/defeat-counts",
+            "/api/current-defeat-counts",
+        ];
+
+        for (login_expired, sync_state, expected) in [
+            (true, "idle", "500 Internal Server Error"),
+            (false, "error", "500 Internal Server Error"),
+            (false, "completed", "200 OK"),
+        ] {
+            std::fs::write(
+                &accounts_path,
+                json!({
+                    "active_account_id": "account",
+                    "accounts": [{"account_id": "account", "login_expired": login_expired}],
+                })
+                .to_string(),
+            )
+            .unwrap();
+            runtime.update("account", |status| status.state = sync_state.to_owned());
+            for path in paths {
+                let response = route_request("GET", path, &config).unwrap();
+                assert_eq!(response.status, expected, "{path}");
+                if expected == "500 Internal Server Error" {
+                    assert_eq!(response.body, br#"{"error":true}"#);
+                }
+            }
+        }
     }
 
     #[test]
@@ -1479,6 +1551,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                sync_runtime: None,
                 defeat_selection: Default::default(),
             },
         )
@@ -1499,6 +1572,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                sync_runtime: None,
                 defeat_selection: Default::default(),
             },
         )
@@ -1520,6 +1594,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                sync_runtime: None,
                 defeat_selection: Default::default(),
             },
         )
@@ -1541,6 +1616,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                sync_runtime: None,
                 defeat_selection: Default::default(),
             },
         )
@@ -1563,6 +1639,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                sync_runtime: None,
                 defeat_selection: Default::default(),
             },
         )
@@ -1584,6 +1661,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                sync_runtime: None,
                 defeat_selection: Default::default(),
             },
         )
@@ -1606,6 +1684,7 @@ mod tests {
             history_dir: directory.path().join("history"),
             activity: Default::default(),
             image_cache: None,
+            sync_runtime: None,
             defeat_selection: Default::default(),
         };
 
@@ -1643,6 +1722,7 @@ mod tests {
             history_dir: directory.path().join("history"),
             activity: Default::default(),
             image_cache: None,
+            sync_runtime: None,
             defeat_selection: Default::default(),
         };
 
@@ -1664,6 +1744,7 @@ mod tests {
             history_dir: directory.path().join("history"),
             activity: Default::default(),
             image_cache: None,
+            sync_runtime: None,
             defeat_selection: Default::default(),
         };
 
@@ -1697,6 +1778,7 @@ mod tests {
                 history_dir: directory.path().join("history"),
                 activity: Default::default(),
                 image_cache: None,
+                sync_runtime: None,
                 defeat_selection: Default::default(),
             },
         )

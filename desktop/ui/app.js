@@ -68,7 +68,7 @@
     authFailure: null,
     serviceOrigin: null,
     serviceRunning: false,
-    obs: { catalog: [], selected: ['overlay'], active: 'overlay', copiedUrl: null, copiedCss: null, transparency: 0, states: null, latest: null },
+    obs: { catalog: [], selected: ['overlay'], active: 'overlay', copiedUrl: null, copiedCss: null, transparency: 0, states: null, latest: null, dataError: false },
   };
   const share = window.Splat3Share.init(() => {
     const data = dashboard.records();
@@ -717,8 +717,9 @@
       app.facts = { accountId, status: 'ready', error: null, loadedAt: Date.now() };
     } catch (error) {
       if (requestId !== factsRequest) return;
-      // 已有数据时保留旧图表，只有首次读取失败才显示错误。
+      // 已有数据时保留旧图表，OBS 预览仍显示本次读取失败。
       if (firstLoad) app.facts = { accountId, status: 'error', error: String(error), loadedAt: 0 };
+      else app.facts.error = String(error);
     }
     renderDataView();
   }
@@ -1130,6 +1131,7 @@
     if (changed) {
       app.obs.latest = null;
       app.obs.states = null;
+      app.obs.dataError = false;
       loadFacts();
       refreshOverlayStates();
     }
@@ -1307,7 +1309,13 @@
     if (app.authError) return { text: '授权失败', tone: 'is-error', authorize: true };
     return { text: '等待授权', tone: 'is-idle', authorize: true };
   }
+  function obsSyncFailed(status) {
+    return Boolean(app.activeAccountId && status?.state === 'error'
+      && (!status.account_id || status.account_id === app.activeAccountId));
+  }
+
   function renderSyncStatus(status) {
+    const obsErrorChanged = obsSyncFailed(app.syncStatus) !== obsSyncFailed(status);
     app.syncStatus = status;
     const summary = syncSummary(status);
     if (!summary.authorize && !app.authorizing) app.authError = null;
@@ -1359,6 +1367,7 @@
       };
     }
     renderAccountAlert();
+    if (obsErrorChanged && app.view === 'obs') renderObsPreview();
   }
 
   // 账号提醒：当前账号登录失效、授权失败或还没有权限时，在每一页顶部常驻显示原因和处理按钮，
@@ -1474,7 +1483,7 @@
         // 有新记录或已有记录更新过才重新读取面板数据；读取失败过、或者过了零点（“今天”“近 7 天”跟着日期变）也读一次。
         const added = (status.added_battle_count || 0) + (status.added_coop_count || 0);
         if (added > 0 || status.records_updated) await loadFacts({ force: true });
-        else if (app.facts.status !== 'ready' || new Date(app.facts.loadedAt).toDateString() !== new Date().toDateString()) await loadFacts();
+        else if (app.facts.error || app.facts.status !== 'ready' || new Date(app.facts.loadedAt).toDateString() !== new Date().toDateString()) await loadFacts();
         refreshOverlayStates();
       }
       // 同步失败或停下等待权限时，账号可能刚被标为需要重新获取权限；重新读取账号列表，「获取权限」才会出现。
@@ -1790,7 +1799,7 @@
         invoke('get_overlay_state', { accountId, matchType: 'xmatch' }),
         invoke('get_overlay_state', { accountId, matchType: 'bankaramatch' }),
       ]);
-      if (requestId !== overlayRequest) return;
+      if (requestId !== overlayRequest || accountId !== app.activeAccountId) return;
       const states = { overlay, xMatch, bankaraMatch };
       const latest = obsLatestTimes(states);
       // 多选时，所选类型里有新记录就把预览切过去，和 OBS 里的切换一致。
@@ -1802,10 +1811,11 @@
       }
       app.obs.latest = latest;
       app.obs.states = states;
+      app.obs.dataError = false;
       dashboard.setSalmonRun(overlay?.salmon_run);
     } catch {
-      // 保留上一次成功的预览，避免偶发失败让卡片闪烁。
-      return;
+      if (requestId !== overlayRequest || accountId !== app.activeAccountId) return;
+      app.obs.dataError = true;
     }
     renderObsPreview();
   }
@@ -1827,11 +1837,17 @@
     }
     const scale = preview.querySelector('.overlay-preview__scale');
     const states = app.obs.states;
+    const dataError = card.id !== 'clock' && (
+      activeAccount()?.login_expired || obsSyncFailed(app.syncStatus)
+      || (card.id === 'defeat-counts'
+        ? app.facts.accountId === app.activeAccountId && app.facts.error
+        : app.obs.dataError)
+    );
     let hasData = false;
     if (card.id === 'clock') {
       // 时钟不需要账号数据，直接显示本机时间。
       hasData = Boolean(cards?.updateClock(scale));
-    } else if (isDefeatCountCard(card.id)) {
+    } else if (!dataError && isDefeatCountCard(card.id)) {
       // 累计击倒数用「鲑鱼跑记录」；本期击倒数沿用鲑鱼跑卡片对最近一期的分组。
       // 图片走本地图片缓存；换账号后等新账号的数据读完再显示。
       const factsReady = app.facts.status === 'ready' && app.facts.accountId === app.activeAccountId;
@@ -1841,7 +1857,7 @@
       const roster = card.id === 'current-defeat-counts' ? dashboard.coopRecord() : null;
       hasData = Boolean((card.id === 'defeat-counts' ? factsReady : source)
         && cards?.updateDefeatCounts(scale, source, records.imageSrc, undefined, roster));
-    } else if (cards && states) {
+    } else if (!dataError && cards && states) {
       if (card.id === 'overlay') {
         const type = cards.updateAuto(scale, states.overlay);
         hasData = type === 'salmon-run' ? Boolean(states.overlay?.salmon_run) : Boolean(states.overlay?.selected);
@@ -1859,7 +1875,8 @@
         empty = el('div', { class: 'obs-empty' });
         box.append(empty);
       }
-      empty.textContent = app.activeAccountId ? OBS_EMPTY[card.id] : '添加账号并同步后显示卡片预览。';
+      empty.textContent = dataError ? cards.dataErrorText
+        : app.activeAccountId ? OBS_EMPTY[card.id] : '添加账号并同步后显示卡片预览。';
       preview.hidden = true;
       return;
     }

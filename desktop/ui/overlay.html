@@ -80,8 +80,9 @@
             }
           }
           fitOverlay();
-        } catch (_) {
-          // 保留上一次有效卡片，等待下一轮轮询恢复，避免短暂请求失败导致 OBS 闪烁。
+        } catch {
+          window.Splat3OverlayCard.updateDataError(root);
+          fitOverlay();
         }
       }
 

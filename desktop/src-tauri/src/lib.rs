@@ -387,7 +387,7 @@ struct SyncStatus {
     error: Option<String>,
 }
 
-struct SyncRuntime {
+pub(crate) struct SyncRuntime {
     statuses: Mutex<HashMap<String, SyncStatus>>,
     tasks: Mutex<HashMap<String, watch::Sender<Option<SyncResult>>>>,
     /// SplatNet 网页版本号，所有账号共用。查到后一直沿用，同步失败时清掉，下次重新查。
@@ -2432,6 +2432,7 @@ pub fn run() {
                     accounts_path: metadata_path,
                     history_dir: history_dir.clone(),
                     activity: obs_activity.clone(),
+                    sync_runtime: Some(Arc::clone(&sync_runtime)),
                     image_cache,
                     defeat_selection: Arc::clone(&obs_defeat_selection),
                 },

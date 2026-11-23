@@ -200,5 +200,5 @@ test('clock and defeat count sources recommend four times their logical layout s
   assert.equal(defeats.optionLabel, '击倒数');
   assert.equal(currentDefeats.optionLabel, '本期击倒数');
   assert.match(clockHtml, /#root > \.clock-card \{ --obs-card-width: 160px; --obs-card-height: 60px; \}/);
-  assert.match(defeatCountsHtml, /#root > \.defeat-count-card \{ --obs-card-width: 768px; --obs-card-height: 64px; \}/);
+  assert.match(defeatCountsHtml, /#root > \.defeat-count-card, #root > \.overlay-card--data-error \{ --obs-card-width: 768px; --obs-card-height: 64px; \}/);
 });
